@@ -30,6 +30,14 @@ local LOG_PREFIX = "[MinidoracatNoticeBoardFor42]"
 -- 放在 NoticeBoard/ 根層是安全的：掃描只列舉 NoticeBoard/<LANG>/，從不列舉根層。
 local SERVER_ID_FILE = Reader.NOTICE_ROOT .. getFileSeparator() .. "serverid.txt"
 local REQUEST_COOLDOWN_MS = 10000
+-- 語系切換走**獨立**的 per-player 冷卻桶，理由與 imgreq 相同（見 handleImgReq）：
+-- REQUEST_COOLDOWN_MS 那個桶是給「進場註冊」與「同步逾時補救（resync）」用的，玩家換語系
+-- 若跟它們共用，進場後 10 秒內選語系一定被擋、連續換兩次語系也一定要等——而換語系是玩家
+-- 手動點選單的操作，頻率天然低。成本面撐得住：換語系只是拿**既有的預分塊快取**重排一個 job
+-- （enqueueJob 不讀檔、不重新編碼），真正的投遞量由 processQueue 的 4 人／32 則／單人 8 則
+-- per tick 硬限流決定，冷卻只是第二層。取 3 秒是因為維護輪（MAINTENANCE_INTERVAL_MS=1s）
+-- 補推追得上，而惡意 client 交替語系時每 3 秒才換一個 job（舊 job 已被 cancelJob 丟掉，不累積）。
+local LANGUAGE_COOLDOWN_MS = 3000
 local MAINTENANCE_INTERVAL_MS = 1000
 local DEFAULT_POLL_SECONDS = 60
 local MIN_POLL_SECONDS = 10
@@ -78,6 +86,8 @@ local function newState()
         cooldowns = {},
         -- 語系已改、但推送被冷卻擋下的玩家；冷卻到期後由 pumpLanguagePending 補推。
         langPending = {},
+        -- 語系切換的獨立冷卻桶（見 LANGUAGE_COOLDOWN_MS）；key = username。
+        langCooldownAt = {},
         -- 每位玩家最後收到的語系切換序號（client 送、manifest 原樣回帶）。
         -- 舊版 client 不送 -> nil -> manifest 不帶該欄位 -> 對端沿用語系值比對。
         langSeq = {},
@@ -99,6 +109,8 @@ local function newState()
         imageIssues = {},
         imageIssueSignature = nil,
         imageDirty = false,
+        -- 原地覆蓋探測的輪替游標：上一輪最後看過的**檔名**（不是索引，理由見 scanImages）。
+        imageProbeCursor = nil,
         imgCooldownAt = {},
         readIntUsable = nil,
     }
@@ -147,15 +159,25 @@ local function getSandboxOptions()
     return options
 end
 
+-- DefaultLanguage 現在是沙盒 enum，引擎交進來的是 1..29 的索引（見 sandbox-options.txt）。
+-- **字串也照樣接受**：舊的 servertest.ini 存的是代碼字串（那時這個選項是 type = string），
+-- 而 ini 是服主可以手改的檔案——拒收字串等於讓既有伺服器在升級後靜默退回 EN。
+-- 兩條路都走同一份白名單（Core.LANGS），不合法才 fallback。
 local function validateDefaultLanguage(writeWarning)
     local options = getSandboxOptions()
-    local language = options and rawget(options, "DefaultLanguage") or nil
-    if type(language) == "string" and rawget(Core.LANGS, language) == true then
-        return language
+    local raw = options and rawget(options, "DefaultLanguage") or nil
+
+    if type(raw) == "string" and rawget(Core.LANGS, raw) == true then
+        return raw
+    end
+    -- tonumber：引擎給的是數字，但 ini 手改後也可能是字串形式的數字（"8"）。
+    local byIndex = Core.languageByIndex(tonumber(raw))
+    if byIndex then
+        return byIndex
     end
 
     if writeWarning then
-        logLine("invalid DefaultLanguage=" .. safeLogValue(language) .. "; fallback=EN")
+        logLine("invalid DefaultLanguage=" .. safeLogValue(raw) .. "; fallback=EN")
     end
     return "EN"
 end
@@ -267,9 +289,7 @@ local function loadOrCreateServerId()
     return sid
 end
 
-local function writeBootstrapFile(language, content)
-    local separator = getFileSeparator()
-    local path = Reader.NOTICE_ROOT .. separator .. language .. separator .. "10_welcome.txt"
+local function writeTextFile(path, content)
     local writer = nil
     local ok, writeError = pcall(function()
         writer = getFileWriter(path, true, false)
@@ -291,10 +311,15 @@ local function writeBootstrapFile(language, content)
     return true, nil
 end
 
+local function writeBootstrapFile(language, content)
+    local separator = getFileSeparator()
+    return writeTextFile(Reader.NOTICE_ROOT .. separator .. language
+        .. separator .. "10_welcome.txt", content)
+end
+
 -- 必須定義在 logLine／safeLogValue 之後：Lua 的 local 只對「宣告之後」的程式碼可見，
 -- 提前定義會讓函式內取到全域 nil，執行時才炸（本專案已為此類錯誤付出過代價）。
-local function readExampleContent(language)
-    local path = EXAMPLE_DIR .. getFileSeparator() .. language .. ".txt"
+local function readModAsset(path)
     local reader = nil
     local ok, content = pcall(function()
         reader = getModFileReader(MOD_ID, path, false)
@@ -316,6 +341,14 @@ local function readExampleContent(language)
     closeReader(reader)
 
     if ok and type(content) == "string" and content ~= "" then
+        return content
+    end
+    return nil
+end
+
+local function readExampleContent(language)
+    local content = readModAsset(EXAMPLE_DIR .. getFileSeparator() .. language .. ".txt")
+    if content then
         return content
     end
     logLine("example asset unavailable for " .. safeLogValue(language) .. "; using ASCII fallback")
@@ -348,6 +381,43 @@ local function bootstrapIfEmpty()
     end
     logLine("bootstrap incomplete: " .. table.concat(errors, ","))
     return false
+end
+
+-- images/ 目錄的四語系說明檔。內容同樣放 MOD 資源檔（見 EXAMPLE_DIR 註解：.lua 裡的
+-- 非 ASCII 字面值會被 Kahlua 截成單一位元組而全毀）。檔名以 00_ 開頭讓它排在最前面；
+-- 副檔名 .txt 會被 listImageNames 靜默略過（只有「.png 但不合法」才報 img-invalid-name）。
+-- 觸發條件是「**這個檔案**不存在」而不是「目錄是空的」——既有服主早就有圖了，一樣該拿到說明。
+-- 已存在則絕不覆蓋（服主可能加了自己的筆記）。images/ 不存在也沒關係：
+-- getFileWriter 會自己 mkdirs（LuaManager.java:6733-6739）。
+local IMAGES_README_NAME = "00_README.txt"
+local IMAGES_README_ASSET = "media" .. getFileSeparator() .. "NoticeBoardImages"
+    .. getFileSeparator() .. "README.txt"
+
+local function ensureImagesReadme()
+    local path = IMAGE_DIR .. getFileSeparator() .. IMAGES_README_NAME
+    local reader = nil
+    local probeOk = pcall(function()
+        reader = getFileReader(path, false)
+    end)
+    closeReader(reader)
+    -- 探測失敗時什麼都不做：分不清「不存在」與「讀不到」時，不寫才不會蓋掉服主的筆記。
+    if not probeOk or reader ~= nil then
+        return false
+    end
+
+    local content = readModAsset(IMAGES_README_ASSET)
+    if not content then
+        logLine("images readme asset unavailable; skipped")
+        return false
+    end
+
+    local written, writeError = writeTextFile(path, content)
+    if not written then
+        logLine("images readme write failed: " .. safeLogValue(writeError))
+        return false
+    end
+    logLine("images readme created " .. IMAGES_README_NAME)
+    return true
 end
 
 local function issueText(issue)
@@ -489,9 +559,61 @@ local function recomputeImageTotal()
     state.imageTotalBytes = total
 end
 
--- forceAll=true（startup／admin reload）才會重讀既有檔案；平常輪詢只處理「新出現／消失」的檔名。
--- ponytail: 沒有 mtime API 可用（listFilesInZomboidLuaDirectory 只回檔名），原地覆蓋同名圖檔
--- 需要服主按「重新載入」才會重掃。若日後有檔案時間戳 API，改成比對時間戳即可。
+local function imagePath(name)
+    return Reader.NOTICE_ROOT .. getFileSeparator()
+        .. Image.IMAGE_DIR .. getFileSeparator() .. name
+end
+
+-- 只問大小、不讀內容：getFileInput 回的是 DataInputStream(FileInputStream)
+-- （LuaManager.java:6863-6881），available() 就是剩餘位元組數，開檔後立刻關掉。
+-- 回傳 nil + 原因代表「這一輪問不到」，呼叫端必須保留既有 entry（見 scanImages）。
+local function imageFileSize(name)
+    local input = nil
+    local ok, size = pcall(function()
+        input = getFileInput(imagePath(name))
+        if not input then
+            return nil
+        end
+        return input:available()
+    end)
+    if input then
+        pcall(function()
+            input:close()
+        end)
+    end
+    if not ok then
+        return nil, tostring(size)
+    end
+    if type(size) ~= "number" then
+        return nil, "unreadable"
+    end
+    return math.floor(size), nil
+end
+
+-- **單一迴圈一次最多開幾個圖檔**。實測單次開檔問 available() 約 0.19ms：服主把
+-- MaxImageCount 開到 200 時，一口氣掃完是單 tick 約 38ms（掉幀），20 次約 4ms（無感）。
+-- **固定值而非依張數比例**：比例會讓成本隨張數線性回到原點，正是這裡要治的病；固定值
+-- 給服主一個與任何設定都無關、講得出口的天花板。
+-- 取 20 是因為它等於 MaxImageCount 的預設值——預設設定下每輪仍掃得完全部檔名，
+-- 偵測延遲維持 1 輪，行為與分批之前**完全相同**；成本只由把張數調高的服主自己承擔。
+-- 兩條會開檔的迴圈**各自**受它限制：scanImages 的原地覆蓋探測、startNextImageJob 的
+-- 佇列抽取。輪詢那個 tick 兩者都會跑，所以單 tick 最壞是 2 x 20 = 40 次（約 8ms）。
+local MAX_IMAGE_OPENS = 20
+
+-- forceAll=true（startup／admin reload）才會無條件重讀既有檔案；平常輪詢對已編碼過的檔名
+-- 只開檔問一次 available()（不讀內容、每輪每個檔名至多一次）與 entry.pb 比對，大小不同
+-- 就丟掉 entry 讓下面的迴圈重新排隊 —— 服主原地覆蓋 logo.png 不必再按「重新載入」。
+-- 編碼進行中（state.imageJob ~= nil）整輪不探測，理由見迴圈上方。
+-- ponytail: 這是**啟發式不是保證**。沒有 mtime API 可用（listFilesInZomboidLuaDirectory
+-- 只回檔名），換上一張位元組數**剛好相同**的圖偵測不到，那種情況仍得按「重新載入」。
+-- 若日後有檔案時間戳 API，改成比對時間戳即可去掉整段探測。
+-- ponytail: 每輪至多 MAX_IMAGE_OPENS 次開檔，游標在**排序過的 names 陣列**上輪替，
+-- 下一輪從上次停的位置接著跑。原本整輪掃完不分批，註解寫的是「真的量到卡頓再改」——
+-- 量到了（200 張單 tick 38ms），所以改了。游標存**檔名不存索引**：檔名是全序，兩輪之間
+-- 新增／刪除檔案只會改變名次、不會改變彼此順序，「從第一個大於游標的檔名接著跑」因此
+-- 永不漏掃，也不可能因為服主把 MaxImageCount 調小而指到界外（索引游標兩者都會踩）。
+-- 代價：張數越多、原地覆蓋越慢生效——最壞 ceil(張數 / 20) 輪（200 張＝10 輪，
+-- 60 秒輪詢即 10 分鐘）。急著生效就按「重新載入」，那條走 forceAll 無條件全讀，不受影響。
 local function scanImages(forceAll)
     local state = NBServer.state
     state.imageIssues = {}
@@ -504,13 +626,17 @@ local function scanImages(forceAll)
         return
     end
 
-    if #names > Image.MAX_IMAGE_COUNT then
+    -- 張數上限是**服主政策**（沙盒選項 MaxImageCount，預設 20），不是寫死的牆。
+    -- issue 的 detail 帶上生效中的上限，服主看 log 就知道「這是我自己設的值、可以調」。
+    local maxCount = Image.maxImageCount()
+    if #names > maxCount then
+        local limitText = "max" .. tostring(maxCount)
         local dropIndex
-        for dropIndex = Image.MAX_IMAGE_COUNT + 1, #names do
-            addImageIssue("img-count", names[dropIndex], nil)
+        for dropIndex = maxCount + 1, #names do
+            addImageIssue("img-count", names[dropIndex], limitText)
         end
         local kept = {}
-        for dropIndex = 1, Image.MAX_IMAGE_COUNT do
+        for dropIndex = 1, maxCount do
             kept[dropIndex] = names[dropIndex]
         end
         names = kept
@@ -522,19 +648,8 @@ local function scanImages(forceAll)
         present[names[index]] = true
     end
 
-    local name
-    for name in pairs(state.imageEntries) do
-        if not rawget(present, name) or forceAll then
-            state.imageEntries[name] = nil
-            state.imageDirty = true
-        end
-    end
-    if forceAll then
-        closeImageJob(state.imageJob)
-        state.imageJob = nil
-    end
-    recomputeImageTotal()
-
+    -- queued 必須在移除迴圈之前算好：正在編碼／已排隊的檔名一律跳過大小比對，
+    -- 否則會把推到一半的 job 連同已讀的位元組砍掉，或讓同一個檔名重複排隊。
     local queued = {}
     if state.imageJob then
         queued[state.imageJob.name] = true
@@ -542,6 +657,92 @@ local function scanImages(forceAll)
     for index = 1, #state.imageQueue do
         queued[state.imageQueue[index]] = true
     end
+
+    -- 有 job 在飛時整輪不探測。getFileInput 把開好的串流存在**static** 欄位
+    -- （LuaManager.java:2723 `private static FileInputStream inStream;`）：檔案存在但
+    -- new FileInputStream 拋例外時（防毒／FTP 鎖檔、EMFILE），LuaManager.java:6873-6881
+    -- 只 log 不 return，照樣 fall-through 到 `return new DataInputStream(inStream)`
+    -- —— 拿到的是**上一個成功開啟的串流**。那會讓 available() 回報 job 檔案的剩餘位元組數
+    -- （比錯大小、把一張好圖的 entry 靜默丟掉），而且底下的 close() 會直接關掉編碼中的串流。
+    -- 不在 job 進行中開檔，NBServer **自己**就不會踩到這個別名窗口；代價只是延後一個
+    -- 輪詢週期才偵測到覆蓋。
+    -- ponytail: 這道守衛只管得住本檔。SP 下 client 與 server 是同一個 Lua VM、共用同一個
+    -- static inStream，NBImageCache.fileSize（NBImageCache.lua:93，由 pumpVerify 在
+    -- Events.OnTick 呼叫）也會開 getFileInput；快取檔存在但開啟失敗（防毒鎖檔）時，
+    -- 它拿到的就是本檔跨 tick 持有的 job 串流，接著把它 close() 掉。屬既有行為、非本守衛
+    -- 引入：後果是該 job 下一批讀取拋錯 -> img-read issue -> 該圖重新排隊（會自癒，但可能
+    -- 反覆）。要真正關掉窗口得在 NBCore 放一個「串流使用中」旗標讓兩邊互斥，代價大於現況。
+    local canProbe = state.imageJob == nil
+    local name
+    for name in pairs(state.imageEntries) do
+        if not rawget(present, name) or forceAll then
+            state.imageEntries[name] = nil
+            state.imageDirty = true
+        end
+    end
+
+    -- 探測走**有序的 names 陣列**，不是 pairs(state.imageEntries)：Kahlua 的 pairs 建立時
+    -- 對 keySet 取快照，順序既不保證穩定也不保證與上一輪相同——固定取前 N 個會讓後面的
+    -- 檔案永遠掃不到。names 是 listImageNames 排序過的結果，游標跑在它上面才叫「輪替」。
+    if canProbe and not forceAll then
+        local cursor = state.imageProbeCursor or ""
+        -- 只用 `<` 與 `==`（sortSafe 的預設比較子就是字串 `<`，全庫已在用）找出第一個
+        -- 嚴格大於游標的檔名；跑過尾端就繞回開頭。
+        local start = 1
+        while start <= #names and names[start] < cursor do
+            start = start + 1
+        end
+        if start <= #names and names[start] == cursor then
+            start = start + 1
+        end
+        if start > #names then
+            start = 1
+        end
+
+        -- scanned 保證一輪最多繞一圈（不會重複探測同一個檔名），probes 是開檔次數的硬上界。
+        -- 尚未編碼（entry 為 nil）與正在編碼／已排隊的檔名只推進游標、不消耗 probes：
+        -- 它們本來就要重讀，拿探測額度去空轉只會排擠真正需要比對的檔名。
+        local scanned = 0
+        local probes = 0
+        local probeIndex = start
+        while scanned < #names and probes < MAX_IMAGE_OPENS do
+            name = names[probeIndex]
+            state.imageProbeCursor = name
+            local entry = rawget(state.imageEntries, name)
+            if entry and not rawget(queued, name) then
+                probes = probes + 1
+                local size, sizeError = imageFileSize(name)
+                if size == nil then
+                    -- 問不到大小**不可以**丟掉 entry：暫時性 IO 錯誤會變成重編碼風暴，
+                    -- 而且玩家看到的圖會憑空消失。留著舊的，把原因記在 entry 上。
+                    -- **記在 entry 而不是直接 addImageIssue**：分批之後這個壞檔每
+                    -- ceil(張數 / 20) 輪才輪到一次，其餘輪次 imageIssues 是空的，簽章就會在
+                    -- 「有 img-read」與「空」之間逐圈翻臉——服主會在故障持續中看到
+                    -- 「image issues cleared」然後又復發。改由下面的重排迴圈每輪重新掛上，
+                    -- 簽章才真的逐輪相同（updateImageIssueLog 只寫一次）。
+                    entry.readErr = sizeError or "unreadable"
+                elseif size ~= entry.pb then
+                    state.imageEntries[name] = nil
+                    state.imageDirty = true
+                else
+                    entry.readErr = nil
+                end
+            end
+            probeIndex = probeIndex + 1
+            if probeIndex > #names then
+                probeIndex = 1
+            end
+            scanned = scanned + 1
+        end
+    end
+
+    if forceAll then
+        closeImageJob(state.imageJob)
+        state.imageJob = nil
+    end
+    -- 移除 entry 後總量必須重算，否則舊大小會一直佔額度、之後的圖被 img-total 誤擋。
+    recomputeImageTotal()
+
     if forceAll then
         state.imageQueue = {}
         queued = {}
@@ -549,9 +750,16 @@ local function scanImages(forceAll)
 
     for index = 1, #names do
         name = names[index]
-        if rawget(state.imageEntries, name) == nil and not rawget(queued, name) then
-            state.imageQueue[#state.imageQueue + 1] = name
-            queued[name] = true
+        local entry = rawget(state.imageEntries, name)
+        if entry == nil then
+            if not rawget(queued, name) then
+                state.imageQueue[#state.imageQueue + 1] = name
+                queued[name] = true
+            end
+        elseif entry.readErr then
+            -- 上次探測問不到大小、這輪還沒輪到重探：issue 每輪都要在，簽章才不會翻臉
+            -- （見探測迴圈裡設定 readErr 的地方）。重探成功／檔案被移除／forceAll 都會清掉它。
+            addImageIssue("img-read", name, entry.readErr)
         end
     end
 end
@@ -589,15 +797,21 @@ local function rebuildImageManifest()
     return changed
 end
 
+-- 抽佇列一樣要限開檔次數。**永久被拒**的圖（img-oversize／img-total／img-empty／img-read）
+-- 拿不到 entry，所以 scanImages 每一輪都會把它們重新排隊，而這個迴圈原本會在同一個 tick 把
+-- 整條佇列抽乾：200 張全被拒＝單 tick 開 200 個檔（實測 34ms 掉幀），把上面探測迴圈省下來的
+-- IO 原樣還回去。佇列本來就跨 tick 存活、pumpImageEncode 每 tick 都跑，攤到後續 tick 抽乾
+-- 即可，不會有任何檔名被跳過（只是被拒的 issue 晚幾個 tick 才寫進 log）。
 local function startNextImageJob()
     local state = NBServer.state
-    while #state.imageQueue > 0 do
+    local opens = 0
+    while #state.imageQueue > 0 and opens < MAX_IMAGE_OPENS do
         local name = table.remove(state.imageQueue, 1)
         if rawget(state.imageEntries, name) == nil then
+            opens = opens + 1
             local input = nil
             local ok, size = pcall(function()
-                input = getFileInput(Reader.NOTICE_ROOT .. getFileSeparator()
-                    .. Image.IMAGE_DIR .. getFileSeparator() .. name)
+                input = getFileInput(imagePath(name))
                 if not input then
                     return nil
                 end
@@ -620,12 +834,17 @@ local function startNextImageJob()
                 pcall(function()
                     input:close()
                 end)
-                addImageIssue("img-oversize", name, tostring(size))
-            elseif state.imageTotalBytes + size > Image.MAX_TOTAL_BYTES then
+                -- detail 帶上生效中的上限：兩者都是服主可調的沙盒選項（MaxImageKB／
+                -- MaxImageTotalKB），log 只寫檔案大小會讓服主誤以為撞到 MOD 寫死的牆。
+                -- 分隔用 "/"：sanitizeName 會把空白與 = 換成 _（NBCore.lua:595）。
+                addImageIssue("img-oversize", name,
+                    tostring(size) .. "/max" .. tostring(Image.maxImageBytes()))
+            elseif state.imageTotalBytes + size > Image.maxTotalBytes() then
                 pcall(function()
                     input:close()
                 end)
-                addImageIssue("img-total", name, tostring(size))
+                addImageIssue("img-total", name,
+                    tostring(size) .. "/max" .. tostring(Image.maxTotalBytes()))
             else
                 state.imageJob = {
                     name = name,
@@ -733,11 +952,16 @@ end
 local function finishImageJob(job)
     local state = NBServer.state
     Image.flushChunks(job.pending, job.chunks)
+    -- pb（probe bytes）＝開檔當下 available() 報的大小，**只**給 scanImages 的原地覆蓋
+    -- 比對用；b 是真正編出來的位元組數，manifest 與額度都用它。串流比 available() 宣告的
+    -- 早結束時（sparse file／網路掛載／尾段固定讀取失敗）b < pb，此時拿 b 去跟下一輪的
+    -- available() 比會永遠不相等 -> 該圖每輪重編一次、每輪重推 manifest 給全體玩家。
     local entry = {
         name = job.name,
         h = Image.hashHex(job.hash),
         n = #job.chunks,
         b = job.read,
+        pb = job.size,
         chunks = job.chunks,
     }
     state.imageEntries[job.name] = entry
@@ -762,13 +986,19 @@ local function pumpImageEncode()
     local state = NBServer.state
     if not state.imageJob and not startNextImageJob() then
         local published = false
-        if state.imageDirty then
-            state.imageDirty = false
-            published = rebuildImageManifest()
-        end
-        if state.imageIssuesDirty then
-            state.imageIssuesDirty = false
-            updateImageIssueLog()
+        -- 佇列還沒抽乾就不結算。startNextImageJob 回 false 有兩種可能：佇列空了，或是撞到
+        -- 每次抽取的開檔上限。後者的 issue 清單還是半套的，這裡結算會逐 tick 寫一行
+        -- 「image issues: ...」（越寫越長）並推播還缺圖的 manifest。加上這個條件，
+        -- 「回 false ＝佇列已空」這個原本就成立的前提才繼續成立。
+        if #state.imageQueue == 0 then
+            if state.imageDirty then
+                state.imageDirty = false
+                published = rebuildImageManifest()
+            end
+            if state.imageIssuesDirty then
+                state.imageIssuesDirty = false
+                updateImageIssueLog()
+            end
         end
         return published
     end
@@ -879,7 +1109,14 @@ end
 local function nextJobMessage(job)
     if job.kind == "image" then
         while job.entryIndex <= #job.entries do
-            local entry = job.entries[job.entryIndex]
+            -- 圖片 job 的 entries 是 { entry = <imageByHash 的條目>, from = <續傳起點> }。
+            -- entry 本身是共用且不可變的（imageByHash 直接餵給每位玩家），起點只能包在外面。
+            local queued = job.entries[job.entryIndex]
+            local entry = queued.entry
+            -- chunkIndex 0 = 這個條目還沒開始推，起點吃 client 指定的 from。
+            if job.chunkIndex == 0 then
+                job.chunkIndex = queued.from
+            end
             if job.chunkIndex <= entry.n then
                 local chunkIndex = job.chunkIndex
                 job.chunkIndex = job.chunkIndex + 1
@@ -890,7 +1127,7 @@ local function nextJobMessage(job)
                 }
             end
             job.entryIndex = job.entryIndex + 1
-            job.chunkIndex = 1
+            job.chunkIndex = 0
         end
         return nil, nil
     end
@@ -1003,6 +1240,22 @@ local function enqueueJob(key, language, localDelivery, manifestOnly)
     return true
 end
 
+-- 這位玩家是不是已經有「同語系、同切換序號」的完整內容 job 在推送中。
+-- enqueueJob 是覆寫語意（state.jobs[key] = {...}）：對飛行中的 job 再排一次會讓它從
+-- manifest／fileIndex=1 重頭開始。client 的切換重送每 3 秒一次，一份大內容在多人佇列
+-- （4 人／32 則／單人 8 則 per tick）下就永遠推不完，而且重複的 manifest／分塊還會吃掉
+-- 全局 32 則的額度拖慢其他玩家。job 送完即由 processQueue 移除，所以「存在」就等於「還在推」。
+-- manifestOnly 的 job 不算：它刻意只送 manifest（每份公告的 hash 都沒動），
+-- 而換語系要的是整包內容，必須讓它被覆寫掉。
+local function contentJobInFlight(username, language, seq)
+    local job = rawget(NBServer.state.jobs, username)
+    return job ~= nil
+        and job.kind == "content"
+        and job.manifestOnly ~= true
+        and job.language == language
+        and job.lseq == seq
+end
+
 -- 附加而非覆蓋：內容 job 被取代時會從 manifest 重頭重送，圖片 job 不行——client 的下一次
 -- imgreq 刻意排除了「正在接收中」的 hash，所以覆蓋掉推到一半的 job，那張圖剩下的分塊
 -- 就再也不會送出，client 只能等 60 秒逾時、累積 attempts，三次後永遠退回 [替代文字]。
@@ -1016,10 +1269,18 @@ local function enqueueImageJob(username, entries, localDelivery)
             local entry = entries[index]
             local duplicate = false
             -- 只比對「還沒送出」的區段：已送過的 hash 再被要求，代表 client 那邊失敗了，
-            -- 應該重送。#entries 上限 20，這個掃描是常數成本。
+            -- 應該重送。#entries 上限＝Image.maxImageCount()（服主政策，沙盒上界 200），
+            -- 且內層只掃「未送出」的區段（backlog 有界），成本仍然可控。
             for pendingIndex = existing.entryIndex, #existing.entries do
-                if existing.entries[pendingIndex].h == entry.h then
+                local queued = existing.entries[pendingIndex]
+                if queued.entry.h == entry.entry.h then
                     duplicate = true
+                    -- 同一個 hash 又被要求一次而且還沒送出：取兩者較早的續傳起點。
+                    -- 不取最小值的話，client 把進度整份丟掉（改送 from=1）會被排在
+                    -- 佇列裡的舊 from=k 蓋掉，前 k-1 塊永遠不會送出去。
+                    if entry.from < queued.from then
+                        queued.from = entry.from
+                    end
                     break
                 end
             end
@@ -1038,7 +1299,8 @@ local function enqueueImageJob(username, entries, localDelivery)
         localDelivery = localDelivery == true,
         entries = entries,
         entryIndex = 1,
-        chunkIndex = 1,
+        -- 0＝第一個條目還沒開始（見 nextJobMessage：起點由該條目的 from 決定）。
+        chunkIndex = 0,
     }
     pushQueue(key)
     return key
@@ -1121,6 +1383,19 @@ local function refreshSnapshot(reason, forceAll)
     local languagesSignature = table.concat(built.available, ",")
     local listChanged = languagesSignature ~= state.languagesSignature
     state.languagesSignature = languagesSignature
+    -- 服主唯一能看到「這台伺服器實際有哪些語系目錄」的地方。沙盒的 DefaultLanguage 是
+    -- 固定清單的下拉（見 sandbox-options.txt 的說明：沙盒選項在載入期就解析完，沒有執行期
+    -- 產生選項的機制），所以偵測結果只能用 log 呈現。**只在清單變化時寫**（listChanged），
+    -- 不是每輪都寫——writeLog 到 10MB 是整檔截斷而非輪替。空清單寫成 "-"，
+    -- 那代表所有語系目錄都沒有合法公告檔（bootstrap 之前就是這個狀態）。
+    if listChanged then
+        local availableText = "-"
+        if #built.available > 0 then
+            availableText = summarize(built.available, #Core.LANG_ORDER)
+        end
+        logLine("notice languages=" .. availableText
+            .. " default=" .. safeLogValue(state.defaultLanguage, LOG_VALUE_LIMIT))
+    end
 
     state.sourceCaches = built.sources
     state.languageCaches = built.caches
@@ -1242,6 +1517,7 @@ local function rebuildOnlinePlayers()
         if not rawget(online, username) then
             state.registrations[username] = nil
             state.cooldowns[username] = nil
+            state.langCooldownAt[username] = nil
             state.langSeq[username] = nil
             cancelJob(username)
             state.jobs[IMAGE_JOB_PREFIX .. username] = nil
@@ -1470,6 +1746,20 @@ local function usePushCooldown(username, command)
     return true
 end
 
+-- 語系切換的獨立桶。形狀比照 handleImgReq 的 imgCooldownAt：O(1)、只記時戳，
+-- 也不累加 registerRepeats——那是「同一個桶內重複送 register」的灌送偵測，
+-- 而每一次語系切換都是玩家的新請求，掛在它名下會被誣賴成灌送。
+local function useLanguageCooldown(username)
+    local state = NBServer.state
+    local now = getTimestampMs()
+    local lastAt = rawget(state.langCooldownAt, username) or 0
+    if lastAt ~= 0 and now - lastAt < LANGUAGE_COOLDOWN_MS then
+        return false
+    end
+    state.langCooldownAt[username] = now
+    return true
+end
+
 local function isAdmin(player)
     if not player then
         return false
@@ -1511,14 +1801,41 @@ local function handleRegister(player, args)
     end
 
     local oldLanguage = rawget(state.registrations, username)
+    local languageChanged = oldLanguage ~= nil and oldLanguage ~= language
+    local seq = normalizeLanguageSeq(args)
+    -- 這一包是不是「玩家換語系」的請求（或它的重送）：client 每次切換都會推進序號，
+    -- 首次註冊與從未切換過的重送一律送 0（見 NBClient registerOnTick）。
+    -- **不可以拿語系值去猜**：切換的第一包到達後 registrations 就已經是新語系，之後 client
+    -- 每 3 秒的補送都長得像「同語系重送」，落回 10 秒桶就會被吞掉——而且白燒 client 的
+    -- 送出額度（LANGUAGE_SWITCH_SEND_LIMIT）、還會累加 registerRepeats 把正常切換的玩家
+    -- 記成灌送。舊版 client 不送序號 -> nil -> 照舊走 register 桶（行為與過去相同）。
+    local switchRequest = seq ~= nil and seq >= 1
     state.registrations[username] = language
     state.online[username] = player
-    state.langSeq[username] = normalizeLanguageSeq(args)
-    if oldLanguage and oldLanguage ~= language then
+    state.langSeq[username] = seq
+    if languageChanged then
         cancelJob(username)
     end
 
-    if usePushCooldown(username, "register") then
+    -- 同一份切換請求已經在推送中就不要再排一次（理由見 contentJobInFlight）。
+    -- 放在冷卻判斷之前：這只是 O(1) 表查詢，而被冷卻擋下的路徑會記 langPending，
+    -- pumpLanguagePending 補推時也會撞上同一個判斷。
+    if switchRequest and contentJobInFlight(username, language, seq) then
+        state.langPending[username] = nil
+        writeReconcile(false, nil)
+        return
+    end
+
+    -- 換語系（含它的重送）走獨立短桶（LANGUAGE_COOLDOWN_MS=3s，與 client 鏡像同值）；
+    -- 首次註冊與 retryRegister 的重送仍吃 register/resync 那個 10 秒桶，灌送防護不放寬。
+    local allowed
+    if switchRequest then
+        allowed = useLanguageCooldown(username)
+    else
+        allowed = usePushCooldown(username, "register")
+    end
+
+    if allowed then
         -- 成功排入才算這次待推處理完；enqueueJob 在語系快取全空時會回 false，
         -- 先清 langPending 會把這次切換整個弄丟（register 路徑有 retryRegister 兜底，
         -- 但 langPending 是唯一能讓 server 自己補推的機制）。
@@ -1527,20 +1844,22 @@ local function handleRegister(player, args)
         else
             state.langPending[username] = true
         end
-    elseif oldLanguage and oldLanguage ~= language then
-        -- 冷卻擋下「語系變更」時**不可以**只改註冊表就算了：飛行中的 job 剛被 cancelJob 砍掉、
+    elseif switchRequest or languageChanged then
+        -- 冷卻擋下切換請求時**不可以**只改註冊表就算了：飛行中的 job 可能剛被 cancelJob 砍掉、
         -- 新 job 沒排進去，而 refreshSnapshot 只推「內容有變的語系」，server 永遠不會自己補推。
         -- client 端送出即視為成功（pending 已清、registerLanguage 已樂觀寫成新值），再選同一個
         -- 語系會被當成 unchanged 直接吞掉 -> 玩家永久停在舊語系。改成記一筆待推，
-        -- 由 pumpLanguagePending 在冷卻到期後補上（推送頻率仍受同一個冷卻桶限制）。
+        -- 由 pumpLanguagePending 在冷卻到期後補上（推送頻率仍受語系桶限制）。
+        -- languageChanged 也要收：舊版 client 不送序號，它換語系一樣得補推。
         state.langPending[username] = true
     end
     writeReconcile(false, nil)
 end
 
 -- 冷卻期間被延後的語系變更，冷卻一到就補推。每秒跑一次（維護輪）。
--- 冷卻鍵仍是同一個桶（推送頻率不放寬），但 command 不寫 "register"：那個名字會累加
--- registerRepeats，本函式每秒重試一次，5 秒後就會誣賴玩家在灌 register。
+-- 用的是語系桶（LANGUAGE_COOLDOWN_MS）：這裡補推的就是被那個桶擋下的那一次變更，
+-- 換成 register 桶只會把玩家的等待拉回 10 秒。順帶也避開了 registerRepeats 的累加——
+-- 本函式每秒重試一次，掛在 "register" 名下 5 秒就會誣賴玩家在灌 register。
 local function pumpLanguagePending()
     local state = NBServer.state
     local username
@@ -1548,7 +1867,11 @@ local function pumpLanguagePending()
         local language = rawget(state.registrations, username)
         if not language or not rawget(state.online, username) then
             state.langPending[username] = nil
-        elseif usePushCooldown(username, "langswitch") then
+        elseif contentJobInFlight(username, language, rawget(state.langSeq, username)) then
+            -- 已經在推送中（多半是 client 的重送先到）。再排一次會讓它從 manifest 重頭開始，
+            -- 理由見 contentJobInFlight；這一筆待推的目的已經達成，直接清掉。
+            state.langPending[username] = nil
+        elseif useLanguageCooldown(username) then
             -- 同 handleRegister：成功才清。失敗時留著，下一輪冷卻到期再試（失敗原因由
             -- enqueueJob 內的節流 log 呈現），否則這次語系切換會靜默遺失且無法自癒。
             if enqueueJob(username, language, false) then
@@ -1617,7 +1940,8 @@ local function handleReload(player)
     writeReconcile(false, nil)
 end
 
--- imgreq：client 只要求「本機快取缺少的 hash」。防 DoS 的形狀與 resync 一致——
+-- imgreq：client 只要求「本機快取缺少的 hash」，並可帶一個**續傳起點**（args.from，
+-- 與 hashes 平行的陣列）只要缺的那幾塊。防 DoS 的形狀與 resync 一致——
 -- 獨立 per-player 冷卻桶（不與 register/resync 共用，避免進場的 register 吃掉冷卻造成靜默丟棄）、
 -- 數量上限、且**只吃預先分塊好的快取**，絕不觸發重新讀檔或重新編碼。
 local function handleImgReq(player, args)
@@ -1637,6 +1961,12 @@ local function handleImgReq(player, args)
     if type(hashes) ~= "table" then
         return
     end
+    -- 續傳起點（與 hashes 平行的陣列，from[i] 對應 hashes[i]）。舊版 client 不送這個欄位，
+    -- 缺值／不合法一律當 1＝從頭送，也就是續傳之前的行為。
+    local froms = rawget(args, "from")
+    if type(froms) ~= "table" then
+        froms = nil
+    end
 
     -- 冷卻與輸入上限都必須在掃描**之前**：舊版先掃完整份 hashes 才檢查冷卻，而且沒有比對到
     -- 任何一張時連冷卻時戳都不寫，於是「每 tick 送幾萬個假 hash」可以在 OnClientCommand
@@ -1648,9 +1978,12 @@ local function handleImgReq(player, args)
     end
     state.imgCooldownAt[username] = now
 
+    -- 掃描量的上界＝這台伺服器可能存在的圖片張數（服主政策）。client 正常一次只要 4 個 hash，
+    -- 這個夾限是擋惡意 client 送幾萬個假 hash 在主執行緒上跑 string.match。
     local scanLimit = #hashes
-    if scanLimit > Image.MAX_IMAGE_COUNT then
-        scanLimit = Image.MAX_IMAGE_COUNT
+    local maxCount = Image.maxImageCount()
+    if scanLimit > maxCount then
+        scanLimit = maxCount
     end
 
     local entries = {}
@@ -1663,8 +1996,19 @@ local function handleImgReq(player, args)
             seen[hash] = true
             local entry = rawget(state.imageByHash, hash)
             if entry then
-                entries[#entries + 1] = entry
-                chunkCount = chunkCount + entry.n
+                -- 起點是信任邊界：整數、落在 [1, entry.n] 才採用。夾在上界之內就不可能
+                -- 讓 nextJobMessage 去取一個不存在的 chunks[i]；不合法就當 1（送整張），
+                -- 亦即壞掉的 from 只會多送、不會少送或炸掉。
+                local from = 1
+                if froms then
+                    local requested = tonumber(rawget(froms, index))
+                    if requested and requested == math.floor(requested)
+                        and requested >= 1 and requested <= entry.n then
+                        from = requested
+                    end
+                end
+                entries[#entries + 1] = { entry = entry, from = from }
+                chunkCount = chunkCount + (entry.n - from + 1)
             end
         end
     end
@@ -1764,6 +2108,7 @@ function NBServer.onServerStarted()
     state.imageIssueSignature = nil
     state.imageIssuesDirty = false
     state.imageDirty = false
+    state.imageProbeCursor = nil
 
     if isServer() then
         state.localLanguage = nil
@@ -1772,6 +2117,7 @@ function NBServer.onServerStarted()
     end
 
     bootstrapIfEmpty()
+    ensureImagesReadme()
     refreshSnapshot("startup", true)
     state.lastPollMs = getTimestampMs()
     rebuildOnlinePlayers()
@@ -1822,6 +2168,14 @@ end
 -- 投遞泵的一個 tick。對外暴露只為了讓 scripts/test_mdparser.lua 能直接實跑限流契約
 -- （4 人／32 則／單人 8 則都是每 tick，光讀碼保證不了）；正式路徑仍由 onTickEvenPaused 呼叫。
 NBServer.processQueue = processQueue
+
+-- 同上：讓測試能直接實跑「原地覆蓋偵測」的判定（大小比對、正在編碼中的檔名要跳過、
+-- 開檔失敗不得丟 entry、移除後總量重算），這些光讀碼保證不了。
+NBServer.scanImages = scanImages
+NBServer.ensureImagesReadme = ensureImagesReadme
+-- 同上：唯有實跑一次完整編碼才能釘住 entry.pb（原地覆蓋比對的基準）確實來自
+-- 開檔時的 available()，而不是實際讀到的位元組數——兩者在 short-read 時會分岔。
+NBServer.pumpImageEncode = pumpImageEncode
 
 if not NBServer._eventsInstalled then
     Events.OnServerStarted.Add(function()

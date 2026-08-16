@@ -1,0 +1,96 @@
+VERSION = 1,
+
+/* Minidoracat Notice Board */
+
+/* page = 為必要屬性：缺少時選項不會出現在沙盒選項畫面，SandboxVars.MinidoracatNB 會是 nil，
+   所有設定靜默退回程式碼內建預設值。頁名本身需要 Sandbox_MinidoracatNB 翻譯鍵。 */
+
+option MinidoracatNB.PopupMode
+{
+    type = enum,
+    numValues = 3,
+    default = 2,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_PopupMode,
+    valueTranslation = MinidoracatNB_PopupMode,
+}
+
+option MinidoracatNB.PollIntervalSeconds
+{
+    type = integer,
+    min = 10,
+    max = 3600,
+    default = 60,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_PollIntervalSeconds,
+}
+
+/* 下拉選單（enum）而不是自由輸入的字串：手打代碼打錯（小寫 jp、寫成 zh_TW）會靜默退回 EN，
+   只有 server log 留一行警告，服主通常不會發現。enum 的值是 1..numValues 的索引
+   （CustomEnumSandboxOption.java:17-33），顯示文字靠 valueTranslation 的 _optionN 翻譯鍵。
+
+   **這是固定清單，不是「偵測伺服器上實際存在的語系目錄」**——沙盒選項在載入期就被
+   ScriptParser 解析完（CustomSandboxOptions.java:80-105），沒有任何執行期產生選項的機制；
+   而且沙盒是在建立世界時設定的，那時公告目錄往往還不存在（首次啟動才 bootstrap 建 EN/CH）。
+   想知道這台伺服器實際有哪些語系目錄：看 server log 的 `notice languages=` 那行
+   （每次掃描結果變化時寫一次），或在遊戲內開面板的「語言」選單（那份才是偵測式的）。
+
+   numValues 必須等於 NBCore.LANG_ORDER 的長度，default 是 EN 在該清單中的索引（第 8 個）；
+   三者（本檔／LANG_ORDER／四語的 _option1..29）由 scripts/test_mdparser.lua 的三方一致性
+   測試釘住，改一處沒改另一處會紅。 */
+option MinidoracatNB.DefaultLanguage
+{
+    type = enum,
+    numValues = 29,
+    default = 8,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_DefaultLanguage,
+    valueTranslation = MinidoracatNB_DefaultLanguage,
+}
+
+/* boolean 的 default 是必填：缺了整個選項會被引擎靜默丟棄
+   （CustomBooleanSandboxOption.java:14-21，值走 Boolean.parseBoolean）。 */
+option MinidoracatNB.NotifySound
+{
+    type = boolean,
+    default = true,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_NotifySound,
+}
+
+/* 以下三個圖片上限的 min/max/default 必須與 NBImage.lua 的常數逐項相同
+   （scripts/test_mdparser.lua 有三方一致性測試：NBImage <-> 本檔 <-> images/README.txt）。
+   integer 的 min/max/default 三值缺一，該選項會被引擎靜默丟棄。
+   數值的推算過程（張數的封包硬界、總量的客戶端吞吐、天花板與客戶端保護的關係）
+   一律寫在 NBImage.lua 的常數註解，本檔不重複。 */
+
+/* 上限 4096 = 總量上限的下界 MIN_TOTAL_KB，確保任何合法組合下單張都不可能超過總量。 */
+option MinidoracatNB.MaxImageKB
+{
+    type = integer,
+    min = 64,
+    max = 4096,
+    default = 512,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_MaxImageKB,
+}
+
+option MinidoracatNB.MaxImageCount
+{
+    type = integer,
+    min = 1,
+    max = 200,
+    default = 20,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_MaxImageCount,
+}
+
+option MinidoracatNB.MaxImageTotalKB
+{
+    type = integer,
+    min = 4096,
+    max = 16384,
+    default = 4096,
+    page = MinidoracatNB,
+    translation = MinidoracatNB_MaxImageTotalKB,
+}

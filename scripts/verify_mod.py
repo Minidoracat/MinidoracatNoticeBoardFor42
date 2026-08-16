@@ -23,6 +23,24 @@
  11. CHANGELOG 洩漏掃描     — bullet 會被整段貼到公開的 Workshop 更新說明；掃基礎設施
                            樣式（/home/ 路徑、IP、SteamID64、ssh、主機名）當最後防線。
                            攻擊配方與玩家識別資訊機器認不出來，靠撰寫規則（AGENTS.md）
+ 12. Lua 單元測試          — scripts/test_mdparser.lua（MDParser 純模組）與
+                           scripts/test_nbpanel.lua（載入原版 ISRichTextPanel + NBPanel
+                           實跑預檢）。需要 PATH 有 lua；test_nbpanel 另需本機有 PZ
+                           安裝，缺任一者列為 SKIP 而非 PASS
+ 13. UI 皮膚貼圖           — 42/media/ui/NoticeBoard/ 的 5 張 PNG 逐張過
+                           scripts/gen_ui_textures.py 的 verify_image（尺寸／IHDR／純白／
+                           NinePatchTexture 同邏輯反解析切線／拉伸區逐列相同／參考表）。
+                           Lua 測試全用 stub、從不讀 PNG，貼圖壞了只會靜默退回直角，
+                           這是唯一會擋住壞資產上 Workshop 的閘門。缺 Pillow 列 SKIP
+ 14. 提示音音檔           — 42/media/sound/MinidoracatNBNotify.wav 過
+                           scripts/prep_notify_sound.py 的 verify_notify_sound：未壓縮
+                           16-bit PCM／聲道 1-2／取樣率白名單／長度 ≤5s／峰值在
+                           0.05-0.60 之間。**刻意只驗規格不比對內容**——音效是服主可以
+                           替換的（docs/ADMIN_GUIDE.md「換掉提示音」）。playUISound 對
+                           找不到的音效名是靜默無聲，Lua 測試也只斷言傳入的名字、從不讀
+                           .wav，所以這是唯一會擋住「音檔不見／格式壞掉／長到變背景音樂／
+                           大聲到炸耳」的閘門（自帶音效不受玩家音量選項影響，峰值上限
+                           是硬需求）。原創備援音效由 scripts/gen_notify_sound.py 生成
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
 pz-mod-template（見 AGENTS.md）。
@@ -296,6 +314,80 @@ if os.path.isfile(_cl):
                 if mm:
                     leaks.append(f"CHANGELOG.md:{lineno} {desc}（{mm.group()[:40]}）")
     fail("CHANGELOG 無基礎設施洩漏樣式", leaks) if leaks else ok("CHANGELOG 無基礎設施洩漏樣式")
+
+# ---- 12. Lua 單元測試 ----
+# 這些測試是 MDParser／NBPanel 唯一的行為防線（luac -p 只驗語法），沒有進閘門就等於
+# 下一個人不會跑到。test_nbpanel 依賴本機 PZ 安裝、找不到時自己以退出碼 0 跳過，
+# 所以這裡認輸出開頭的 SKIP 字樣，把「沒跑」列成 SKIP 而不是 PASS。
+lua_bin = shutil.which("lua")
+LUA_TESTS = [t for t in ("scripts/test_mdparser.lua", "scripts/test_nbpanel.lua")
+             if os.path.isfile(os.path.join(REPO, t))]
+if not lua_bin:
+    skip("Lua 單元測試", "PATH 沒有 lua")
+elif not LUA_TESTS:
+    skip("Lua 單元測試", "找不到 scripts/test_*.lua")
+else:
+    for t in LUA_TESTS:
+        r = subprocess.run([lua_bin, t], capture_output=True, cwd=REPO)
+        out = (r.stdout + r.stderr).decode("utf-8", "replace").strip()
+        lines = out.splitlines() or [f"rc={r.returncode}"]
+        if r.returncode != 0:
+            fail(f"Lua 單元測試（{t}）", lines[-3:])
+        elif lines[0].startswith("SKIP"):
+            skip(f"Lua 單元測試（{t}）", lines[0])
+        else:
+            ok(f"Lua 單元測試（{t}：{lines[-1]}）")
+
+# ---- 13. UI 皮膚貼圖 ----
+# NBSkin 對缺圖／壞圖一律靜默退回 drawRect（設計如此，面板不能因為貼圖進不去），兩支 Lua
+# 測試也都用 stub、不讀 PNG，所以壞資產不會讓任何測試變紅。這裡重用生成腳本自帶的
+# verify_image：尺寸／IHDR／全白 RGB／照 NinePatchTexture.java:262-298 反解析第一列＋第一欄
+# 的切線＝(6,4,6)×(6,4,6)｜(6,10,0)／拉伸區逐列逐欄相同／與參考 alpha 表逐像素比對。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from gen_ui_textures import OUTPUT_NAMES as _TEX_NAMES, verify_image as _verify_texture
+except ImportError as _e:   # Pillow 沒裝（gen_ui_textures 頂層 import PIL）
+    skip("UI 皮膚貼圖", f"無法載入 gen_ui_textures（{_e}）")
+else:
+    from pathlib import Path as _Path
+    _tex_problems = []
+    _tex_count = 0
+    for m in MEDIA_DIRS:
+        tex_dir = os.path.join(m, "ui", "NoticeBoard")
+        if not os.path.isdir(tex_dir):
+            continue
+        for name in _TEX_NAMES:
+            _tex_count += 1
+            path = os.path.join(tex_dir, name)
+            if not os.path.isfile(path):
+                _tex_problems.append(f"{os.path.relpath(path, REPO)}: 檔案不存在")
+                continue
+            try:
+                _verify_texture(_Path(path))
+            except Exception as e:   # AssertionError／PIL 解碼錯誤都算壞
+                _tex_problems.append(f"{os.path.relpath(path, REPO)}: {type(e).__name__}: {e}")
+    if _tex_count == 0:
+        skip("UI 皮膚貼圖", "找不到 42/media/ui/NoticeBoard/")
+    else:
+        fail("UI 皮膚貼圖（gen_ui_textures.verify_image）", _tex_problems) if _tex_problems \
+            else ok(f"UI 皮膚貼圖（{_tex_count} 張過 verify_image）")
+
+# ---- 14. 提示音音檔 ----
+# 與貼圖同一個理由：playUISound 對「找不到音效名」是靜默無聲、不拋錯
+# （SoundManager.java:193-227 找不到 GameSound 就 return 0），Lua 測試也只 stub
+# getSoundManager 斷言傳入的名字，從不讀 .wav。所以音檔不見／壞掉不會讓任何測試變紅。
+# 驗的是**資產規格**而不是「等於某一份特定 PCM」：音效是服主可以替換的
+# （見 docs/ADMIN_GUIDE.md「換掉提示音」），閘門要擋的是引擎讀不了的格式、
+# 長到變背景音樂、以及大聲到炸耳——自帶音效不受玩家音量控制，峰值上限是硬需求。
+try:
+    from prep_notify_sound import DEFAULT_OUT as _SND_REL, verify_notify_sound as _verify_sound
+except ImportError as _e:
+    skip("提示音音檔", f"無法載入 prep_notify_sound（{_e}）")
+else:
+    _snd_path = os.path.join(REPO, _SND_REL)
+    _snd_problems = _verify_sound(_snd_path)
+    fail("提示音音檔（prep_notify_sound.verify_notify_sound）", _snd_problems) if _snd_problems \
+        else ok(f"提示音音檔（{os.path.basename(_snd_path)} 過規格檢查）")
 
 # ---- 總結 ----
 print()

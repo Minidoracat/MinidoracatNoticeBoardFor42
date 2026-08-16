@@ -35,6 +35,33 @@ NBCore.LANGS = {
     UA = true,
 }
 
+-- 上面那張表的**有序**版本。沙盒的 enum 選項只會把「第幾個」（1..N）交給 Lua
+-- （CustomEnumSandboxOption.java:7-33 只存 numValues／default，顯示文字靠
+-- valueTranslation 的 _optionN 翻譯鍵），所以索引→代碼的對應必須是一份寫死的順序：
+-- LANGS 是 map，pairs 的走訪順序在 Kahlua 不保證，拿它產生索引會在不同版本間漂移。
+-- **順序＝字母序，且與 sandbox-options.txt 的 numValues 與四語的 _option1..N 逐項對齊**
+-- （scripts/test_mdparser.lua 有三方一致性測試釘住，改動任一處都會紅）。
+-- 新增語系時：LANGS 加一筆、這裡按字母序插入、numValues +1、四語各補一個 _optionN，
+-- 並注意**插在中間會平移後面所有索引**（既有 ini 存的數字會指到別的語系）——
+-- 要嘛只往尾端加，要嘛接受服主需要重設這個選項。
+NBCore.LANG_ORDER = {
+    "AR", "CA", "CH", "CN", "CS", "DA", "DE", "EN", "ES", "ES_CL",
+    "ES_MX", "FI", "FR", "HU", "ID", "IT", "JP", "KO", "NL", "NO",
+    "PL", "PT", "PTBR", "RO", "RU", "STREW", "TH", "TR", "UA",
+}
+
+-- 沙盒 enum 的值（1..#LANG_ORDER）換成語系代碼。不合法一律回 nil，由呼叫端決定 fallback。
+function NBCore.languageByIndex(index)
+    if type(index) ~= "number" or index ~= math.floor(index) then
+        return nil
+    end
+    local code = NBCore.LANG_ORDER[index]
+    if type(code) ~= "string" or rawget(NBCore.LANGS, code) ~= true then
+        return nil
+    end
+    return code
+end
+
 -- 面板語系選單的「跟隨遊戲語系」哨兵值。刻意小寫，永遠不可能與 LANGS 的代碼相撞。
 NBCore.AUTO_LANGUAGE = "auto"
 -- 語系清單的上界（信任邊界，比照 NBReader.MAX_MANIFEST_FILES）：白名單本身只有 29 個，
@@ -505,15 +532,20 @@ end
 --   "<" ">"：paginate 的 tokenizer 以此判定 command 邊界（:462、:468）。
 --
 -- 依「顏色護欄救不救得回來」分成兩份，因為兩個使用端要的答案不同：
---   COLOR_HAZARDS：只改 self.rgb[currentLine] 與 rgbCurrent（:68-121），
---     PUSHRGB/POPRGB 護欄抵銷得掉 -> **圖照畫、路徑不必改**。
---   COMMAND_HAZARDS：會拆寬高、解析不存在的參數、或改動 x／字型（:122-351），
---     護欄救不了；出現在執行期改不動的路徑（玩家家目錄）時只能整組退回 alt 占位。
+--   COLOR_HAZARDS：只覆寫 self.rgb[currentLine] 與 rgbCurrent、**不動 rgbStack**
+--     （:81-121），護欄的 PUSH/POP 抵銷得掉 -> **圖照畫、路徑不必改**。
+--   COMMAND_HAZARDS：會動堆疊、拆寬高、解析不存在的參數、或改動 x／字型
+--     （:68-80、:122-351），護欄救不了；出現在執行期改不動的路徑（玩家家目錄）時
+--     只能整組退回 alt 占位。
+-- PUSHRGB:／POPRGB 屬後者而**不是**顏色類：:69 是 table.insert(rgbStack, ...)、
+-- :78 是 table.remove(...)，動的是堆疊本身。護欄自己就是一組 PUSH/POP，路徑裡的
+-- POPRGB 會先把護欄剛推進去的那層 pop 掉，護欄自己的 POPRGB 再打在空堆疊上變 no-op
+-- -> 圖片所在的整個粗體／連結區段從圖片之後整段掉色，包不包護欄結果相同。
 -- NBImageCache 用 COMMAND_HAZARDS 判定「快取絕對路徑不可用」，NBPanel 用 COLOR_HAZARDS
 -- 判定「這個 tag 要包上顏色護欄」。把顏色類也拿去拒絕快取，等於讓 Windows 帳號叫
 -- FRED／GREEN（全大寫才命中）的玩家永遠看不到任何同步圖，而那正是護欄處理得了的情形。
 NBCore.COLOR_HAZARDS = {
-    "PUSHRGB:", "POPRGB", "RGB:", "GHC", "BHC",
+    "RGB:", "GHC", "BHC",
     "RED", "ORANGE", "GREEN",
 }
 
@@ -521,6 +553,7 @@ NBCore.COLOR_HAZARDS = {
 -- 「救得回來 / 救不回來」兩類而不必為它開第三類，一併留在拒絕側。
 NBCore.COMMAND_HAZARDS = {
     ",", "<", ">",
+    "PUSHRGB:", "POPRGB",
     "SIZE:", "IMAGE:", "IMAGECENTRE:", "VIDEOCENTRE:",
     "INDENT:", "JOYPAD:", "SETX:", "SPACE",
 }

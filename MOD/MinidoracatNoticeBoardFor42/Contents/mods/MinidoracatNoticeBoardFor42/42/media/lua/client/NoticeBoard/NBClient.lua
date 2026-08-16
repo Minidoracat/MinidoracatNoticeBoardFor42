@@ -26,18 +26,22 @@ local READ_STATE_FILE = Reader.NOTICE_ROOT .. getFileSeparator() .. "readstate.i
 -- 語系偏好是**全域**的玩家設定，不進 readstate.ini（那份是 per-server 的已讀狀態，
 -- 而且每次標記已讀都會整檔重寫）。另開一個簡單的 key=value ini。
 local SETTINGS_FILE = Reader.NOTICE_ROOT .. getFileSeparator() .. "settings.ini"
--- server 端的 register/resync 共用同一個 per-player 冷卻桶（NBServer REQUEST_COOLDOWN_MS=10s）。
--- client 端鏡像同一個桶，語系切換才能回報「還要等幾秒」而不是靜默失敗。
-local SERVER_COOLDOWN_MS = 10000
+-- 語系切換在 server 端有**自己的**短冷卻桶（NBServer LANGUAGE_COOLDOWN_MS=3s，與
+-- register/resync 的 10 秒桶分開，理由見該常數）。client 端鏡像同一個桶，切換才能回報
+-- 「還要等幾秒」而不是送出去被靜默丟棄。register/resync 那個桶這邊不需要鏡像：
+-- registerOnTick／retryRegister 自己的 REGISTER_RETRY_MS 節流就是它的上游。
+local LANGUAGE_COOLDOWN_MS = 3000
 local REGISTER_RETRY_MS = 5000
 local REGISTER_RETRY_LIMIT = 6
 local REGISTER_BACKOFF_MS = 60000
 local RESYNC_INTERVAL_MS = 10000
 local PENDING_TIMEOUT_MS = 10000
 local RESYNC_LIMIT = 3
--- 換語系的 register 最多送幾次。送出成功不代表 server 採用（register 冷卻可能擋下），
--- 所以要重送到收到該語系的快照為止；但也不能無限重送，否則卡住的 client 會永遠每 10 秒灌一包。
-local LANGUAGE_SWITCH_SEND_LIMIT = 3
+-- 換語系的 register 最多送幾次。送出成功不代表 server 採用（語系冷卻可能擋下），
+-- 所以要重送到「manifest 帶回這一次的序號」為止；但也不能無限重送，否則卡住的 client
+-- 會永遠每 3 秒灌一包。5 次 x LANGUAGE_COOLDOWN_MS = 15 秒的窗（桶從 10 秒縮到 3 秒後，
+-- 沿用舊的 3 次只剩 9 秒，異常時會在 server 的補推機制還沒跑完就先跳「切換未完成」）。
+local LANGUAGE_SWITCH_SEND_LIMIT = 5
 -- resync 用盡後，同一 v/sid 上仍每 5 分鐘重試一次，避免「manifest 到了但 chunk 永遠湊不齊」時整場凍結。
 local RESYNC_RESET_MS = 300000
 -- settings.ini 落地失敗後的重試間隔。磁碟滿／檔案被鎖是會恢復的，記憶體裡已經是新值，
@@ -77,6 +81,9 @@ local function newState()
         lastSettingsRetryMs = 0,
         registerRetryCount = 0,
         lastRegisterAttemptMs = 0,
+        -- 語系切換的冷卻鏡像（對應 server 的 langCooldownAt）。與 lastRegisterAttemptMs
+        -- 分開：resync／register 重送不得吃掉玩家換語系的額度。
+        lastLanguageAttemptMs = 0,
         registerBackoffLogged = false,
         firstManifestReceived = false,
         observedManifest = nil,
@@ -483,29 +490,32 @@ local function applySnapshot(snapshot)
     -- 序號是單調遞增的，舊快照帶的一定是舊序號，不可能誤判。
     -- 舊版 server 沒有 lseq 欄位（nil）-> 沿用既有的語系值比對，互通不受影響。
     local snapshotSeq = rawget(snapshot, "lseq")
+    local snapshotLanguage = rawget(snapshot, "lang")
+    -- 語系相符：舊版 server 不送 lang、或 client 還沒 register 過時一律視為相符。
+    local languageMatches = snapshotLanguage == nil
+        or state.registerLanguage == nil
+        or snapshotLanguage == state.registerLanguage
     if snapshotSeq ~= nil then
-        state.languageSwitchMatched = snapshotSeq == state.langSeq
+        -- 序號**與**語系都要相符才算完成。只比序號會被「帶著這一次的序號、內容卻是舊語系」
+        -- 的快照騙過：resync 在 server 端已有註冊時會忽略 args.lang（NBServer handleResync），
+        -- 但仍把 client 送來的新序號寫進 state.langSeq，推回來的就是這種快照。判成完成會清掉
+        -- pending，pumpLanguageSwitch 不再重送，玩家就永久停在舊語系。
+        state.languageSwitchMatched = snapshotSeq == state.langSeq and languageMatches
     else
-        local snapshotLanguage = rawget(snapshot, "lang")
-        state.languageSwitchMatched = snapshotLanguage == nil
-            or state.registerLanguage == nil
-            or snapshotLanguage == state.registerLanguage
+        state.languageSwitchMatched = languageMatches
     end
     if state.languageSwitchMatched then
         state.languageSwitchPending = false
         state.languageSwitchSends = 0
         state.languageSwitchExhausted = false
-    elseif snapshotSeq ~= nil
-        and state.registerLanguage ~= nil
-        and rawget(snapshot, "lang") ~= state.registerLanguage then
+    elseif snapshotSeq ~= nil and not languageMatches then
         -- 序號不符**而且**畫面上的語系不是玩家要求的那一個 -> 這次切換確實還沒生效，重新掛上
-        -- pending。正常流程走不到這裡（會 mismatch 時 pending 本來就是 true），這是防呆：
-        -- server->client 的 Lua 命令封包走 RELIABLE 而非 RELIABLE_ORDERED
-        -- （PacketTypes.java:498 的 ClientCommand(1, 2, ...) -> UdpConnection.java:303-318 ->
-        -- RakNetPeerInterface.java:43-44 的 RELIABLE = 2），不保證順序。萬一某次亂序讓
-        -- pending 已經清掉又收到不符的快照，沒有這行就再也沒有任何自癒路徑——
-        -- pumpLanguageSwitch 看 pending、選單重選同一語系又會被 unchanged 早退吞掉。
-        -- 序號不符但語系相符（同語系的舊快照）不算分岔：畫面語系已經是對的，不需要重送。
+        -- pending。序號不符但語系相符（同語系的舊快照）不算分岔：畫面語系已經是對的。
+        -- 這條同時是亂序的防呆：server->client 的 Lua 命令封包走 RELIABLE 而非
+        -- RELIABLE_ORDERED（PacketTypes.java:498 的 ClientCommand(1, 2, ...) ->
+        -- UdpConnection.java:303-318 -> RakNetPeerInterface.java:43-44 的 RELIABLE = 2），
+        -- 不保證順序。萬一亂序讓 pending 已經清掉又收到不符的快照，沒有這行就再也沒有任何
+        -- 自癒路徑——pumpLanguageSwitch 看 pending、選單重選同一語系又會被 unchanged 早退吞掉。
         state.languageSwitchPending = true
     end
 
@@ -598,13 +608,13 @@ local function sendLanguageRegister(now)
         return "sent", 0
     end
 
-    local waited = now - state.lastRegisterAttemptMs
-    if state.lastRegisterAttemptMs ~= 0 and waited < SERVER_COOLDOWN_MS then
-        return "cooldown", math.ceil((SERVER_COOLDOWN_MS - waited) / 1000)
+    local waited = now - state.lastLanguageAttemptMs
+    if state.lastLanguageAttemptMs ~= 0 and waited < LANGUAGE_COOLDOWN_MS then
+        return "cooldown", math.ceil((LANGUAGE_COOLDOWN_MS - waited) / 1000)
     end
 
     -- 送失敗也記時戳：否則 pending 會每個 tick 重試一次，變成逐 tick 灌送。
-    state.lastRegisterAttemptMs = now
+    state.lastLanguageAttemptMs = now
     if not sendCommand("register",
         { lang = state.registerLanguage, lseq = state.langSeq }, now) then
         return "failed", 0
@@ -613,9 +623,18 @@ local function sendLanguageRegister(now)
     return "sent", 0
 end
 
-local function pumpLanguageSwitch(now)
+local function pumpLanguageSwitch(receiver, now)
     local state = NBClient.state
     if not state.languageSwitchPending then
+        return
+    end
+    -- manifest 已經帶回這一次的序號**且語系相符** = server 已受理、正在推分塊，這裡必須停手：
+    -- server 的 enqueueJob 是覆寫語意，再送一次 register 會讓推送從 manifest／fileIndex=1
+    -- 重頭開始，一份大內容在多人佇列（4 人／32 則／單人 8 則 per tick）下就永遠推不完。
+    -- 「manifest 到了但分塊湊不齊」本來就有專屬路徑：requestResync 的 pending-timeout。
+    -- 語系也要比：只比序號會被 resync 回帶新序號的舊語系 manifest 騙過（見 applySnapshot）。
+    if rawget(receiver, "lseq") == state.langSeq
+        and rawget(receiver, "language") == state.registerLanguage then
         return
     end
     -- 上限用盡後就停手，但 pending 維持 true：玩家在選單再點一次同一個語系仍然送得出去
@@ -737,8 +756,9 @@ local function requestResync(receiver, now)
     end
 
     state.lastResyncAttemptMs = now
-    -- server 的 register/resync 共用同一個冷卻桶（NBServer usePushCooldown）；client 端的鏡像
-    -- 也必須一起推進，否則語系切換會以為還有額度、送出去卻被靜默丟棄。
+    -- register 與 resync 在 server 端共用同一個冷卻桶（NBServer usePushCooldown）；client 端的
+    -- 鏡像也必須一起推進，否則 retryRegister 會以為還有額度、送出去卻被靜默丟棄。
+    -- 語系切換不在這裡：它走 server 的獨立語系桶，鏡像是 lastLanguageAttemptMs。
     state.lastRegisterAttemptMs = now
     -- 帶著 lang：若 server 端註冊已遺失，resync 可當作重新註冊處理（見 NBServer.handleResync）。
     -- 也帶著 lseq：重送回來的快照必須帶著 client 目前等待的序號，否則會被判為不相符而白等。
@@ -769,7 +789,7 @@ local function maintenanceOnTick()
     end
 
     observeReceiver(receiver, now)
-    pumpLanguageSwitch(now)
+    pumpLanguageSwitch(receiver, now)
     retryRegister(now)
     requestResync(receiver, now)
 end

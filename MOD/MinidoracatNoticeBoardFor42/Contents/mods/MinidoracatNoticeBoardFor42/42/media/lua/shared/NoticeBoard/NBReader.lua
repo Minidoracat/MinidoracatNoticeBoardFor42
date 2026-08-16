@@ -185,6 +185,19 @@ local function truncateTitle(title)
     return string.sub(title, 1, endIndex)
 end
 
+-- 標題行的圖片標記不能原樣當頁籤名稱：`#` 標題現在明確支援放圖片（見 ADMIN_GUIDE
+-- 「顯示與排錯」），而第一個 H1 同時是頁籤名稱與新內容 toast 的內容，路徑會整串露出來，
+-- 頁籤寬度又是 MeasureStringX(title)+28 算的（NBPanel.lua:1216），一條路徑就把頁籤撐爆。
+-- markdown 的 `![替代文字](路徑)` 留下替代文字（那正是「這張圖在說什麼」）；原生
+-- `<IMAGE:>` / `<IMAGECENTRE:>` 沒有替代文字可留，整段拿掉。
+-- 只處理圖片：`**粗體**`／`` `程式碼` ``／`[連結](url)` 的記號留著仍讀得出標題文字，
+-- 而且要剝乾淨就得把 MDParser 的行內解析整套搬進 NBReader（server 端也跑），不划算。
+local function stripImageMarkup(title)
+    title = string.gsub(title, "!%[([^%]]-)%]%(([^%)]-)%)", "%1")
+    title = string.gsub(title, "<IMAGECENTRE:[^>]->", "")
+    return (string.gsub(title, "<IMAGE:[^>]->", ""))
+end
+
 local function extractTitle(content, fileName)
     local position = 1
     while position <= string.len(content) do
@@ -200,7 +213,7 @@ local function extractTitle(content, fileName)
 
         local title = string.match(line, "^%s*#%s+(.+)$")
         if title then
-            title = trim(title)
+            title = trim(stripImageMarkup(title))
             if title ~= "" then
                 return truncateTitle(title)
             end
@@ -566,20 +579,36 @@ local function validateImageDescriptor(descriptor)
     local hash = rawget(descriptor, "h")
     local count = rawget(descriptor, "n")
     local bytes = rawget(descriptor, "b")
-    -- 用 Sandbox 解析後的上限，不能用常數：服主調高後 server 會送出更大的圖，
+    -- 用 Sandbox 解析後的上限，不能用預設常數：服主調高後 server 會送出更大的圖，
     -- 這裡若仍拿 512KB 比對就會把整份圖片清單判為無效。
+    -- 但**宣告值不可全信**：MP 下 sandbox 是 server 推給 client 的，所以再夾一次客戶端
+    -- 硬天花板（寫死常數，不讀 sandbox）。天花板 == 沙盒選項的合法上界，對誠實伺服器
+    -- 是 no-op；它把「接收端不信任任何宣告值」寫成結構，而不是仰賴 accessor 順手驗證。
     local maxImageBytes = Image.maxImageBytes()
-    local maxChunks = math.floor(
-        (math.floor((maxImageBytes + 2) / 3) * 4) / Core.CHUNK_UTF16_LIMIT
-    ) + 2
-    return Image.isValidName(name)
+    local byteCeiling = Image.MAX_IMAGE_KB * 1024
+    if maxImageBytes > byteCeiling then
+        maxImageBytes = byteCeiling
+    end
+    if not (Image.isValidName(name)
         and Image.isHash(hash)
-        and isInteger(count)
-        and count >= 1
-        and count <= maxChunks
         and isInteger(bytes)
         and bytes >= 0
-        and bytes <= maxImageBytes
+        and bytes <= maxImageBytes) then
+        return false
+    end
+    -- n 的上界必須由**這一筆自己的 b** 推，不能拿全域的單張上限推：客戶端是先把分塊
+    -- 全部收齊才比對長度（NBImageCache.receiveChunk），所以「b=1 但 n=934」這種宣告
+    -- 會在長度檢查之前就先讓 client 緩衝 n * CHUNK_UTF16_LIMIT 個字元。
+    -- producer 端 n 恆等於 max(1, ceil(encodedLength(b) / CHUNK_UTF16_LIMIT))
+    -- （NBImage.pushChunks 每滿 limit 切一塊、flushChunks 收尾，空輸入也留一塊），
+    -- 這裡取上界比對而非等號：誠實伺服器一律通過，宣告值再也撐不出額外的緩衝區。
+    local maxChunks = math.ceil(Image.encodedLength(bytes) / Core.CHUNK_UTF16_LIMIT)
+    if maxChunks < 1 then
+        maxChunks = 1
+    end
+    return isInteger(count)
+        and count >= 1
+        and count <= maxChunks
 end
 
 local function normalizeImages(rawImages)
@@ -589,18 +618,38 @@ local function normalizeImages(rawImages)
     if type(rawImages) ~= "table" then
         return nil, "images is not a table", nil
     end
-    if #rawImages > Image.MAX_IMAGE_COUNT then
+    -- 同 validateImageDescriptor：吃服主宣告的張數，但一律再夾客戶端硬天花板。
+    local maxCount = Image.maxImageCount()
+    if maxCount > Image.MAX_IMAGE_COUNT_LIMIT then
+        maxCount = Image.MAX_IMAGE_COUNT_LIMIT
+    end
+    if #rawImages > maxCount then
         return nil, "too many images: " .. tostring(#rawImages), nil
+    end
+    -- 總量同樣要夾：張數與單張大小各自合法，乘起來仍可以是 200 * 4MB = 800MB。
+    -- 那正是 client 要在記憶體裡緩衝的量（NBImageCache 的 pending／writeQueue 都沒有
+    -- 併發張數上限，而 WRITE_WINDOW_BYTES 是在 payload 組完之後才擋，保護的是硬碟
+    -- 不是 RAM）。producer 端本來就有同一道總量閘（NBServer.startNextImageJob 的
+    -- img-total），所以這條對誠實伺服器是 no-op。
+    local maxTotal = Image.maxTotalBytes()
+    local totalCeiling = Image.MAX_TOTAL_KB * 1024
+    if maxTotal > totalCeiling then
+        maxTotal = totalCeiling
     end
 
     local normalized = {}
     local signatureParts = {}
     local seen = {}
+    local totalBytes = 0
     local index
     for index = 1, #rawImages do
         local descriptor = rawImages[index]
         if not validateImageDescriptor(descriptor) then
             return nil, "invalid image descriptor at index " .. tostring(index), nil
+        end
+        totalBytes = totalBytes + rawget(descriptor, "b")
+        if totalBytes > maxTotal then
+            return nil, "images exceed total bytes: " .. tostring(totalBytes), nil
         end
         local name = rawget(descriptor, "name")
         local lowered = string.lower(name)
@@ -892,6 +941,12 @@ function NBReader.getReceiverState()
     return NBReader.receiver
 end
 
+-- **測試專用的重置閘，不是執行期的防線**（比照 NBServer 對外暴露 scanImages／pumpImageEncode
+-- 的理由）：出貨路徑一個呼叫點都沒有，也不該有——換伺服器由 receiveManifest 的
+-- `receiver.sid == sid` 版本守衛就地處理（見該函式），整份重建反而會把已收到的檔案丟掉。
+-- 唯一的呼叫端是 scripts/test_mdparser.lua，用它在各段測試之間拿到乾淨的接收端狀態。
+-- 留著是因為替代方案更差：測試自己手刻一份 receiver 表就等於複製 newReceiverState 的
+-- 12 個欄位，日後加欄位時無聲分岔。**不要把它當成「有東西在保護這條路徑」。**
 function NBReader.resetReceiver()
     NBReader.receiver = newReceiverState()
 end
