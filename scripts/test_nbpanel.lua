@@ -1257,6 +1257,28 @@ end)()
     _G.SandboxVars = {}
 end)()
 
+-- findLinkAt 吃**內容座標**：兩個呼叫端（getMouseX/Y 與 onMouseUp 參數）給的座標
+-- 都已扣掉捲動（ISUIElement.lua:339-350、UIElement.java:1311-1321），這裡不得再加
+-- getYScroll() 補償。踩過：加了一次 → 捲動後判定區上移，「要在連結上方才觸發」。
+;(function()
+    local panel = NBPanel:new()
+    panel.linkHitRegions = {
+        {
+            url = "https://discord.gg/Gur2V67",
+            segments = { { x1 = 10, x2 = 50, y1 = 100, y2 = 110 } },
+        },
+    }
+    -- 模擬捲動中的 richText：getYScroll 回傳 -50（往下捲了 50px）
+    panel.richText = { getYScroll = function() return -50 end }
+
+    local hit = panel:findLinkAt(20, 105)
+    check(hit ~= nil and hit.url == "https://discord.gg/Gur2V67",
+        "內容座標直接命中，不受捲動影響")
+    check(panel:findLinkAt(20, 55) == nil,
+        "舊實作（加 scrollY）會在文字上方 50px 誤命中——不得復發")
+    check(panel:findLinkAt(20, 130) == nil, "區域外不命中")
+end)()
+
 -- 連結 hover 提示（NBPanel:renderLinkTooltip）：顯示完整網址、過長截斷、邊界 clamp。
 -- 直接呼叫 renderLinkTooltip 而不跑整個 render：這裡要驗的是提示框自己的幾何與文字，
 -- 不是 render 的其他部分（那些已在上面的 stencil／頁籤測試涵蓋）。
@@ -1338,7 +1360,7 @@ end)()
 
 -- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
 -- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 201
+local EXPECTED_ASSERTIONS = 204
 assert(assertionCount == EXPECTED_ASSERTIONS,
     "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
         .. "（有測試被刪掉或跳過？）")

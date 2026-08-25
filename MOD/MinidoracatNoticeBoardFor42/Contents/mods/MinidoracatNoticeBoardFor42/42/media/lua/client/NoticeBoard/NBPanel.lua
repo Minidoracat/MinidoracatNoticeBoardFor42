@@ -989,17 +989,21 @@ function NBPanel:rebuildLinkHitRegions()
     end
 end
 
+-- x, y 必須是**內容座標**（paginate 座標系，不含捲動）。兩個呼叫端給的都已經是：
+--   getMouseX/getMouseY = 螢幕座標 - absXY - javaObject 的 scroll（ISUIElement.lua:339-350）
+--   onMouseUp 的參數    = 引擎派發時已 `y - this.yScroll`（UIElement.java:1311-1321）
+-- segment.x/y 是 paginate 產物（內容座標），所以直接比對即可。
+-- 【踩過】這裡曾再加一次 getYScroll() 補償——沒捲動時 scrollY=0 等價所以看不出來，
+-- 捲動後判定區整體上移 |scrollY|，症狀是「滑鼠要移到連結上方才觸發 hover」時好時壞。
 function NBPanel:findLinkAt(x, y)
-    local scrollY = self.richText:getYScroll()
     local linkIndex
     for linkIndex = 1, #(self.linkHitRegions or {}) do
         local region = self.linkHitRegions[linkIndex]
         local segmentIndex
         for segmentIndex = 1, #region.segments do
             local segment = region.segments[segmentIndex]
-            local y1 = segment.y1 + scrollY
-            local y2 = segment.y2 + scrollY
-            if x >= segment.x1 and x <= segment.x2 and y >= y1 and y <= y2 then
+            if x >= segment.x1 and x <= segment.x2
+                and y >= segment.y1 and y <= segment.y2 then
                 return region
             end
         end
