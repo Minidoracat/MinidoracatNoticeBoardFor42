@@ -111,11 +111,6 @@ local function normalizeVisibleText(text)
     text = string.gsub(text, "<[A-Z][A-Z0-9_]*>", "")
     text = string.gsub(text, "&lt;", "<")
     text = string.gsub(text, "&gt;", ">")
-    -- 行內程式碼的上色區內側墊了 NBSP（MDParser.NBSP，撐與 CJK 的視覺間距）。
-    -- 它不匹配 Lua 的 %s，不先換成普通空白的話會殘留在「可見文字」裡，讓同一行既有
-    -- 連結又有程式碼時的 hit region 比對不穩。連結 display 本身走 escapeText 不含 NBSP，
-    -- 所以兩側規則一致才比得上。
-    text = string.gsub(text, Parser.NBSP, " ")
     text = string.gsub(text, "%s+", " ")
     return trim(text)
 end
