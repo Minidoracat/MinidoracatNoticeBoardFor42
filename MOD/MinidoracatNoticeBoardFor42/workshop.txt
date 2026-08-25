@@ -1,0 +1,53 @@
+version=1
+id=3789836823
+title=Minidoracat Notice Board for B42
+description=[h1]📢 Minidoracat Notice Board for B42[/h1]
+description=[h3]By Minidoracat[/h3]
+description=
+description=[hr][/hr]
+description=
+description=[h2]⚠️ Required dependency[/h2]
+description=This mod requires [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701][b]Minidoracat UI Library for B42[/b][/url] (the shared UI library). Please subscribe to it as well — see Required Items on this page. Without it this mod will not load.
+description=
+description=[hr][/hr]
+description=
+description=[h2]✨ What is this[/h2]
+description=An in-game notice board. Write your announcements in Markdown, edit the files directly, and the board refreshes on the server's polling interval (default 60s; admins can force an immediate reload). Drop in multiple files (up to 200 per language) and the tabs are generated for you.
+description=
+description=[h2]🧰 Features[/h2]
+description=[list]
+description=[*] [b]Markdown announcements[/b]: write your notices in Markdown and they are laid out and rendered in game
+description=[*] [b]Near-live updates[/b]: save the file and the change shows up in game within the server polling interval (default 60s), no server restart needed
+description=[*] [b]Automatic tabs[/b]: one tab per .md/.txt file, so you can keep server rules, command reference and event notices in separate documents
+description=[/list]
+description=
+description=[h2]🔗 MOD Series[/h2]
+description=[list]
+description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]
+description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url]
+description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349]Minidoracat Cleaner for B42[/url]
+description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3653490664]Minidoracat Safe Spawn[/url]
+description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3386633401]Traditional & Simplified Chinese Translation[/url]
+description=[/list]
+description=
+description=[h2]📋 MOD Info[/h2]
+description=[list]
+description=[*] [b]Workshop ID:[/b] 3789836823
+description=[*] [b]Mod ID:[/b] MinidoracatNoticeBoardFor42
+description=[*] [b]Supported version:[/b] Build 42.20.2+
+description=[*] [b]Singleplayer / Multiplayer:[/b] both supported
+description=[/list]
+description=
+description=[h2]💬 Feedback[/h2]
+description=[list]
+description=[*] [url=https://discord.gg/Gur2V67]Discord community[/url]
+description=[/list]
+description=
+description=[h2]📺 Follow the author[/h2]
+description=[list]
+description=[*] [url=https://www.twitch.tv/minidoracat]Twitch[/url]
+description=[/list]
+description=
+description=[b]#Minidoracat[/b]
+tags=Build 42;Interface;Multiplayer;QoL
+visibility=public

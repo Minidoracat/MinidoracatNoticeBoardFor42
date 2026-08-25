@@ -3,6 +3,11 @@
 
 [hr][/hr]
 
+[h2]⚠️ 必須の前提 MOD[/h2]
+本 MOD の動作には [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701][b]Minidoracat UI Library for B42[/b][/url]（共用 UI ライブラリ）が必要です。このページの Required Items から併せてサブスクライブしてください。本 MOD 単体では読み込まれません。
+
+[hr][/hr]
+
 [h2]✨ これは何[/h2]
 ゲーム内の掲示板 MOD です。お知らせを Markdown で書き、ファイルを直接編集するだけでサーバーのポーリング間隔（既定 60 秒）でゲーム内に反映されます。ファイルを複数置けばタブも自動で増えます（1 言語あたり最大 200 ファイル）。
 
@@ -15,6 +20,7 @@
 
 [h2]🔗 MOD シリーズ[/h2]
 [list]
+[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349]Minidoracat Cleaner for B42[/url]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3653490664]Minidoracat Safe Spawn[/url]
@@ -23,6 +29,7 @@
 
 [h2]📋 MOD 情報[/h2]
 [list]
+[*] [b]Workshop ID:[/b] 3789836823
 [*] [b]Mod ID:[/b] MinidoracatNoticeBoardFor42
 [*] [b]対応バージョン:[/b] Build 42.20.2+
 [*] [b]シングル / マルチ:[/b] 両対応

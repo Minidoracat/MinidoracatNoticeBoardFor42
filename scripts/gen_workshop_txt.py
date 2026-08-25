@@ -21,7 +21,7 @@ SRC = os.path.join(REPO, "STEAM_DESCRIPTION_EN.md")   # 翻譯包改為 STEAM_DE
 DST = os.path.join(REPO, "MOD", "MinidoracatNoticeBoardFor42", "workshop.txt")
 
 TITLE = "Minidoracat Notice Board for B42"
-TAGS = "Build 42;Interface;Multiplayer"   # 翻譯類用 Build 42;Language/Translation
+TAGS = "Build 42;Interface;Multiplayer;QoL"   # 合法清單見 media/WorkshopTags.txt；翻譯類用 Build 42;Language/Translation
 VISIBILITY = "public"
 
 FIELD_RE = re.compile(r"^(version|id|title|tags|visibility)=", re.IGNORECASE)

@@ -3,6 +3,11 @@
 
 [hr][/hr]
 
+[h2]⚠️ Required dependency[/h2]
+This mod requires [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701][b]Minidoracat UI Library for B42[/b][/url] (the shared UI library). Please subscribe to it as well — see Required Items on this page. Without it this mod will not load.
+
+[hr][/hr]
+
 [h2]✨ What is this[/h2]
 An in-game notice board. Write your announcements in Markdown, edit the files directly, and the board refreshes on the server's polling interval (default 60s; admins can force an immediate reload). Drop in multiple files (up to 200 per language) and the tabs are generated for you.
 
@@ -15,6 +20,7 @@ An in-game notice board. Write your announcements in Markdown, edit the files di
 
 [h2]🔗 MOD Series[/h2]
 [list]
+[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349]Minidoracat Cleaner for B42[/url]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3653490664]Minidoracat Safe Spawn[/url]
@@ -23,6 +29,7 @@ An in-game notice board. Write your announcements in Markdown, edit the files di
 
 [h2]📋 MOD Info[/h2]
 [list]
+[*] [b]Workshop ID:[/b] 3789836823
 [*] [b]Mod ID:[/b] MinidoracatNoticeBoardFor42
 [*] [b]Supported version:[/b] Build 42.20.2+
 [*] [b]Singleplayer / Multiplayer:[/b] both supported
