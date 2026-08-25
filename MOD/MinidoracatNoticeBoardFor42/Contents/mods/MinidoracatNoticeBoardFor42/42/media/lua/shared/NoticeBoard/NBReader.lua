@@ -414,14 +414,38 @@ function NBReader.scanAll(previous)
     return result
 end
 
-local function addEntries(target, source)
+-- 檔名標記 `<名稱>.only.<副檔名>`＝**這份公告只給所屬語系目錄的玩家看**，不會被鋪成
+-- 其他語系的底稿。為什麼需要它：DefaultLanguage 目錄同時扮演兩個角色（該語系的內容
+-- ＋全體共用的底稿），所以在它裡面本來沒有辦法表達「只給這個語系看」——把 DefaultLanguage
+-- 設成 EN 之後，EN/ 底下的每一份都會出現在所有語系玩家面板上。非 DefaultLanguage 的
+-- 語系目錄本來就是限定的（compose 只從 DefaultLanguage 鋪底稿，不會反向補），
+-- 這個標記等於把同樣的能力補回 DefaultLanguage 目錄。
+--
+-- 為什麼用檔名而不是新目錄或檔案內的標記：
+--   * 新目錄要多一套掃描與白名單（listFilesInZomboidLuaDirectory 只回檔名、不列目錄，
+--     每個候選目錄都得寫死路徑去問）。
+--   * 檔案內的標記要先讀檔才知道要不要納入，而納入判斷發生在「只列檔名」的階段。
+--   * 檔名一眼看得出，服主 ls 一次就知道哪些是限定的。
+-- 點號在檔名驗證裡完全合法（只擋控制字元與 | =，見 scanLanguage 的 invalid-id），
+-- 副檔名取的是最後一段（isNoticeFile 的 `%.([^%.]+)$`），所以 `.only.txt` 仍是合法的 .txt。
+local function isLanguageOnly(fileName)
+    return type(fileName) == "string"
+        and string.match(fileName, "%.only%.[^%.]+$") ~= nil
+end
+
+NBReader.isLanguageOnly = isLanguageOnly
+
+-- skipLanguageOnly：這一批是「別人的底稿」，標記過的檔案不該跟著鋪過來。
+local function addEntries(target, source, skipLanguageOnly)
     if not source then
         return
     end
     local index
     for index = 1, #source.files do
         local entry = source.files[index]
-        target[entry.id] = entry
+        if not (skipLanguageOnly and isLanguageOnly(entry.id)) then
+            target[entry.id] = entry
+        end
     end
 end
 
@@ -434,9 +458,12 @@ function NBReader.composeLanguage(scannedLanguages, language, defaultLanguage)
     end
 
     local selected = {}
-    addEntries(selected, rawget(scannedLanguages, defaultLanguage))
+    -- DefaultLanguage 是全體共用的底稿；玩家語系不是它時，跳過它裡面標記 .only 的檔案。
+    -- 玩家語系自己的目錄一律全收（含 .only —— 那本來就是給這個語系看的）。
+    addEntries(selected, rawget(scannedLanguages, defaultLanguage),
+        language ~= defaultLanguage)
     if language ~= defaultLanguage then
-        addEntries(selected, rawget(scannedLanguages, language))
+        addEntries(selected, rawget(scannedLanguages, language), false)
     end
 
     local files = {}

@@ -204,10 +204,59 @@ function NBLinkRichTextPanel:paginate()
         return false, pageError
     end
 
+    -- 純圖片行的高度不會進捲動範圍，這裡補回去。
+    -- 引擎的 paginate 只在「這一行有非空文字」時才把 lineImageHeight 累進 y
+    -- （ISRichTextPanel.lua:550-556 的 `elseif self.lines[lines] and self.lines[lines] ~= ''`），
+    -- 而 `![圖](路徑)` 自己一行時該行只剩 image command、文字是空字串，於是整張圖的高度
+    -- 被丟棄，接著 setScrollHeight(marginTop + y + marginBottom)（:566）算出來的範圍
+    -- 就不含圖片——圖比內容區高時完全捲不動，圖下面的公告等於看不到。
+    -- 修法不動引擎：paginate 已經把每張圖的實際落點記在 imageY／imageH（:172-175，
+    -- render 用同一組座標畫圖 :594-595），拿它們算出真正的內容底部，比引擎算的高就補上。
+    -- 只加不減：文字比圖長時引擎算的才是對的。
+    self:extendScrollHeightForImages()
+
     if self.owner then
         self.owner:rebuildLinkHitRegions()
     end
     return true, nil
+end
+
+-- 內容底部 = max(imageY + imageH) + 上下 margin。imageY 可能是負的
+-- （:172 的 y+(lineHeight-lineImageHeight)/2 在圖比行高時為負），加上 imageH 之後仍是
+-- 該圖底部的相對位置，所以直接取最大值即可。
+function NBLinkRichTextPanel:extendScrollHeightForImages()
+    local images = self.images
+    if type(images) ~= "table" or #images == 0 then
+        return
+    end
+
+    local bottom = 0
+    local index
+    for index = 1, #images do
+        local imageY = self.imageY and self.imageY[index] or nil
+        local imageH = self.imageH and self.imageH[index] or nil
+        if type(imageY) == "number" and type(imageH) == "number" then
+            local candidate = imageY + imageH
+            if candidate > bottom then
+                bottom = candidate
+            end
+        end
+    end
+    if bottom <= 0 then
+        return
+    end
+
+    local needed = self.marginTop + bottom + self.marginBottom
+    -- getScrollHeight 走 javaObject，測試 harness 沒有那層時回 0；取 max 後照樣安全。
+    local ok, current = pcall(function()
+        return self:getScrollHeight()
+    end)
+    if ok and type(current) == "number" and current >= needed then
+        return
+    end
+    pcall(function()
+        self:setScrollHeight(needed)
+    end)
 end
 
 function NBLinkRichTextPanel:render()
@@ -276,7 +325,11 @@ end
 -- 直接把絕對路徑寫進標記會被切斷；到了 processCommand 這層已經不再經過 tokenizer，換路徑才安全。
 function NBLinkRichTextPanel:processCommand(command, x, y, lineImageHeight, lineHeight)
     -- rest 是預檢算好的 ",寬,高"（縮放用），原樣保留交給原生實作。
-    -- 兩種標記都要接：正常路徑產生 IMAGECENTRE，但 IMAGE 仍可能來自公告內的原生標記。
+    -- 兩種標記都要接，但**主要路徑是 IMAGE**：markdown 的 `![]()` 由 preflightImages 換成
+    -- <IMAGE:>（靠左的行內元素，不用會強制水平置中的 IMAGECENTRE——見 MDParser 的 NBIMG 註解）；
+    -- IMAGECENTRE 則是服主自己在公告裡手寫的原生標記。這兩條路在引擎裡是不同分支、
+    -- imageY 與高度的算法都不一樣（ISRichTextPanel.lua:155-175 vs :320-336），
+    -- 所以改動圖片相關行為時**兩條都要各自驗過**，不能拿其中一條的結果當另一條的保證。
     -- 引擎是用子字串比對，而 "IMAGECENTRE:" 不含 "IMAGE:"（中間隔了 C），兩者不會互相誤判。
     local kind, hash, rest = string.match(command,
         "^(IMAGECENTRE:)" .. ImageCache.TOKEN_PREFIX .. "([0-9a-f]+)(.*)$")

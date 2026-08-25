@@ -8,6 +8,8 @@
 
 ### 新增
 
+- **語系限定公告**：檔名加上 `.only` 標記（例如 `EN/20_en_notice.only.txt`）即代表「只給這個語系目錄的玩家看」，不會被鋪成其他語系的底稿。原本只有「非 `DefaultLanguage` 的語系目錄」能表達限定，而那個語意綁在「哪個語系是 `DefaultLanguage`」上；`DefaultLanguage` 目錄裡則完全無法表達限定（它的每一份都是全體共用底稿）
+
 - **新公告提示音**：有新公告或公告更新時，除了畫面上的提示訊息再播一聲 MOD 自帶的提示音（走 `GameSounds` 的 non-bank fallback，不需要 FMOD bank；音檔可由服主自行替換，見 `docs/ADMIN_GUIDE.md`「換掉提示音」）。**一批只響一次**，不會每則公告都響；換公告語系不響（那不是新內容）
 - **玩家端音效設定**：遊戲的「選項 → MODS」分頁新增本 MOD 的開關與音量滑桿（0-100，預設 60），走 PZ 原生的 `PZAPI.ModOptions`、值存在 `Zomboid/Lua/ModOptions.ini`。MOD 自帶音效不受遊戲內建的音效音量影響，這是唯一調得動它的地方；沙盒選項「新公告播放提示音」是服主端總開關，兩者是 AND 關係
 

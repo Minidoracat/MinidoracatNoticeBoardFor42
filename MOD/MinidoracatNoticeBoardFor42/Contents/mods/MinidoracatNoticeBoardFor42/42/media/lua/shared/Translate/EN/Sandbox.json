@@ -8,7 +8,7 @@
   "Sandbox_MinidoracatNB_PollIntervalSeconds": "Notice polling interval",
   "Sandbox_MinidoracatNB_PollIntervalSeconds_tooltip": "Real-time seconds between checks for changed notice files on the authority side.",
   "Sandbox_MinidoracatNB_DefaultLanguage": "Default notice language",
-  "Sandbox_MinidoracatNB_DefaultLanguage_tooltip": "Fallback Translate language code, used when a player's language directory or a matching notice file is missing. The code is also the folder name under NoticeBoard/. This is a fixed list of the codes the mod accepts, not a scan of the folders you actually created — check the server log line 'notice languages=' or the in-game Language menu for that.",
+  "Sandbox_MinidoracatNB_DefaultLanguage_tooltip": "Translate language code whose directory acts as the shared baseline: every file in it that is NOT marked `.only` shows up for players of all languages, and a player's own language overrides same-named files. The code is also the folder name under NoticeBoard/. This is a fixed list of the codes the mod accepts, not a scan of the folders you actually created — check the server log line 'notice languages=' or the in-game Language menu for that.",
   "Sandbox_MinidoracatNB_NotifySound": "Play a sound for new notices",
   "Sandbox_MinidoracatNB_NotifySound_tooltip": "Play a short mod-provided chime when a new or updated notice arrives, alongside the on-screen toast. One sound per batch, never one per notice. The chime ships with the mod and plays outside Project Zomboid's sound banks, so the game's sound volume slider does not affect it. Players have their own switch and volume slider under Options → MODS; this option is the server-wide master switch.",
   "Sandbox_MinidoracatNB_MaxImageKB": "Max image size (KB)",
