@@ -1,4 +1,16 @@
-require "ISUI/ISPanel"
+-- NBFloatButton：家族 UI 框架 FloatButton 的 thin wrapper。
+--
+-- 浮鈕本體（setCapture 拖曳＋4px 門檻、每幀 clamp、hover 疊色、圓角皮膚）
+-- 已上移框架 `MinidoracatUI/Widgets/FloatButton.lua`。本檔只剩本 MOD 業務：
+--   1. 內容繪製：置中「!」＋未讀紅點（徽章刻意「掛」在右上弧，UI_DESIGN §2）
+--   2. 點擊 = NBPanel.toggle()
+--   3. 位置持久化 = ISLayoutManager（layout.ini；RestoreLayout/SaveLayout
+--      掛在框架實例上——DefaultRestoreWindow 呼叫的是實例方法）
+--   4. 未讀事件（MinidoracatNB_UnreadChanged）→ setUnread
+--
+-- 【退回】框架 FloatButton 能力缺席時不建浮鈕（degraded：無浮動入口，
+-- 面板仍可由重新載入鈕／其他入口開啟）；不自帶降級實作。
+
 require "ISUI/ISLayoutManager"
 
 if not NBClient then
@@ -17,7 +29,7 @@ if not Client or not NBPanel or not Skin then
     error("NoticeBoard floating button dependencies failed to load")
 end
 
-NBFloatButton = ISPanel:derive("NBFloatButton")
+NBFloatButton = NBFloatButton or {}
 
 local COLORS = Skin.COLORS
 
@@ -25,133 +37,76 @@ local BUTTON_SIZE = 40
 local RIGHT_MARGIN = 16
 local LAYOUT_NAME = "MinidoracatNBFloatButton"
 
-function NBFloatButton:initialise()
-    ISPanel.initialise(self)
+local function frameworkFloatButton()
+    local ui = MinidoracatUI and MinidoracatUI.v1
+    if ui and ui.API_MAJOR == 1 and ui.CAPABILITIES and ui.CAPABILITIES.floatButton == true then
+        return ui.FloatButton
+    end
+    return nil
 end
 
-function NBFloatButton:prerender()
-    -- 四角 r=6 的方鈕（與面板同一組貼圖）；貼圖缺時 NBSkin 自動退回 drawRect 直角
-    Skin.fill(self, 0, 0, self.width, self.height, COLORS.BG_PANEL)
-    if self:isMouseOver() then
-        Skin.fill(self, 0, 0, self.width, self.height, COLORS.TAB_HOVER_FILL)
-    end
-    Skin.border(self, 0, 0, self.width, self.height, COLORS.BORDER)
-
+-- 內容繪製（框架畫完皮膚後回呼）：置中驚嘆號＋未讀點
+local function drawContent(btn)
     local textColor = COLORS.TITLE_TEXT
     local fontHeight = getTextManager():getFontHeight(UIFont.Medium)
-    self:drawTextCentre("!", self.width / 2, (self.height - fontHeight) / 2,
+    btn:drawTextCentre("!", btn.width / 2, (btn.height - fontHeight) / 2,
         textColor.r, textColor.g, textColor.b, textColor.a, UIFont.Medium)
-
-    if self.unread then
-        -- 徽章刻意「掛」在右上弧上（UI_DESIGN §2），位置不變
-        Skin.dot(self, self.width - 8, -2, 8, COLORS.UNREAD_DOT, COLORS.UNREAD_DOT_OUTLINE)
+    if btn.unread then
+        Skin.dot(btn, btn.width - 8, -2, 8, COLORS.UNREAD_DOT, COLORS.UNREAD_DOT_OUTLINE)
     end
 end
 
-function NBFloatButton:onMouseDown(x, y)
-    if not self:getIsVisible() then
-        return false
+function NBFloatButton.setUnread(unread)
+    local btn = NBFloatButton.instance
+    if btn then
+        btn.unread = unread == true
     end
-    self.downX = x
-    self.downY = y
-    self.moving = true
-    self.dragged = false
-    self:bringToTop()
-    return true
-end
-
-local function moveButton(button, dx, dy)
-    if not button.moving then
-        return
-    end
-    if dx ~= 0 or dy ~= 0 then
-        button.dragged = true
-    end
-    -- 夾在畫面內，否則浮窗可被拖出視野，要等下次啟動 RestoreLayout 才夾回。
-    local maximumX = math.max(0, getCore():getScreenWidth() - button.width)
-    local maximumY = math.max(0, getCore():getScreenHeight() - button.height)
-    button:setX(math.max(0, math.min(button.x + dx, maximumX)))
-    button:setY(math.max(0, math.min(button.y + dy, maximumY)))
-    button:bringToTop()
-end
-
-function NBFloatButton:onMouseMove(dx, dy)
-    self.mouseOver = true
-    moveButton(self, dx, dy)
-end
-
-function NBFloatButton:onMouseMoveOutside(dx, dy)
-    self.mouseOver = false
-    moveButton(self, dx, dy)
-end
-
-function NBFloatButton:onMouseUp(x, y)
-    if not self.moving then
-        return false
-    end
-    local wasDragged = self.dragged
-    self.moving = false
-    self.dragged = false
-    if not wasDragged then
-        NBPanel.toggle()
-    end
-    return true
-end
-
-function NBFloatButton:onMouseUpOutside(x, y)
-    self.moving = false
-    self.dragged = false
-    return true
-end
-
-function NBFloatButton:setUnread(unread)
-    self.unread = unread == true
-end
-
-function NBFloatButton:RestoreLayout(name, layout)
-    local x = tonumber(layout.x)
-    local y = tonumber(layout.y)
-    if x ~= nil and y ~= nil then
-        local maximumX = math.max(0, getCore():getScreenWidth() - self.width)
-        local maximumY = math.max(0, getCore():getScreenHeight() - self.height)
-        self:setX(math.max(0, math.min(x, maximumX)))
-        self:setY(math.max(0, math.min(y, maximumY)))
-    end
-    self:setVisible(true)
-end
-
-function NBFloatButton:SaveLayout(name, layout)
-    layout.x = self:getX()
-    layout.y = self:getY()
-    layout.width = self:getWidth()
-    layout.height = self:getHeight()
-    layout.visible = "true"
-end
-
-function NBFloatButton:new(x, y)
-    local o = ISPanel.new(self, x, y, BUTTON_SIZE, BUTTON_SIZE)
-    o.background = false
-    o.alwaysOnTop = true
-    o.moving = false
-    o.dragged = false
-    o.unread = false
-    return o
 end
 
 function NBFloatButton.ensureInstance()
     if NBFloatButton.instance then
         NBFloatButton.instance:setVisible(true)
-        NBFloatButton.instance:setUnread(#Client.getUnreadIds() > 0)
+        NBFloatButton.instance.unread = #Client.getUnreadIds() > 0
         return NBFloatButton.instance
     end
 
-    local x = getCore():getScreenWidth() - BUTTON_SIZE - RIGHT_MARGIN
-    local y = getCore():getScreenHeight() / 2 - BUTTON_SIZE / 2
-    local button = NBFloatButton:new(x, y)
-    button:initialise()
-    button:addToUIManager()
-    button:setVisible(true)
-    button:setUnread(#Client.getUnreadIds() > 0)
+    local FW = frameworkFloatButton()
+    if not FW then
+        return nil -- 框架能力缺席：無浮鈕（面板其他入口不受影響）
+    end
+
+    local button = FW.new({
+        size = BUTTON_SIZE,
+        x = getCore():getScreenWidth() - BUTTON_SIZE - RIGHT_MARGIN,
+        y = getCore():getScreenHeight() / 2 - BUTTON_SIZE / 2,
+        colors = {
+            surface = COLORS.BG_PANEL,
+            hover = COLORS.TAB_HOVER_FILL,
+            border = COLORS.BORDER,
+        },
+        drawContent = drawContent,
+        onClick = function() NBPanel.toggle() end,
+        -- 位置持久化走 ISLayoutManager（下方 Restore/SaveLayout），
+        -- onMoved 不另存——SaveLayout 在遊戲存檔時機由引擎呼叫
+    })
+    button.unread = #Client.getUnreadIds() > 0
+
+    -- ISLayoutManager 整合：DefaultRestoreWindow/DefaultSaveWindow 呼叫
+    -- window:RestoreLayout/SaveLayout（實例方法）——掛在框架實例上
+    function button:RestoreLayout(name, layout)
+        local x = tonumber(layout.x)
+        local y = tonumber(layout.y)
+        if x and y then
+            self:setPosition(x, y) -- 框架 setPosition 內建 clamp（存檔位置超界夾回）
+        end
+        self:setVisible(true)
+    end
+    function button:SaveLayout(name, layout)
+        layout.x = self:getX()
+        layout.y = self:getY()
+        layout.visible = "true"
+    end
+
     NBFloatButton.instance = button
     ISLayoutManager.RegisterWindow(LAYOUT_NAME, NBFloatButton, button)
     button:setVisible(true)
@@ -164,7 +119,9 @@ end
 
 function NBFloatButton.onUnreadChanged(unreadIds)
     local button = NBFloatButton.ensureInstance()
-    button:setUnread(type(unreadIds) == "table" and #unreadIds > 0)
+    if button then
+        button.unread = type(unreadIds) == "table" and #unreadIds > 0
+    end
 end
 
 if not NBFloatButton._eventsInstalled then

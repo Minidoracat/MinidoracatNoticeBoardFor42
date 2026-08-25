@@ -183,6 +183,7 @@ function Base:getWidth() return self.width end
 function Base:getX() return self.x end
 function Base:setX(x) self.x = x end
 function Base:setY(y) self.y = y end
+function Base:getY() return self.y end
 -- 頂層視窗（NBPanel／NBFloatButton／NBToast 都直接掛在 UIManager 上）：絕對座標 = 自身座標
 function Base:getAbsoluteX() return self.x end
 function Base:getAbsoluteY() return self.y end
@@ -205,6 +206,12 @@ function Base:drawRect() end
 function Base:drawRectBorder() end
 function Base:setVisible() end
 function Base:updateScrollbars() end
+-- 框架 widget（FloatButton/Toast）所需的最小補充面
+function Base:setCapture(v) self.captured = v end
+function Base:bringToTop() end
+function Base:addToUIManager() end
+function Base:removeFromUIManager() end
+_G.ISLayoutManager = { RegisterWindow = function() end }
 _G.ISPanel = Base
 _G.ISBaseObject = Base
 
@@ -1032,14 +1039,28 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     drawFrame()
     checkEqual(broken.renderAttempts, 4, "E2b 第二幀不再嘗試 render 壞掉的貼圖")
 
-    -- 浮窗與 Toast：同一份 NBSkin，落點驗絕對座標與 floor
+    -- 浮鈕與 Toast 已上移家族框架：dofile 真框架 widget，驗 wrapper 端到端
+    -- （wrapper 業務：色票/標題/內容/位置 clamp → 框架繪製落點與舊版逐位相同）。
+    -- widget 本體行為（拖曳門檻/佇列上限/動畫細節）由框架 repo harness 覆蓋。
+    local MUI_DIR = MUI_V1:gsub("V1%.lua$", "")
+    dofile(MUI_DIR .. "Widgets/FloatButton.lua")
+    dofile(MUI_DIR .. "Widgets/Toast.lua")
+    check(MinidoracatUI.v1.CAPABILITIES.floatButton == true
+        and MinidoracatUI.v1.CAPABILITIES.toast == true, "框架 widget 能力已翻 true")
     dofile(MEDIA_LUA .. "client/NoticeBoard/NBFloatButton.lua")
     dofile(MEDIA_LUA .. "client/NoticeBoard/NBToast.lua")
+
     _G.NinePatchTexture = makeNinePatchStub({ calls = {} })
     NBSkin.reset()
+
+    -- 浮鈕：wrapper 經框架建立；prerender 有玩家（框架的無玩家自我隱藏另在框架 harness 驗）
+    local savedGetPlayer = _G.getSpecificPlayer
+    _G.getSpecificPlayer = function() return {} end
     patches = {}
-    local button = NBFloatButton:new(10, 20)
+    local button = NBFloatButton.ensureInstance()
+    check(button ~= nil, "wrapper 經框架 FloatButton 建立浮鈕")
     button.unread = true
+    button:setPosition(10, 20)
     local buttonScaled = {}
     button.drawTextureScaled = function(_, texture, x, y, w, h, a, r, g, b)
         buttonScaled[#buttonScaled + 1] = { x = x, y = y, w = w, h = h, a = a, r = r }
@@ -1048,7 +1069,7 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     checkEqual(#patches, 2, "浮窗一幀 = 底 + 框（沒 hover）")
     check(patches[1].path == "media/ui/MinidoracatUI/mui_round_fill.png" and patches[1].x == 10
         and patches[1].y == 20 and patches[1].w == 40 and patches[1].h == 40 and nearly(patches[1].a, 0.8),
-        "浮窗底 mui_round_fill (10,20,40,40) BG_PANEL")
+        "浮窗底 mui_round_fill (10,20,40,40) BG_PANEL——與換皮前逐位相同")
     check(patches[2].path == "media/ui/MinidoracatUI/mui_round_border.png" and patches[2].x == 10
         and patches[2].y == 20 and patches[2].w == 40 and patches[2].h == 40,
         "浮窗框 mui_round_border (10,20,40,40)")
@@ -1057,23 +1078,46 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         and buttonScaled[2].w == 8,
         "浮窗未讀點掛角位置不變 (w-8, -2, 8)：光暈 (31,-3,10) 主點 (32,-2,8)")
 
+    -- 點擊業務綁定：onClick → NBPanel.toggle（stub 計數，不真開面板）
+    local savedToggle = NBPanel.toggle
+    local toggles = 0
+    NBPanel.toggle = function() toggles = toggles + 1 end
+    button.onClick(button)
+    NBPanel.toggle = savedToggle
+    checkEqual(toggles, 1, "浮鈕點擊綁 NBPanel.toggle")
+
+    -- ISLayoutManager 整合：RestoreLayout 走框架 setPosition（超界存檔夾回）
+    button:RestoreLayout("x", { x = "99999", y = "-5" })
+    check(button:getX() == 1920 - 40 and button:getY() == 0,
+        "RestoreLayout 超界位置夾回螢幕（layout.ini 殘留壞值防護）")
+    local layout = {}
+    button:SaveLayout("x", layout)
+    check(layout.x == button:getX() and layout.visible == "true", "SaveLayout 寫回目前位置")
+    _G.getSpecificPlayer = savedGetPlayer
+
+    -- Toast：wrapper 轉發（標題＋色票），動畫落點與換皮前逐位相同
+    local FWToast = MinidoracatUI.v1.Toast
+    FWToast._resetForTests()
+    _G.getTimestampMs = function() return 0 end
+    local toast = NBToast.show("hello")
+    check(toast ~= nil and toast.titleText == "[IGUI_MinidoracatNB_PanelTitle]",
+        "wrapper 帶面板標題進框架 Toast")
+    check(NBToast.show("") == nil, "空訊息拒絕（wrapper 前置檢查）")
     patches = {}
-    local toast = NBToast:new("hello")
-    NBToast.active = { toast }
     -- 進場第 100ms（ENTER 250ms）：x = 2220 + (1604-2220)*0.4 = 1973.6，alpha 0.4
     _G.getTimestampMs = function() return 100 end
     toast:prerender()
     _G.getTimestampMs = function() return 0 end
-    NBToast.active = {}
     checkEqual(#patches, 2, "Toast 一幀 = 底 + 框")
     check(patches[1].path == "media/ui/MinidoracatUI/mui_round_fill.png" and patches[1].x == 1973
         and patches[1].y == 60 and patches[1].w == 300 and patches[1].h == 56,
         "Toast 動畫中的小數 x 必須 floor 後才交給 NinePatchTexture（1973.6 → 1973）")
     check(nearly(patches[1].a, 0.85 * 0.4) and nearly(patches[2].a, 0.9 * 0.4),
-        "Toast 底／框的 alpha 要乘上動畫 alpha")
+        "Toast 底／框的 alpha 要乘上動畫 alpha（wrapper 色票 TOAST_BG/TOAST_BORDER）")
     check(patches[2].path == "media/ui/MinidoracatUI/mui_round_border.png" and patches[2].x == 1973
         and nearly(patches[2].r, 1) and nearly(patches[2].g, 0.85),
         "Toast 框 mui_round_border 染 TOAST_BORDER（琥珀）")
+    FWToast._resetForTests()
 
     _G.NinePatchTexture = nil
     NBSkin.reset()
@@ -1215,7 +1259,7 @@ end)()
 
 -- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
 -- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 178
+local EXPECTED_ASSERTIONS = 185
 assert(assertionCount == EXPECTED_ASSERTIONS,
     "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
         .. "（有測試被刪掉或跳過？）")
