@@ -1,0 +1,19 @@
+# Welcome to the server notice board
+
+## Markdown syntax demo
+
+This line contains **highlighted text**.
+
+- Notices can use list items.
+- Add more files to create more tabs.
+
+---
+
+[Project Zomboid official site](https://projectzomboid.com)
+
+The image below is a built-in game texture, shown here to prove image syntax works:
+
+![Built-in texture demo](media/ui/Admin_Icon.png)
+
+To use your own images, ship them in a texture pack mod and reference that path.
+See docs/ADMIN_GUIDE.md. Images cannot be loaded from the internet - that is an engine limit.
