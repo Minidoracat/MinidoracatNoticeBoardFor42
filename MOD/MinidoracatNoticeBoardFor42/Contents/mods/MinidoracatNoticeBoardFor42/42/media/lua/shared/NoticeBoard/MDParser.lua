@@ -622,9 +622,27 @@ renderInline = function(text, state, lineNumber)
                 }
             end
         elseif best == KIND_CODE then
-            -- 程式碼內不再解析任何行內語法，且 < > 一律轉義
+            -- 程式碼內不再解析任何行內語法，且 < > 一律轉義。
+            -- 反引號**保留在上色區內**當視覺邊界：引擎在 command token 處開新 chunk
+            -- （ISRichTextPanel.lua:462-470），新 chunk 直接接前一個 chunk 的右邊緣
+            -- （:529），所以上色區兩側零間距；而 markdown 裡打空格會被 :497 的
+            -- string.trim 吃掉，多位元組空白（NBSP／全角空格）在 Lua byte string 端
+            -- 會被逐位元組渲染成亂碼（實測 U+00A0 顯示為 "Â"）。
+            -- 於是「保留顏色 + 有間距」只能靠可見的 ASCII 字元，而反引號正是使用者
+            -- 在 markdown 裡本來就寫的東西——語意直觀且零編碼風險。
+            local codeText = cacheFirst[KIND_CODE]
+            -- 內容前後都有空格且不是全空白時各剝一個：那是多重反引號的 delimiter 保護
+            -- 空格（`` a`b ``），不屬於程式碼內容本身（CommonMark 同規則）。留著會把
+            -- 當視覺邊界用的反引號推離內容，看起來像多了一層空格。
+            local length = string.len(codeText)
+            if length > 2
+                and string.sub(codeText, 1, 1) == " "
+                and string.sub(codeText, length, length) == " "
+                and string.find(codeText, "[^ ]") ~= nil then
+                codeText = string.sub(codeText, 2, length - 1)
+            end
             result[#result + 1] = MDParser.CODE_PREFIX
-                .. escapeCode(cacheFirst[KIND_CODE])
+                .. "`" .. escapeCode(codeText) .. "`"
                 .. MDParser.CODE_SUFFIX
         elseif best == KIND_STRIKE then
             -- PZ RichText 沒有刪除線效果（drawText 無此參數，:672），只能吃掉標記顯示純文字

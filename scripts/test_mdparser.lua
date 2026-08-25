@@ -1243,15 +1243,35 @@ checkNoTextLost("> 引言甲\n> 引言乙\n\n>> 巢狀引言", { "引言甲", "�
 -- 行內程式碼：無等寬字型也無底色框，只能換色；內容的 < > 必須轉義
 checkEqual(
     norm(MDParser.safeParse("執行 `a<b>c` 完成").richText),
-    "<TEXT> <INDENT:0> 執行 <PUSHRGB:1,0.7,0.85> a&lt;b&gt;c <POPRGB> 完成",
+    "<TEXT> <INDENT:0> 執行 <PUSHRGB:1,0.7,0.85> `a&lt;b&gt;c` <POPRGB> 完成",
     "行內程式碼映射錯誤"
 )
 checkEqual(
     norm(MDParser.safeParse("`` a`b ``").richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> a`b <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `a`b` <POPRGB>",
     "多重反引號 delimiter 必須支援"
 )
 checkNoTextLost("執行 `abc` 完成", { "執行", "abc", "完成" }, "行內程式碼")
+-- 反引號保留在上色區內當視覺邊界（見 MDParser 的 KIND_CODE 分支）：引擎在 command
+-- token 處開新 chunk 且新 chunk 直接接前一個的右邊緣，所以上色區兩側零間距；空白
+-- 救不了（trim 吃掉）、多位元組空白會亂碼（實測 U+00A0 渲染成 "Â"）。
+checkEqual(
+    norm(MDParser.safeParse("顯示尺寸：`=600x200`（寬x高）").richText),
+    "<TEXT> <INDENT:0> 顯示尺寸： <PUSHRGB:1,0.7,0.85> `=600x200` <POPRGB> （寬x高）",
+    "CJK 緊接行內程式碼時要有反引號當邊界"
+)
+-- delimiter 保護空格剝掉後，反引號要緊貼內容
+checkEqual(
+    norm(MDParser.safeParse("`` a ``").richText),
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `a` <POPRGB>",
+    "多重反引號的保護空格要剝掉"
+)
+-- 全空白內容不剝（剝完就沒東西了）
+checkEqual(
+    norm(MDParser.safeParse("`  `").richText),
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> ` ` <POPRGB>",
+    "全空白程式碼內容不剝空格"
+)
 
 -- 圍欄程式碼區塊：行內語法一律不解析、< > 轉義、行首縮排換算成 <INDENT:>
 checkEqual(
@@ -1303,7 +1323,7 @@ checkEqual(
 -- CommonMark：程式碼內不做反斜線逸出，反斜線要原樣留著
 checkEqual(
     norm(MDParser.safeParse("`a\\*b`").richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> a\\*b <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `a\\*b` <POPRGB>",
     "程式碼內的反斜線必須原樣保留"
 )
 checkNoTextLost("\\*不是斜體\\* 與 \\# 不是標題", { "*不是斜體*", "# 不是標題" }, "反斜線逸出")
@@ -1367,14 +1387,14 @@ local codeLink = MDParser.safeParse("`[a](b)`")
 checkEqual(#codeLink.links, 0, "行內程式碼內的連結不得成為可點擊連結")
 checkEqual(
     norm(codeLink.richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> [a](b) <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `[a](b)` <POPRGB>",
     "行內程式碼內的連結必須原樣顯示"
 )
 local codeAutolink = MDParser.safeParse("`<https://evil.example/x>`")
 checkEqual(#codeAutolink.links, 0, "行內程式碼內的 autolink 不得成為可點擊連結")
 checkEqual(
     norm(codeAutolink.richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> &lt;https://evil.example/x&gt; <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `&lt;https://evil.example/x&gt;` <POPRGB>",
     "行內程式碼內的 autolink 必須轉義成可見文字"
 )
 -- 同一行有兩個 code span 時，連結被抽走會讓剩下的分隔符互相錯配、把中間的字塗成程式碼色。
@@ -1383,8 +1403,8 @@ local docSentence = MDParser.safeParse("please use `<https://...>` or `[text](ht
 checkEqual(#docSentence.links, 0, "文件原句不得產生任何連結")
 checkEqual(
     norm(docSentence.richText),
-    "<TEXT> <INDENT:0> please use <PUSHRGB:1,0.7,0.85> &lt;https://...&gt; <POPRGB>"
-        .. " or <PUSHRGB:1,0.7,0.85> [text](https://...) <POPRGB> .",
+    "<TEXT> <INDENT:0> please use <PUSHRGB:1,0.7,0.85> `&lt;https://...&gt;` <POPRGB>"
+        .. " or <PUSHRGB:1,0.7,0.85> `[text](https://...)` <POPRGB> .",
     "兩個 code span 之間的文字不得被錯配成程式碼"
 )
 -- code span 之外的連結照樣要成立（不能因為擋 code span 就把整行的連結都關掉）
