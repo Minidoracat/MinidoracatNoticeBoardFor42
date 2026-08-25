@@ -1257,9 +1257,88 @@ end)()
     _G.SandboxVars = {}
 end)()
 
+-- 連結 hover 提示（NBPanel:renderLinkTooltip）：顯示完整網址、過長截斷、邊界 clamp。
+-- 直接呼叫 renderLinkTooltip 而不跑整個 render：這裡要驗的是提示框自己的幾何與文字，
+-- 不是 render 的其他部分（那些已在上面的 stencil／頁籤測試涵蓋）。
+;(function()
+    local panel = NBPanel:new()
+    panel.isCollapsed = false
+    panel.width, panel.height = 400, 300
+    panel.contentState = "ready"
+
+    local rects, texts = {}, {}
+    panel.drawRect = function(_, x, y, w, h) rects[#rects + 1] = { x = x, y = y, w = w, h = h } end
+    panel.drawRectBorder = function() end
+    panel.drawText = function(_, str, x, y) texts[#texts + 1] = { str = str, x = x, y = y } end
+
+    local hovered = nil
+    panel.getHoveredLink = function() return hovered end
+    local mouseX, mouseY = 0, 0
+    panel.getMouseX = function() return mouseX end
+    panel.getMouseY = function() return mouseY end
+    local function reset() rects, texts = {}, {} end
+
+    -- 無 hover：一筆都不該畫
+    reset()
+    panel:renderLinkTooltip()
+    checkEqual(#texts, 0, "沒有 hover 的連結時不畫提示")
+    checkEqual(#rects, 0, "沒有 hover 的連結時不畫提示底")
+
+    -- hover：顯示完整網址（含底框）
+    hovered = { url = "https://discord.gg/Gur2V67" }
+    mouseX, mouseY = 40, 50
+    reset()
+    panel:renderLinkTooltip()
+    checkEqual(#texts, 1, "hover 連結時畫出一段提示文字")
+    checkEqual(texts[1].str, "https://discord.gg/Gur2V67", "提示顯示完整網址")
+    check(#rects >= 1, "提示要有底框（框架缺席時 Skin.fill 退 drawRect）")
+    checkEqual(texts[1].x, 40 + 12 + 6, "提示文字 x = 游標 +12 偏移 +6 padding")
+
+    -- 摺疊時跳過：Skin.fill/border 沒有 isCollapsed 守衛，靠這裡擋
+    panel.isCollapsed = true
+    reset()
+    panel:renderLinkTooltip()
+    checkEqual(#texts, 0, "面板摺疊時不畫連結提示")
+    panel.isCollapsed = false
+
+    -- 過長網址截斷：stub 的 MeasureStringX = 字數 × 8，maxWidth = 400 - 6*2 - 8 = 380
+    -- → 可容納 47 字元；截斷後長度含 "..." 不得超過該上限
+    local longUrl = "https://example.com/" .. string.rep("a", 120)
+    hovered = { url = longUrl }
+    reset()
+    panel:renderLinkTooltip()
+    checkEqual(#texts, 1, "過長網址仍畫出提示")
+    check(string.len(texts[1].str) < string.len(longUrl), "過長網址要被截斷")
+    check(string.sub(texts[1].str, -3) == "...", "截斷後補省略號")
+    check(string.len(texts[1].str) * 8 <= 380, "截斷後寬度不超過可用寬度")
+    checkEqual(string.sub(texts[1].str, 1, 20), "https://example.com/", "截斷從尾端砍，網域保留")
+
+    -- 快取：同一網址重畫不重算（換網址才更新）
+    local firstText = texts[1].str
+    reset()
+    panel:renderLinkTooltip()
+    checkEqual(texts[1].str, firstText, "同一網址的截斷結果一致（走快取）")
+
+    -- 右邊界 clamp：游標貼近右緣時提示不得超出面板
+    hovered = { url = "https://discord.gg/Gur2V67" }
+    mouseX, mouseY = 395, 50
+    reset()
+    panel:renderLinkTooltip()
+    local box = rects[#rects]
+    check(box.x + box.w <= panel.width - 4, "提示框不超出面板右緣")
+    check(box.x >= 4, "提示框不超出面板左緣")
+
+    -- 下方空間不足時翻到游標上方
+    mouseX, mouseY = 40, 295
+    reset()
+    panel:renderLinkTooltip()
+    box = rects[#rects]
+    check(box.y < 295, "下方空間不足時提示翻到游標上方")
+end)()
+
 -- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
 -- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 185
+local EXPECTED_ASSERTIONS = 201
 assert(assertionCount == EXPECTED_ASSERTIONS,
     "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
         .. "（有測試被刪掉或跳過？）")

@@ -38,7 +38,8 @@ NBSkin.COLORS = {
     TAB_TEXT_UNSELECTED = { r = 0.7, g = 0.7, b = 0.7, a = 1.0 },
     ACCENT_AMBER = { r = 1, g = 0.85, b = 0.4, a = 1.0 },
     LINK = { r = 0.45, g = 0.75, b = 1.0, a = 1.0 },
-    LINK_HOVER = { r = 0.65, g = 0.85, b = 1.0, a = 1.0 },
+    -- 與 LINK 的落差刻意拉大：原本 (0.65,0.85,1.0) 只比 LINK 稍亮，玩家看不出游標在連結上
+    LINK_HOVER = { r = 0.9, g = 0.97, b = 1.0, a = 1.0 },
     UNREAD_DOT = { r = 0.85, g = 0.15, b = 0.15, a = 1.0 },
     UNREAD_DOT_OUTLINE = { r = 0, g = 0, b = 0, a = 0.6 },
     ERROR_BG = { r = 0.3, g = 0.05, b = 0.05, a = 0.5 },

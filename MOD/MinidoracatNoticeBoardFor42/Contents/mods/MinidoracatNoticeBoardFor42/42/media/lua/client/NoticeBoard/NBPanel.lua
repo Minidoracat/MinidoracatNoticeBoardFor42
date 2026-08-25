@@ -59,6 +59,7 @@ local MINIMUM_WIDTH = 420
 local MINIMUM_HEIGHT = 260
 local TAB_BUTTON_GAP = 6
 local SCROLLBAR_WIDTH = 13
+local LINK_TOOLTIP_PAD = 6
 local POPUP_WAIT_MS = 10000
 local POPUP_ALWAYS = 1
 local POPUP_UNREAD = 2
@@ -1275,6 +1276,69 @@ function NBPanel:render()
         self:drawRectBorder(0, 0, width, self:getHeight(), 0.4, 0.2, 1.0, 1.0)
         self:drawRectBorder(1, 1, width - 2, self:getHeight() - 2, 0.4, 0.2, 1.0, 1.0)
     end
+
+    -- 連結提示畫在最後：stencil 已 clear，才不會被內容區裁掉
+    self:renderLinkTooltip()
+end
+
+-- 連結 hover 提示：顯示完整網址。Markdown 的顯示文字與實際網址可以脫鉤
+-- （`[看似無害的字](惡意網址)`），所以在點下去之前就把真正會被複製的網址攤開來。
+function NBPanel:renderLinkTooltip()
+    if self.isCollapsed then
+        -- Skin.fill/border 沒有 isCollapsed 守衛（drawRect／drawText 有，
+        -- ISUIElement.lua:1191-1197,:1295-1296），摺疊時要自己跳過
+        return
+    end
+    local region = self:getHoveredLink()
+    if not region then
+        return
+    end
+
+    local textManager = getTextManager()
+    local font = UIFont.Small
+    local maxWidth = self.width - LINK_TOOLTIP_PAD * 2 - 8
+    -- 截斷結果快取：量測是 render 內的呼叫，同一個網址不重算（per-frame 不配置新 table）
+    local cache = self.linkTooltipCache
+    if not cache or cache.url ~= region.url or cache.maxWidth ~= maxWidth then
+        local text = region.url
+        if textManager:MeasureStringX(font, text) > maxWidth then
+            -- 從尾端砍：網域在前面，那是玩家最該看清的部分
+            while string.len(text) > 1
+                and textManager:MeasureStringX(font, text .. "...") > maxWidth do
+                text = string.sub(text, 1, string.len(text) - 1)
+            end
+            text = text .. "..."
+        end
+        cache = {
+            url = region.url,
+            maxWidth = maxWidth,
+            text = text,
+            width = textManager:MeasureStringX(font, text),
+        }
+        self.linkTooltipCache = cache
+    end
+
+    local boxWidth = cache.width + LINK_TOOLTIP_PAD * 2
+    local boxHeight = textManager:getFontHeight(font) + LINK_TOOLTIP_PAD
+    local x = self:getMouseX() + 12
+    local y = self:getMouseY() + 18
+    if x + boxWidth > self.width - 4 then
+        x = self.width - 4 - boxWidth
+    end
+    if x < 4 then
+        x = 4
+    end
+    if y + boxHeight > self.height - 4 then
+        y = self:getMouseY() - boxHeight - 6 -- 下方不夠就翻到游標上方
+    end
+    x = math.floor(x)
+    y = math.floor(y)
+
+    Skin.fill(self, x, y, boxWidth, boxHeight, COLORS.TOAST_BG)
+    Skin.border(self, x, y, boxWidth, boxHeight, COLORS.TOAST_BORDER)
+    local textColor = COLORS.TITLE_TEXT
+    self:drawText(cache.text, x + LINK_TOOLTIP_PAD, y + math.floor(LINK_TOOLTIP_PAD / 2),
+        textColor.r, textColor.g, textColor.b, textColor.a, font)
 end
 
 function NBPanel:tabAt(x)

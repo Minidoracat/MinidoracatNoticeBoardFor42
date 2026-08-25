@@ -9,7 +9,10 @@ This line contains **highlighted text**.
 
 ---
 
-[Project Zomboid official site](https://projectzomboid.com)
+[Minidoracat Discord](https://discord.gg/Gur2V67)
+
+Clicking a link **copies the URL to your clipboard**; hover over it first to see
+the full address. The game cannot open external pages, so paste it into your browser.
 
 ## Notices can show images
 
