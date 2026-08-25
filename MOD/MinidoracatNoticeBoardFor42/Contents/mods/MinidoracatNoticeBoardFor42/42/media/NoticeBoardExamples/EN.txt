@@ -11,9 +11,18 @@ This line contains **highlighted text**.
 
 [Project Zomboid official site](https://projectzomboid.com)
 
-The image below is a built-in game texture, shown here to prove image syntax works:
+## Notices can show images
 
-![Built-in texture demo](media/ui/Admin_Icon.png)
+![Sample image](media/ui/NoticeBoard/nb_sample.png =240x)
 
-To use your own images, ship them in a texture pack mod and reference that path.
-See docs/ADMIN_GUIDE.md. Images cannot be loaded from the internet - that is an engine limit.
+The image above ships with this mod and is here to prove image syntax works.
+
+To use your own images, drop the PNG files into the server's `NoticeBoard/images/`
+folder and reference them with `![caption](images/your-file.png)` — the server syncs
+them to every player automatically, so **you do not need a separate texture pack mod**.
+
+Display size is optional: `=600x200` (width x height), `=600x` (width only),
+`=x200` (height only). Size limits, the file count cap and how updates are picked up
+are all documented in `NoticeBoard/images/00_README.txt`.
+
+Images cannot be loaded from the internet - that is an engine limit.

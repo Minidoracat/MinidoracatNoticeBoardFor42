@@ -11,9 +11,17 @@
 
 [Project Zomboid 官方網站](https://projectzomboid.com)
 
-下面這張是遊戲內建貼圖，用來示範圖片語法可以正常運作：
+## 公告裡可以放圖片
 
-![內建貼圖示範](media/ui/Admin_Icon.png)
+![範例圖](media/ui/NoticeBoard/nb_sample.png =240x)
 
-要放自己的圖片，請把圖做成一個貼圖包 MOD 再引用它的路徑，詳見 docs/ADMIN_GUIDE.md。
+上面這張是本 MOD 自帶的圖，用來示範圖片語法可以正常運作。
+
+要放自己的圖，把 PNG 檔丟進伺服器的 `NoticeBoard/images/` 資料夾，公告裡用
+`![說明文字](images/檔名.png)` 就能引用——伺服器會自動同步給每位玩家，
+**不需要另外做貼圖包 MOD**。
+
+可指定顯示尺寸：`=600x200`（寬x高）、`=600x`（只給寬）、`=x200`（只給高）。
+容量上限、張數限制與更新機制，詳見 `NoticeBoard/images/00_README.txt`。
+
 公告圖片無法從網路載入，這是遊戲引擎的限制。
