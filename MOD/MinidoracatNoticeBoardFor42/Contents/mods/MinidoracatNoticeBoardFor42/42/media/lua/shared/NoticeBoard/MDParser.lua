@@ -28,6 +28,13 @@ MDParser.LINK_SUFFIX = " <POPRGB> "
 MDParser.LINE_SEPARATOR = " <LINE> "
 MDParser.ERROR_PLACEHOLDER = "[Markdown parse error]"
 
+-- U+00A0（NBSP）：撐行內程式碼與相鄰文字的視覺間距用，理由與踩過的坑見 KIND_CODE 分支。
+-- **必須是單一 string.char(0xA0)**：Kahlua 的 string.char 逐參數 `(char) num`
+-- （StringLib.java:760-769），參數是 UTF-16 code unit 而非 UTF-8 位元組；
+-- 寫成 string.char(0xC2, 0xA0) 會變成 "Â" 加 NBSP 兩個字元，實機畫出 Â。
+-- 也不能在 .lua 裡直接寫字面字元：Kahlua 載入原始碼時逐位元組截斷（見檔頭鐵則）。
+MDParser.NBSP = string.char(0xA0)
+
 -- <LINE> 只換行；font/orient/rgb/indent 都跨行持續（processCommand:29-63、311、render:619-624），
 -- 故每個邏輯行的第一段必須自報樣式，否則標題後正文繼承大字置中、清單後正文持續縮排（AC5 會失敗）。
 MDParser.LINE_RESET = " <TEXT> <INDENT:0> "
@@ -623,17 +630,25 @@ renderInline = function(text, state, lineNumber)
             end
         elseif best == KIND_CODE then
             -- 程式碼內不再解析任何行內語法，且 < > 一律轉義。
-            -- 反引號**保留在上色區內**當視覺邊界：引擎在 command token 處開新 chunk
-            -- （ISRichTextPanel.lua:462-470），新 chunk 直接接前一個 chunk 的右邊緣
-            -- （:529），所以上色區兩側零間距；而 markdown 裡打空格會被 :497 的
-            -- string.trim 吃掉，多位元組空白（NBSP／全角空格）在 Lua byte string 端
-            -- 會被逐位元組渲染成亂碼（實測 U+00A0 顯示為 "Â"）。
-            -- 於是「保留顏色 + 有間距」只能靠可見的 ASCII 字元，而反引號正是使用者
-            -- 在 markdown 裡本來就寫的東西——語意直觀且零編碼風險。
+            --
+            -- 【為什麼上色區內側要墊 NBSP＋保留反引號】
+            -- 引擎在 command token 處 `lines = lines + 1` 開新 chunk
+            -- （ISRichTextPanel.lua:462-470），新 chunk 的起點直接接前一個 chunk 的
+            -- 右邊緣（:529 `x = self.lineX[lines] + pixLen`），只有**同一** chunk 內的
+            -- token 之間才補單一空白（:498-500）。行內程式碼靠 PUSHRGB/POPRGB 上色，
+            -- 於是兩側邊界一律零間距，CJK 接技術符號特別難讀（`顯示尺寸：=600x200`）。
+            -- markdown 裡打空格也沒用：token 進 chunk 前一律 string.trim（:497）。
+            -- 唯一能存活的間距是不匹配 Lua `%s` 的空白 → U+00A0（NBSP）。
+            --
+            -- 【構造方式很關鍵】Kahlua 的 string.char 是 `sb.append((char) num)`
+            -- （StringLib.java:760-769），參數是 **UTF-16 code unit**，不是 UTF-8 位元組。
+            -- 寫成 string.char(0xC2, 0xA0) 會產生兩個字元（U+00C2 "Â" ＋ U+00A0），
+            -- 實機就是畫出一個 Â——踩過。正確寫法是單一 string.char(0xA0)。
+            -- 反引號同時保留：字型萬一沒有 U+00A0 的 glyph（寬度 0、不畫），
+            -- 至少還有形狀邊界，不會退回完全緊貼。
             local codeText = cacheFirst[KIND_CODE]
             -- 內容前後都有空格且不是全空白時各剝一個：那是多重反引號的 delimiter 保護
-            -- 空格（`` a`b ``），不屬於程式碼內容本身（CommonMark 同規則）。留著會把
-            -- 當視覺邊界用的反引號推離內容，看起來像多了一層空格。
+            -- 空格（`` a`b ``），不屬於程式碼內容本身（CommonMark 同規則）。
             local length = string.len(codeText)
             if length > 2
                 and string.sub(codeText, 1, 1) == " "
@@ -642,7 +657,7 @@ renderInline = function(text, state, lineNumber)
                 codeText = string.sub(codeText, 2, length - 1)
             end
             result[#result + 1] = MDParser.CODE_PREFIX
-                .. "`" .. escapeCode(codeText) .. "`"
+                .. MDParser.NBSP .. "`" .. escapeCode(codeText) .. "`" .. MDParser.NBSP
                 .. MDParser.CODE_SUFFIX
         elseif best == KIND_STRIKE then
             -- PZ RichText 沒有刪除線效果（drawText 無此參數，:672），只能吃掉標記顯示純文字

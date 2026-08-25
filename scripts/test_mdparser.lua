@@ -98,6 +98,12 @@ checkEqual(
 
 -- 期望值一律寫「字面字串」，不得引用 MDParser 自己的常數——否則常數被改壞時測試仍恆真。
 -- norm 只把連續空白收斂成單一空白，讓期望值可讀；tag 前後的必要空白仍受 tokenizer 測試把關。
+-- 行內程式碼的上色區內側墊了 NBSP（MDParser.NBSP）撐視覺間距。期望值要照實串接它，
+-- **不可**在 norm 裡 gsub 掉：本檔跑在標準 Lua（byte string），string.char(0xA0) 是單一
+-- 位元組，會撞到中文 UTF-8 序列的中間位元組（「破」= E7 A0 B4）而把中文挖破。
+-- 實機的 Kahlua 是 Java String、NBSP 是獨立 char，沒有這個踩雷面。
+local NBSP = MDParser.NBSP
+
 local function norm(text)
     text = string.gsub(tostring(text), "%s+", " ")
     text = string.gsub(text, "^%s+", "")
@@ -1243,12 +1249,12 @@ checkNoTextLost("> 引言甲\n> 引言乙\n\n>> 巢狀引言", { "引言甲", "�
 -- 行內程式碼：無等寬字型也無底色框，只能換色；內容的 < > 必須轉義
 checkEqual(
     norm(MDParser.safeParse("執行 `a<b>c` 完成").richText),
-    "<TEXT> <INDENT:0> 執行 <PUSHRGB:1,0.7,0.85> `a&lt;b&gt;c` <POPRGB> 完成",
+    "<TEXT> <INDENT:0> 執行 <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`a&lt;b&gt;c`" .. NBSP .. " <POPRGB> 完成",
     "行內程式碼映射錯誤"
 )
 checkEqual(
     norm(MDParser.safeParse("`` a`b ``").richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `a`b` <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`a`b`" .. NBSP .. " <POPRGB>",
     "多重反引號 delimiter 必須支援"
 )
 checkNoTextLost("執行 `abc` 完成", { "執行", "abc", "完成" }, "行內程式碼")
@@ -1257,19 +1263,19 @@ checkNoTextLost("執行 `abc` 完成", { "執行", "abc", "完成" }, "行內程
 -- 救不了（trim 吃掉）、多位元組空白會亂碼（實測 U+00A0 渲染成 "Â"）。
 checkEqual(
     norm(MDParser.safeParse("顯示尺寸：`=600x200`（寬x高）").richText),
-    "<TEXT> <INDENT:0> 顯示尺寸： <PUSHRGB:1,0.7,0.85> `=600x200` <POPRGB> （寬x高）",
+    "<TEXT> <INDENT:0> 顯示尺寸： <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`=600x200`" .. NBSP .. " <POPRGB> （寬x高）",
     "CJK 緊接行內程式碼時要有反引號當邊界"
 )
 -- delimiter 保護空格剝掉後，反引號要緊貼內容
 checkEqual(
     norm(MDParser.safeParse("`` a ``").richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `a` <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`a`" .. NBSP .. " <POPRGB>",
     "多重反引號的保護空格要剝掉"
 )
 -- 全空白內容不剝（剝完就沒東西了）
 checkEqual(
     norm(MDParser.safeParse("`  `").richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> ` ` <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> " .. NBSP .. "` `" .. NBSP .. " <POPRGB>",
     "全空白程式碼內容不剝空格"
 )
 
@@ -1323,7 +1329,7 @@ checkEqual(
 -- CommonMark：程式碼內不做反斜線逸出，反斜線要原樣留著
 checkEqual(
     norm(MDParser.safeParse("`a\\*b`").richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `a\\*b` <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`a\\*b`" .. NBSP .. " <POPRGB>",
     "程式碼內的反斜線必須原樣保留"
 )
 checkNoTextLost("\\*不是斜體\\* 與 \\# 不是標題", { "*不是斜體*", "# 不是標題" }, "反斜線逸出")
@@ -1387,14 +1393,14 @@ local codeLink = MDParser.safeParse("`[a](b)`")
 checkEqual(#codeLink.links, 0, "行內程式碼內的連結不得成為可點擊連結")
 checkEqual(
     norm(codeLink.richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `[a](b)` <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`[a](b)`" .. NBSP .. " <POPRGB>",
     "行內程式碼內的連結必須原樣顯示"
 )
 local codeAutolink = MDParser.safeParse("`<https://evil.example/x>`")
 checkEqual(#codeAutolink.links, 0, "行內程式碼內的 autolink 不得成為可點擊連結")
 checkEqual(
     norm(codeAutolink.richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> `&lt;https://evil.example/x&gt;` <POPRGB>",
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`&lt;https://evil.example/x&gt;`" .. NBSP .. " <POPRGB>",
     "行內程式碼內的 autolink 必須轉義成可見文字"
 )
 -- 同一行有兩個 code span 時，連結被抽走會讓剩下的分隔符互相錯配、把中間的字塗成程式碼色。
@@ -1403,8 +1409,8 @@ local docSentence = MDParser.safeParse("please use `<https://...>` or `[text](ht
 checkEqual(#docSentence.links, 0, "文件原句不得產生任何連結")
 checkEqual(
     norm(docSentence.richText),
-    "<TEXT> <INDENT:0> please use <PUSHRGB:1,0.7,0.85> `&lt;https://...&gt;` <POPRGB>"
-        .. " or <PUSHRGB:1,0.7,0.85> `[text](https://...)` <POPRGB> .",
+    "<TEXT> <INDENT:0> please use <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`&lt;https://...&gt;`" .. NBSP .. " <POPRGB>"
+        .. " or <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`[text](https://...)`" .. NBSP .. " <POPRGB> .",
     "兩個 code span 之間的文字不得被錯配成程式碼"
 )
 -- code span 之外的連結照樣要成立（不能因為擋 code span 就把整行的連結都關掉）
