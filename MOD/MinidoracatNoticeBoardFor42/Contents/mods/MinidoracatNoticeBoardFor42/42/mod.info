@@ -3,5 +3,5 @@ id=MinidoracatNoticeBoardFor42
 description=[B42]遊戲內公告欄，直接編輯 Markdown 檔案即可更新（依伺服器輪詢間隔生效），多份檔案自動分頁。By Minidoracat
 poster=poster.png
 require=MinidoracatUIFor42
-modversion=42.20.2-0.1.0
+modversion=42.20.2-0.2.0
 versionMin=42.20.2
