@@ -2,7 +2,7 @@
 --
 -- 浮鈕本體（setCapture 拖曳＋4px 門檻、每幀 clamp、hover 疊色、圓角皮膚）
 -- 已上移框架 `MinidoracatUI/Widgets/FloatButton.lua`。本檔只剩本 MOD 業務：
---   1. 內容繪製：置中「!」＋未讀紅點（徽章刻意「掛」在右上弧，UI_DESIGN §2）
+--   1. 內容繪製：置中喇叭圖標＋未讀紅點（徽章刻意「掛」在右上弧，UI_DESIGN §2）
 --   2. 點擊 = NBPanel.toggle()
 --   3. 位置持久化 = ISLayoutManager（layout.ini；RestoreLayout/SaveLayout
 --      掛在框架實例上——DefaultRestoreWindow 呼叫的是實例方法）
@@ -37,6 +37,13 @@ local BUTTON_SIZE = 40
 local RIGHT_MARGIN = 16
 local LAYOUT_NAME = "MinidoracatNBFloatButton"
 
+-- 喇叭圖標（MOD 自帶）。資產存 48px、顯示 24px：2:1 縮放在 GL_LINEAR 下最銳利
+-- （貼圖 flags=0/4 → GL_LINEAR，`TextureID.java:423-424`）。
+-- 圖是彩色的，drawTextureScaled 的 r/g/b 一律傳 1 保留原色（頂點色乘算，
+-- `ISUIElement.lua:1032-1040`）——傳主題色會把它染成單色。
+local ICON_PATH = "media/ui/NoticeBoard/nb_megaphone.png"
+local ICON_SIZE = 24
+
 local function frameworkFloatButton()
     local ui = MinidoracatUI and MinidoracatUI.v1
     if ui and ui.API_MAJOR == 1 and ui.CAPABILITIES and ui.CAPABILITIES.floatButton == true then
@@ -45,12 +52,20 @@ local function frameworkFloatButton()
     return nil
 end
 
--- 內容繪製（框架畫完皮膚後回呼）：置中驚嘆號＋未讀點
+-- 內容繪製（框架畫完皮膚後回呼）：置中喇叭圖標＋未讀點
+-- 圖標在建立時載入一次（btn.icon）；載不到就退回文字，per-frame 不重試貼圖
 local function drawContent(btn)
-    local textColor = COLORS.TITLE_TEXT
-    local fontHeight = getTextManager():getFontHeight(UIFont.Medium)
-    btn:drawTextCentre("!", btn.width / 2, (btn.height - fontHeight) / 2,
-        textColor.r, textColor.g, textColor.b, textColor.a, UIFont.Medium)
+    if btn.icon then
+        btn:drawTextureScaled(btn.icon,
+            math.floor((btn.width - ICON_SIZE) / 2),
+            math.floor((btn.height - ICON_SIZE) / 2),
+            ICON_SIZE, ICON_SIZE, 1, 1, 1, 1)
+    else
+        local textColor = COLORS.TITLE_TEXT
+        local fontHeight = getTextManager():getFontHeight(UIFont.Medium)
+        btn:drawTextCentre("!", btn.width / 2, (btn.height - fontHeight) / 2,
+            textColor.r, textColor.g, textColor.b, textColor.a, UIFont.Medium)
+    end
     if btn.unread then
         Skin.dot(btn, btn.width - 8, -2, 8, COLORS.UNREAD_DOT, COLORS.UNREAD_DOT_OUTLINE)
     end
@@ -90,6 +105,12 @@ function NBFloatButton.ensureInstance()
         -- onMoved 不另存——SaveLayout 在遊戲存檔時機由引擎呼叫
     })
     button.unread = #Client.getUnreadIds() > 0
+
+    -- 圖標載入一次就好（`getTexture` 走 `Texture.getSharedTexture`，本身有快取；
+    -- 但仍不放在 drawContent 裡以免每幀查表）。dedicated 端回 null
+    -- （`Texture.java:414-416`）、路徑打錯也是 null，兩者都退回文字繪製。
+    local ok, tex = pcall(getTexture, ICON_PATH)
+    button.icon = (ok and tex) or nil
 
     -- ISLayoutManager 整合：DefaultRestoreWindow/DefaultSaveWindow 呼叫
     -- window:RestoreLayout/SaveLayout（實例方法）——掛在框架實例上
