@@ -28,6 +28,17 @@ MDParser.LINK_SUFFIX = " <POPRGB> "
 MDParser.LINE_SEPARATOR = " <LINE> "
 MDParser.ERROR_PLACEHOLDER = "[Markdown parse error]"
 
+-- 【顏色標記邊界的視覺間距】ISRichTextPanel 在遇到 command token 時 `lines = lines + 1`
+-- 開新 chunk（:462-470），而新 chunk 的起點直接接前一個 chunk 的右邊緣
+-- （:529 `x = self.lineX[lines] + pixLen`）；只有**同一** chunk 內的 token 之間才會補
+-- 單一空白（:498-500）。所以 `文字：<PUSHRGB>=600x200<POPRGB>` 渲染出來是緊貼的，
+-- CJK 接技術符號時特別難讀（`顯示尺寸：=600x200`）。
+-- 服主自己在 markdown 裡打空格也救不了：token 進 chunk 前一律 `string.trim`（:497）。
+-- 唯一能存活的是不匹配 Lua `%s` 的空白——U+00A0（NBSP）。原版法文 UI 翻譯用了 30 處
+-- （media/lua/shared/Translate/FR/UI.json，法式排版標點前要 NBSP），證明字型有 glyph。
+-- 用 string.char 組出：.lua 原始碼裡的非 ASCII 字面會被 Kahlua 逐字元截成單一位元組。
+MDParser.NBSP = string.char(0xC2, 0xA0)
+
 -- <LINE> 只換行；font/orient/rgb/indent 都跨行持續（processCommand:29-63、311、render:619-624），
 -- 故每個邏輯行的第一段必須自報樣式，否則標題後正文繼承大字置中、清單後正文持續縮排（AC5 會失敗）。
 MDParser.LINE_RESET = " <TEXT> <INDENT:0> "
@@ -622,9 +633,13 @@ renderInline = function(text, state, lineNumber)
                 }
             end
         elseif best == KIND_CODE then
-            -- 程式碼內不再解析任何行內語法，且 < > 一律轉義
+            -- 程式碼內不再解析任何行內語法，且 < > 一律轉義。
+            -- NBSP 墊在**上色區內側**（見 MDParser.NBSP）：跟著程式碼一起變色所以看不出來，
+            -- 但撐出與相鄰 CJK 的間距，也一起進 MeasureStringX、換行寬度照樣算對。
             result[#result + 1] = MDParser.CODE_PREFIX
+                .. MDParser.NBSP
                 .. escapeCode(cacheFirst[KIND_CODE])
+                .. MDParser.NBSP
                 .. MDParser.CODE_SUFFIX
         elseif best == KIND_STRIKE then
             -- PZ RichText 沒有刪除線效果（drawText 無此參數，:672），只能吃掉標記顯示純文字

@@ -98,7 +98,12 @@ checkEqual(
 
 -- 期望值一律寫「字面字串」，不得引用 MDParser 自己的常數——否則常數被改壞時測試仍恆真。
 -- norm 只把連續空白收斂成單一空白，讓期望值可讀；tag 前後的必要空白仍受 tokenizer 測試把關。
+-- 行內程式碼的上色區內側墊了 NBSP（MDParser.NBSP）撐視覺間距。NBSP 不匹配 Lua 的 %s，
+-- 這裡先換成普通空白再壓縮：既有的結構斷言不必為了間距全部改寫，NBSP 本身另有專項測試。
+local NBSP = MDParser.NBSP
+
 local function norm(text)
+    text = string.gsub(tostring(text), NBSP, " ")
     text = string.gsub(tostring(text), "%s+", " ")
     text = string.gsub(text, "^%s+", "")
     return string.gsub(text, "%s+$", "")
@@ -4616,6 +4621,42 @@ end)()
     check(renders[3].w == 30 and renders[3].h == 12, "小數寬高要 floor（30.9x12.6 → 30x12）")
     _G.NinePatchTexture = nil
     Skin.reset()
+end)()
+
+-- ── 行內程式碼的視覺間距（NBSP）─────────────────────────────────────────────
+-- 引擎在 command token 處開新 chunk（ISRichTextPanel.lua:462-470），新 chunk 的 x 直接
+-- 接前一個 chunk 的右邊緣（:529），所以 `文字：<PUSHRGB>code<POPRGB>` 渲染成緊貼；
+-- 而 markdown 裡打空格會被 :497 的 string.trim 吃掉，服主自己救不了。上色區內側墊 NBSP
+-- 是唯一能存活的間距（NBSP 不匹配 Lua %s）。以下用未經 norm 的原始 richText 驗。
+;(function()
+    local raw = MDParser.safeParse("顯示尺寸：`=600x200`").richText
+    check(string.find(raw, MDParser.CODE_PREFIX .. NBSP, 1, true) ~= nil,
+        "上色區開頭內側要有 NBSP")
+    check(string.find(raw, NBSP .. MDParser.CODE_SUFFIX, 1, true) ~= nil,
+        "上色區結尾內側要有 NBSP")
+    check(string.find(raw, NBSP .. "=600x200" .. NBSP, 1, true) ~= nil,
+        "NBSP 緊貼程式碼內容兩側（間距落在上色區內，跟著變色所以看不出來）")
+    -- NBSP 必須在標記之內：落到外面會被當成普通文字 token，反而讓 tag 前後失去 ASCII 空白
+    check(string.find(raw, NBSP .. " <PUSHRGB", 1, true) == nil,
+        "NBSP 不得出現在上色區外側")
+    -- 量測寬度要含 NBSP：換行計算靠 MeasureStringX，漏算會讓長行溢出
+    local _, visible = tokenizeLikeEngine(raw)
+    check(string.find(visible, "=600x200", 1, true) ~= nil,
+        "程式碼內容經引擎 tokenizer 後仍可見（NBSP 沒把 token 切壞）")
+    -- 連結 display 走 escapeText、不經 renderInline（MDParser.lua:798-800），所以連結
+    -- 文字裡的反引號維持字面、不會變成上色區也不會帶 NBSP。NBPanel 的 hit region 是拿
+    -- link.text 去比渲染後的可見文字，兩側都不含 NBSP 才比得上——這條斷言鎖住那個前提。
+    local linkRaw = MDParser.safeParse("[`config.ini`](https://example.com/a)").richText
+    local linkBody = string.match(linkRaw, "PUSHRGB:0.35,0.65,1>(.-)<POPRGB")
+    check(linkBody ~= nil, "連結上色區存在")
+    check(linkBody ~= nil and string.find(linkBody, NBSP, 1, true) == nil,
+        "連結 display 不得含 NBSP（否則 hit region 比對會失準）")
+    check(linkBody ~= nil and string.find(linkBody, "`config.ini`", 1, true) ~= nil,
+        "連結文字裡的反引號維持字面")
+
+    -- 程式碼內容為空時不應產生只有 NBSP 的上色區
+    local empty = MDParser.safeParse("a `` b").richText
+    check(string.find(empty, NBSP .. NBSP, 1, true) == nil, "空程式碼不產生連續 NBSP")
 end)()
 
 print = realPrint
