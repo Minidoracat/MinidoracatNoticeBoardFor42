@@ -1,5 +1,12 @@
 # UI 設計方向 — MinidoracatNoticeBoardFor42
 
+> **【2026-08-25 上移註記】** 本文提及的 `nb_round_*`／`nb_roundtop_*`／`nb_dot.png` 貼圖與其
+> 載入邏輯已上移家族 UI 框架 repo（`D:/github/MinidoracatUIFor42`，檔名前綴改 `mui_`、目錄
+> `42/media/ui/MinidoracatUI/`）；本 repo 的 `NBSkin.lua` 現為框架 thin adapter（缺框架退直角），
+> 不再攜帶 PNG。本文的視覺設計決策（色票、圓角語彙、元件版面）仍為權威；貼圖檔名與路徑
+> 敘述為歷史原貌，現行以框架 repo 為準。
+
+
 依據 `.omc/plans/ralplan-noticeboard.md`（NBPanel/NBFloatButton/NBToast、彈窗決策、未讀紅點）與 PZ B42 原生視覺語言（`SurvivalGuide.lua`、`ISUI/ISCollapsableWindow.lua`、`ISUI/ISTabPanel.lua`、`ISUI/ISRichTextPanel.lua`）撰寫。全部效果限定 ISUI 既有 API：`drawRect` / `drawRectBorder` / `drawTextureScaled` / `drawText(Centre)` / `ISButton` / `ISRichTextPanel` / `UITransition`，加上引擎原生 9-slice `NinePatchTexture`（`zombie/core/textures/NinePatchTexture.java`，出處與坑見 AGENTS.md API 表）配 MOD 自帶的白色圓角貼圖（`media/ui/NoticeBoard/`，規格見 `docs/UI_SKIN_TEXTURES.md`）；不新增自訂 shader、不假設引擎沒有的模糊效果。
 
 設計基調：延續原生「深色半透明公告板」語彙（黑底高透明度＋淺灰細邊框），小半徑（6px）圓角、平面染色，不做漸層／模糊，貼合 PZ 廢土求生的樸素工具面板風格。琥珀色（amber）作為公告板慣用的警示膠帶/圖釘意象，僅用於少量強調點（粗體、Toast 邊框、未讀強調），不大面積使用。

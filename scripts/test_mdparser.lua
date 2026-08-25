@@ -2861,6 +2861,75 @@ checkEqual(serverState.langPending.alice, true,
     "resync 排入失敗時待推必須留著（清掉這次語系切換就靜默遺失）")
 
 -- ---------------------------------------------------------------------------
+-- 語系限定公告（檔名 `.only.` 標記）與共用底稿的四種組合。
+-- 走公開的 scanLanguage + composeLanguage，不直接測 local——這條路徑決定「誰看得到什麼」，
+-- 弄錯的後果是公告漏給人看或洩漏給不該看的語系，而且完全靜默。
+-- ---------------------------------------------------------------------------
+;(function()
+    local function idsFor(language, defaultLanguage)
+        local scanned = {}
+        local codes = { "EN", "CH" }
+        local index
+        for index = 1, #codes do
+            scanned[codes[index]] = NBReader.scanLanguage(codes[index])
+        end
+        local composed = NBReader.composeLanguage(scanned, language, defaultLanguage)
+        local ids = {}
+        for index = 1, #composed.files do
+            ids[index] = composed.files[index].id
+        end
+        return table.concat(ids, ",")
+    end
+
+    diskFiles = {}
+    scannedNames["NoticeBoard/EN"] = {
+        "10_shared.txt", "20_en_only.only.txt",
+    }
+    scannedNames["NoticeBoard/CH"] = {
+        "10_shared.txt", "30_ch_only.txt", "40_ch_only.only.txt",
+    }
+    diskFiles["NoticeBoard/EN/10_shared.txt"] = "# shared EN"
+    diskFiles["NoticeBoard/EN/20_en_only.only.txt"] = "# EN only"
+    diskFiles["NoticeBoard/CH/10_shared.txt"] = "# shared CH"
+    diskFiles["NoticeBoard/CH/30_ch_only.txt"] = "# CH only"
+    diskFiles["NoticeBoard/CH/40_ch_only.only.txt"] = "# CH only marked"
+
+    -- DefaultLanguage = EN 的玩家（就是底稿語系本人）：看得到 EN 的全部，含 .only
+    checkEqual(idsFor("EN", "EN"), "10_shared.txt,20_en_only.only.txt",
+        "底稿語系本人要看得到自己目錄的全部檔案（含 .only）")
+
+    -- 其他語系的玩家：底稿的 .only 必須被跳過；自己目錄的檔案全收
+    checkEqual(idsFor("CH", "EN"),
+        "10_shared.txt,30_ch_only.txt,40_ch_only.only.txt",
+        "非底稿語系不得看到底稿目錄裡標記 .only 的公告")
+
+    -- 同名覆蓋仍然有效（10_shared 取 CH 版）
+    local scanned = { EN = NBReader.scanLanguage("EN"), CH = NBReader.scanLanguage("CH") }
+    local composedCH = NBReader.composeLanguage(scanned, "CH", "EN")
+    checkEqual(composedCH.byId["10_shared.txt"].title, "shared CH",
+        "同名檔案仍必須由玩家語系覆蓋底稿")
+
+    -- 反向：DefaultLanguage 換成 CH。此時 CH 目錄變成底稿，所以 CH 的**普通**檔案
+    -- （30_ch_only.txt）會鋪給 EN 玩家——「限定」是由標記決定的，不是由目錄名決定。
+    -- 只有標記過的 40_ch_only.only.txt 不外流。
+    checkEqual(idsFor("EN", "CH"),
+        "10_shared.txt,20_en_only.only.txt,30_ch_only.txt",
+        "換了 DefaultLanguage 之後，新底稿的普通檔案要鋪過來、標記 .only 的不得外流")
+
+    -- 標記的形狀：只有「副檔名前一段是 only」才算，避免誤判正常檔名
+    check(NBReader.isLanguageOnly("20_x.only.txt"), ".only.txt 是標記")
+    check(NBReader.isLanguageOnly("20_x.only.md"), ".only.md 是標記")
+    check(not NBReader.isLanguageOnly("20_only.txt"), "only 出現在名稱裡不算標記")
+    check(not NBReader.isLanguageOnly("20_x.only"), "沒有副檔名不算（isNoticeFile 也不會收）")
+    check(not NBReader.isLanguageOnly("20_x.onlyy.txt"), "onlyy 不是 only")
+    check(not NBReader.isLanguageOnly(nil), "nil 不得當成標記")
+
+    diskFiles = {}
+    scannedNames["NoticeBoard/EN"] = {}
+    scannedNames["NoticeBoard/CH"] = {}
+end)()
+
+-- ---------------------------------------------------------------------------
 -- 語系切換的獨立冷卻桶（LANGUAGE_COOLDOWN_MS=3s）與「同一份請求不重排」。
 -- 這一段釘住的是 client/server 兩端的**對稱性**：
 --   * 換語系不吃 register/resync 那個 10 秒桶（進場註冊後馬上換語系不該被擋）；
@@ -4475,6 +4544,24 @@ end)()
 -- （半透明填色疊成雙倍 alpha），縮放角落又會把 AA 弧線拉糊，所以直接退回直角 drawRect。
 -- ---------------------------------------------------------------------------
 ;(function()
+    -- NBSkin 現為家族框架（MinidoracatUIFor42）的 thin adapter：先載框架 V1.lua
+    -- （繪製核心與 fits 夾限所在），再載 adapter。框架 repo 預設在本 repo 同層，
+    -- 放別處用 MUI_LUA 指到 V1.lua。缺框架＝前置條件不滿足，印 SKIP 訊息後只跳過
+    -- 本段（其餘四千行 MDParser 測試不受影響）；框架的 fits／繪製行為由其自身
+    -- harness 與 test_nbpanel 覆蓋。
+    local muiV1 = os.getenv("MUI_LUA")
+        or "../MinidoracatUIFor42/MOD/MinidoracatUIFor42/Contents/mods/MinidoracatUIFor42/42/media/lua/client/MinidoracatUI/V1.lua"
+    local probe = io.open(muiV1, "rb")
+    if not probe then
+        -- 用 realPrint：此區間 print 已被 :2202 攔進 logLines，一般 print 到不了
+        -- stdout，閘門（verify_mod.py 掃各行 SKIP 前綴）會看不見而誤判 PASS
+        realPrint("SKIP NBSkin section: framework V1.lua not found at " .. muiV1
+            .. " (clone MinidoracatUIFor42 beside this repo, or set MUI_LUA)")
+        return
+    end
+    probe:close()
+    dofile(muiV1)
+    check(MinidoracatUI ~= nil and MinidoracatUI.v1 ~= nil, "家族框架 facade 已發布")
     dofile(MOD_VERSION_DIR .. "media/lua/client/NoticeBoard/NBSkin.lua")
     local Skin = NBSkin
     -- 角落 6px：四角圓最小 12×12；上圓下直（沒有下排角落）最小 12×6
@@ -4500,6 +4587,8 @@ end)()
         y = 20.2,
         getAbsoluteX = function(self) return self.x end,
         getAbsoluteY = function(self) return self.y end,
+        getXScroll = function() return 0 end,
+        getYScroll = function() return 0 end,
         drawRect = function(_, x, y, w, h) rects[#rects + 1] = { x = x, y = y, w = w, h = h } end,
         drawRectBorder = function(_, x, y, w, h)
             borders[#borders + 1] = { x = x, y = y, w = w, h = h }

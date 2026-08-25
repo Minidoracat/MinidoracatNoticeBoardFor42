@@ -27,11 +27,9 @@
                            scripts/test_nbpanel.lua（載入原版 ISRichTextPanel + NBPanel
                            實跑預檢）。需要 PATH 有 lua；test_nbpanel 另需本機有 PZ
                            安裝，缺任一者列為 SKIP 而非 PASS
- 13. UI 皮膚貼圖           — 42/media/ui/NoticeBoard/ 的 5 張 PNG 逐張過
-                           scripts/gen_ui_textures.py 的 verify_image（尺寸／IHDR／純白／
-                           NinePatchTexture 同邏輯反解析切線／拉伸區逐列相同／參考表）。
-                           Lua 測試全用 stub、從不讀 PNG，貼圖壞了只會靜默退回直角，
-                           這是唯一會擋住壞資產上 Workshop 的閘門。缺 Pillow 列 SKIP
+ 13. （已移除）UI 皮膚貼圖 — 貼圖與生成器已上移家族框架 MinidoracatUIFor42
+                           （42/media/ui/MinidoracatUI/，該 repo verify_mod.py 第 12 項驗），
+                           本 repo 不再攜帶 PNG；NBSkin 是框架 thin adapter，缺框架退直角
  14. 提示音音檔           — 42/media/sound/MinidoracatNBNotify.wav 過
                            scripts/prep_notify_sound.py 的 verify_notify_sound：未壓縮
                            16-bit PCM／聲道 1-2／取樣率白名單／長度 ≤5s／峰值在
@@ -333,44 +331,19 @@ else:
         lines = out.splitlines() or [f"rc={r.returncode}"]
         if r.returncode != 0:
             fail(f"Lua 單元測試（{t}）", lines[-3:])
-        elif lines[0].startswith("SKIP"):
-            skip(f"Lua 單元測試（{t}）", lines[0])
         else:
-            ok(f"Lua 單元測試（{t}：{lines[-1]}）")
+            # 任一行以 SKIP 開頭都列 SKIP：整檔跳過（首行）或段落級跳過（如
+            # test_mdparser 的 NBSkin 段缺框架 repo）都代表該防線沒完整跑到，
+            # 不得記 PASS
+            _skip_line = next((l for l in lines if l.startswith("SKIP")), None)
+            if _skip_line:
+                skip(f"Lua 單元測試（{t}）", _skip_line)
+            else:
+                ok(f"Lua 單元測試（{t}：{lines[-1]}）")
 
-# ---- 13. UI 皮膚貼圖 ----
-# NBSkin 對缺圖／壞圖一律靜默退回 drawRect（設計如此，面板不能因為貼圖進不去），兩支 Lua
-# 測試也都用 stub、不讀 PNG，所以壞資產不會讓任何測試變紅。這裡重用生成腳本自帶的
-# verify_image：尺寸／IHDR／全白 RGB／照 NinePatchTexture.java:262-298 反解析第一列＋第一欄
-# 的切線＝(6,4,6)×(6,4,6)｜(6,10,0)／拉伸區逐列逐欄相同／與參考 alpha 表逐像素比對。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from gen_ui_textures import OUTPUT_NAMES as _TEX_NAMES, verify_image as _verify_texture
-except ImportError as _e:   # Pillow 沒裝（gen_ui_textures 頂層 import PIL）
-    skip("UI 皮膚貼圖", f"無法載入 gen_ui_textures（{_e}）")
-else:
-    from pathlib import Path as _Path
-    _tex_problems = []
-    _tex_count = 0
-    for m in MEDIA_DIRS:
-        tex_dir = os.path.join(m, "ui", "NoticeBoard")
-        if not os.path.isdir(tex_dir):
-            continue
-        for name in _TEX_NAMES:
-            _tex_count += 1
-            path = os.path.join(tex_dir, name)
-            if not os.path.isfile(path):
-                _tex_problems.append(f"{os.path.relpath(path, REPO)}: 檔案不存在")
-                continue
-            try:
-                _verify_texture(_Path(path))
-            except Exception as e:   # AssertionError／PIL 解碼錯誤都算壞
-                _tex_problems.append(f"{os.path.relpath(path, REPO)}: {type(e).__name__}: {e}")
-    if _tex_count == 0:
-        skip("UI 皮膚貼圖", "找不到 42/media/ui/NoticeBoard/")
-    else:
-        fail("UI 皮膚貼圖（gen_ui_textures.verify_image）", _tex_problems) if _tex_problems \
-            else ok(f"UI 皮膚貼圖（{_tex_count} 張過 verify_image）")
+# ---- 13. UI 皮膚貼圖：已上移家族框架 MinidoracatUIFor42 ----
+# 貼圖（mui_*.png）與 gen_ui_textures.py 隨框架 repo 驗證與上傳；本 repo 的 NBSkin
+# 只是 thin adapter（框架缺席退直角），不再攜帶任何 PNG 資產，故無貼圖閘門。
 
 # ---- 14. 提示音音檔 ----
 # 與貼圖同一個理由：playUISound 對「找不到音效名」是靜默無聲、不拋錯

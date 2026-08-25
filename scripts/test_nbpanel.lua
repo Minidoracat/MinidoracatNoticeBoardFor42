@@ -176,6 +176,7 @@ function Base:createChildren() end
 function Base:setHeight(height) self.height = height end
 function Base:setScrollHeight(height) self.scrollHeight = height end
 function Base:getYScroll() return 0 end
+function Base:getXScroll() return 0 end
 function Base:setYScroll() end
 function Base:getHeight() return self.height end
 function Base:getWidth() return self.width end
@@ -259,8 +260,25 @@ _G.Translator = { getLanguage = function() return { name = function() return "EN
 _G.SandboxVars = {}
 _G.writeLog = function() end
 
--- 皮膚模組是真的載（不 stub）：這個 harness 沒有 NinePatchTexture 全域，等於在驗
--- 「引擎沒有 9-slice／dedicated」那條退回路徑；有貼圖的路徑在下方用 stub 另外驗。
+-- 皮膚：先載家族框架（MinidoracatUIFor42 的 V1.lua，繪製核心所在），再載 NBSkin
+-- （現為框架 thin adapter）。框架 repo 預設在本 repo 同層（家族慣例，同反編譯快照），
+-- 放別處用 MUI_LUA 指到 V1.lua。harness 沒有 NinePatchTexture 全域＝驗「引擎沒有
+-- 9-slice／dedicated」的退回路徑；有貼圖的路徑在下方用 stub 另外驗。
+local MUI_V1 = os.getenv("MUI_LUA")
+    or "../MinidoracatUIFor42/MOD/MinidoracatUIFor42/Contents/mods/MinidoracatUIFor42/42/media/lua/client/MinidoracatUI/V1.lua"
+do
+    -- 缺框架 repo＝前置條件不滿足，走既有 SKIP 紀律（同上方引擎源檢查）——
+    -- 不是 FAIL：單 repo clone／CI 沒 checkout 框架時要能誠實跳過而非 traceback。
+    local fh = io.open(MUI_V1, "rb")
+    if not fh then
+        print("SKIP test_nbpanel: framework V1.lua not found at " .. MUI_V1)
+        print("     (clone MinidoracatUIFor42 beside this repo, or set MUI_LUA=<path to V1.lua>)")
+        os.exit(0)
+    end
+    fh:close()
+end
+dofile(MUI_V1)
+check(MinidoracatUI ~= nil and MinidoracatUI.v1 ~= nil, "框架 facade 已發布（NBSkin 靠它綁定）")
 dofile(MEDIA_LUA .. "client/NoticeBoard/NBSkin.lua")
 dofile(MEDIA_LUA .. "client/NoticeBoard/NBPanel.lua")
 
@@ -303,6 +321,80 @@ local function paginate(text)
     check(ok, "paginate 拋錯（整份公告會變成錯誤占位）：" .. tostring(pageError))
     return panel
 end
+
+-- ---------------------------------------------------------------------------
+-- 純圖片行必須進得了捲動範圍。
+-- 引擎的 paginate 只在「這一行有非空文字」時才把 lineImageHeight 累進 y
+-- （ISRichTextPanel.lua:550-556），`![圖](路徑)` 自己一行時該行文字是空字串，整張圖的高度
+-- 因此被丟棄、setScrollHeight 不含圖片 -> 圖比內容區高時完全捲不動，圖下面的公告看不到。
+-- 這一段先端到端證明「引擎真的漏算」（否則修正就是無效的加工），再驗補算的算式。
+-- ---------------------------------------------------------------------------
+;(function()
+    TEXTURE_SIZES["media/textures/pack/scroll_big.png"] = { 200, 1200 }
+
+    local scrolls = {}
+    local panel = newRichText()
+    panel.getScrollHeight = function() return 0 end
+    panel.setScrollHeight = function(_, h) scrolls[#scrolls + 1] = h end
+    panel.text = " <IMAGECENTRE:media/textures/pack/scroll_big.png> "
+    local ok = panel:paginate()
+    check(ok, "純圖片內容不得讓 paginate 失敗")
+
+    -- 引擎自己算的那一次（marginTop + y + marginBottom）不含圖高；我們補的那一次才含。
+    check(#scrolls >= 2,
+        "paginate 應先由引擎設一次捲動高度，再由 extendScrollHeightForImages 補一次")
+    local engineHeight = scrolls[1]
+    local finalHeight = scrolls[#scrolls]
+    check(engineHeight < 1200,
+        "前提檢查：引擎算的捲動高度本來就不含圖片高度（實際 " .. tostring(engineHeight) .. "）")
+    check(finalHeight >= 1200,
+        "補算後的捲動高度必須蓋過圖片底部（實際 " .. tostring(finalHeight) .. "）")
+
+    -- **markdown 的 ![]() 走的是 <IMAGE:> 不是 <IMAGECENTRE:>**（MDParser 的註解：
+    -- ![]() 是靠左的行內元素，故不用會強制置中的 IMAGECENTRE），而兩者在引擎裡是不同分支、
+    -- 高度與 imageY 的算法都不同（ISRichTextPanel.lua:155-175 vs :320-336），
+    -- 且 <IMAGE:> 的 imageY 還被 NBLinkRichTextPanel:processCommand 拉回該行頂端。
+    -- 使用者實際踩到的就是這條路徑，所以要獨立驗一次端到端。
+    TEXTURE_SIZES["media/textures/pack/scroll_md.png"] = { 200, 1500 }
+    local mdScrolls = {}
+    local mdPanel = newRichText()
+    mdPanel.getScrollHeight = function() return 0 end
+    mdPanel.setScrollHeight = function(_, h) mdScrolls[#mdScrolls + 1] = h end
+    mdPanel.text = preflight("![大圖](media/textures/pack/scroll_md.png)")
+    check(mdPanel:paginate(), "markdown 圖片內容不得讓 paginate 失敗")
+    check(string.find(mdPanel.text, "<IMAGE:", 1, true) ~= nil,
+        "前提：markdown ![]() 產生的是 <IMAGE:>（不是 IMAGECENTRE）")
+    local mdBottom = (mdPanel.imageY[1] or 0) + (mdPanel.imageH[1] or 0)
+    check(mdBottom > 0, "圖片底部必須算得出來（imageY 已被 processCommand 拉回行頂）")
+    check(mdScrolls[1] < mdBottom,
+        "前提檢查：<IMAGE:> 分支的引擎捲動高度同樣不含圖片（實際 "
+            .. tostring(mdScrolls[1]) .. " < " .. tostring(mdBottom) .. "）")
+    check(mdScrolls[#mdScrolls] >= mdBottom,
+        "補算後必須蓋過 markdown 圖片的底部（實際 " .. tostring(mdScrolls[#mdScrolls]) .. "）")
+
+    -- 算式：max(imageY + imageH) + 上下 margin。imageY 為負（圖比行高時 :172 的
+    -- (lineHeight-lineImageHeight)/2 是負值）也要算得對。
+    scrolls = {}
+    panel.images = { "tex" }
+    panel.imageY = { -100 }
+    panel.imageH = { 900 }
+    panel.marginTop, panel.marginBottom = 10, 5
+    panel:extendScrollHeightForImages()
+    checkEqual(scrolls[1], 815, "捲動高度 = (imageY + imageH) + marginTop + marginBottom")
+
+    -- 只加不減：引擎算的已經夠高（文字比圖長）就不要覆蓋掉
+    scrolls = {}
+    panel.getScrollHeight = function() return 5000 end
+    panel:extendScrollHeightForImages()
+    checkEqual(#scrolls, 0, "引擎算的已經夠高時不得再設一次（文字比圖長的情形）")
+
+    -- 沒有圖片時完全不動作
+    scrolls = {}
+    panel.images = {}
+    panel.getScrollHeight = function() return 0 end
+    panel:extendScrollHeightForImages()
+    checkEqual(#scrolls, 0, "沒有圖片就不該碰捲動高度")
+end)()
 
 -- render 實際會用的顏色：整行套用、未被覆寫的行沿用前一行（ISRichTextPanel.lua:613-617）
 local function colorOf(panel, fragment)
@@ -812,7 +904,7 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     -- E1：有貼圖。落點是絕對座標（panel.x/y = 100/50），尺寸與退回版一模一樣。
     local good = { calls = {} }
     _G.NinePatchTexture = makeNinePatchStub(good)
-    TEXTURE_SIZES["media/ui/NoticeBoard/nb_dot.png"] = { 16, 16 }
+    TEXTURE_SIZES["media/ui/MinidoracatUI/mui_dot.png"] = { 16, 16 }
     NBSkin.reset()
     clearDraws()
     drawFrame()
@@ -820,28 +912,28 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         local index
         for index = 1, #patches do
             local entry = patches[index]
-            if entry.path == "media/ui/NoticeBoard/" .. path and entry.x == x
+            if entry.path == "media/ui/MinidoracatUI/" .. path and entry.x == x
                 and entry.y == y and entry.w == w and entry.h == h then
                 return entry
             end
         end
         return nil
     end
-    local bgPatch = findPatch("nb_round_fill.png", 100, 50, 1190, 864)
+    local bgPatch = findPatch("mui_round_fill.png", 100, 50, 1190, 864)
     check(bgPatch ~= nil and nearly(bgPatch.a, 0.8) and bgPatch.r == 0,
-        "E1 面板底 nb_round_fill 落在絕對座標 (100,50,1190,864) 染 BG_PANEL")
-    local titlePatch = findPatch("nb_roundtop_fill.png", 100, 50, 1190, 19)
+        "E1 面板底 mui_round_fill 落在絕對座標 (100,50,1190,864) 染 BG_PANEL")
+    local titlePatch = findPatch("mui_roundtop_fill.png", 100, 50, 1190, 19)
     check(titlePatch ~= nil and nearly(titlePatch.a, 0.10) and titlePatch.r == 1,
-        "E1 標題列 nb_roundtop_fill (100,50,1190,19) 染 TITLEBAR_FILL")
-    local tabPatch = findPatch("nb_roundtop_fill.png", 100, 69, 100, 24)
+        "E1 標題列 mui_roundtop_fill (100,50,1190,19) 染 TITLEBAR_FILL")
+    local tabPatch = findPatch("mui_roundtop_fill.png", 100, 69, 100, 24)
     check(tabPatch ~= nil and nearly(tabPatch.a, 0.12),
-        "E1 選中頁籤 nb_roundtop_fill (100,69,100,24) 染 TAB_SELECTED_FILL")
-    check(findPatch("nb_roundtop_border.png", 100, 69, 100, 24) ~= nil
-        and findPatch("nb_roundtop_border.png", 200, 69, 90, 24) ~= nil,
-        "E1 兩個頁籤框 nb_roundtop_border（3 邊框）")
-    local framePatch = findPatch("nb_round_border.png", 100, 50, 1190, 864)
+        "E1 選中頁籤 mui_roundtop_fill (100,69,100,24) 染 TAB_SELECTED_FILL")
+    check(findPatch("mui_roundtop_border.png", 100, 69, 100, 24) ~= nil
+        and findPatch("mui_roundtop_border.png", 200, 69, 90, 24) ~= nil,
+        "E1 兩個頁籤框 mui_roundtop_border（3 邊框）")
+    local framePatch = findPatch("mui_round_border.png", 100, 50, 1190, 864)
     check(framePatch ~= nil and nearly(framePatch.a, 1) and nearly(framePatch.r, 0.4),
-        "E1 面板外框 nb_round_border (100,50,1190,864) 染 BORDER")
+        "E1 面板外框 mui_round_border (100,50,1190,864) 染 BORDER")
     checkEqual(#patches, 6, "E1 一幀恰好 6 次 9-slice：底、標題、選中頁籤、2 頁籤框、外框")
     check(findRect(rects, 0, 0, 1190, 864) == nil and findRect(rects, 0, 0, 1190, 19) == nil
         and findRect(borders, 0, 0, 1190, 864) == nil,
@@ -858,14 +950,14 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         and nearly(scaled[2].r, 0.85) and nearly(scaled[2].a, 1),
         "E1 主點 (right-10, tabY+2, 8, 8) 染 UNREAD_DOT")
     check(scaled[1].texture == scaled[2].texture and scaled[1].texture ~= nil,
-        "E1 光暈與主點用同一張 nb_dot.png")
+        "E1 光暈與主點用同一張 mui_dot.png")
     -- 首呼叫回 null 的引擎行為：每張貼圖恰好呼叫兩次；第二幀不再呼叫（已快取）
-    local roundFillCalls = good.calls["media/ui/NoticeBoard/nb_round_fill.png"]
+    local roundFillCalls = good.calls["media/ui/MinidoracatUI/mui_round_fill.png"]
     checkEqual(roundFillCalls, 2, "E1 getSharedTexture 連呼兩次繞過首呼叫回 null")
     clearDraws()
     drawFrame()
-    checkEqual(good.calls["media/ui/NoticeBoard/nb_round_fill.png"], 2,
-        "E1 第二幀不得再呼叫 getSharedTexture（NBSkin 已快取）")
+    checkEqual(good.calls["media/ui/MinidoracatUI/mui_round_fill.png"], 2,
+        "E1 第二幀不得再呼叫 getSharedTexture（框架 Skin 已快取）")
     checkEqual(#patches, 6, "E1 第二幀仍是 6 次 9-slice")
 
     -- 收合（釘選解除後滑鼠離開 ISCollapsableWindow.lua:237-244，或 layout.ini pin=false）：
@@ -876,24 +968,24 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     panel.contentState = "error"
     clearDraws()
     drawFrame()
-    check(findPatch("nb_round_fill.png", 100, 50, 1190, 19) ~= nil,
-        "收合：面板底 nb_round_fill 只畫標題列高 (100,50,1190,19)")
+    check(findPatch("mui_round_fill.png", 100, 50, 1190, 19) ~= nil,
+        "收合：面板底 mui_round_fill 只畫標題列高 (100,50,1190,19)")
     local collapsedTitleCount = 0
     local collapsedIndex
     for collapsedIndex = 1, #patches do
         local entry = patches[collapsedIndex]
-        if entry.path == "media/ui/NoticeBoard/nb_round_fill.png" and entry.h == 19
+        if entry.path == "media/ui/MinidoracatUI/mui_round_fill.png" and entry.h == 19
             and nearly(entry.a, 0.10) then
             collapsedTitleCount = collapsedTitleCount + 1
         end
-        check(entry.path ~= "media/ui/NoticeBoard/nb_roundtop_fill.png"
-            and entry.path ~= "media/ui/NoticeBoard/nb_roundtop_border.png",
+        check(entry.path ~= "media/ui/MinidoracatUI/mui_roundtop_fill.png"
+            and entry.path ~= "media/ui/MinidoracatUI/mui_roundtop_border.png",
             "收合：不得有任何上圓下直貼圖（標題疊色改四角圓、頁籤不畫）：" .. entry.path)
         check(entry.y == 50 and entry.h == 19, "收合：所有 9-slice 都只落在標題列 (y=50,h=19)："
             .. entry.path .. " y=" .. tostring(entry.y) .. " h=" .. tostring(entry.h))
     end
-    checkEqual(collapsedTitleCount, 1, "收合：標題疊色 TITLEBAR_FILL 改走四角圓 nb_round_fill 一次")
-    check(findPatch("nb_round_border.png", 100, 50, 1190, 19) ~= nil, "收合：外框 nb_round_border (100,50,1190,19)")
+    checkEqual(collapsedTitleCount, 1, "收合：標題疊色 TITLEBAR_FILL 改走四角圓 mui_round_fill 一次")
+    check(findPatch("mui_round_border.png", 100, 50, 1190, 19) ~= nil, "收合：外框 mui_round_border (100,50,1190,19)")
     checkEqual(#patches, 3, "收合：一幀恰好 3 次 9-slice（底、標題疊色、外框），頁籤／錯誤區塊不畫")
     checkEqual(#rects, 0, "收合：不畫分隔線／頁籤列底／軌道線／resize 線（drawRect 0 次）")
     checkEqual(#borders, 0, "收合：不畫任何 drawRectBorder")
@@ -954,12 +1046,12 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     end
     button:prerender()
     checkEqual(#patches, 2, "浮窗一幀 = 底 + 框（沒 hover）")
-    check(patches[1].path == "media/ui/NoticeBoard/nb_round_fill.png" and patches[1].x == 10
+    check(patches[1].path == "media/ui/MinidoracatUI/mui_round_fill.png" and patches[1].x == 10
         and patches[1].y == 20 and patches[1].w == 40 and patches[1].h == 40 and nearly(patches[1].a, 0.8),
-        "浮窗底 nb_round_fill (10,20,40,40) BG_PANEL")
-    check(patches[2].path == "media/ui/NoticeBoard/nb_round_border.png" and patches[2].x == 10
+        "浮窗底 mui_round_fill (10,20,40,40) BG_PANEL")
+    check(patches[2].path == "media/ui/MinidoracatUI/mui_round_border.png" and patches[2].x == 10
         and patches[2].y == 20 and patches[2].w == 40 and patches[2].h == 40,
-        "浮窗框 nb_round_border (10,20,40,40)")
+        "浮窗框 mui_round_border (10,20,40,40)")
     check(#buttonScaled == 2 and buttonScaled[1].x == 31 and buttonScaled[1].y == -3
         and buttonScaled[1].w == 10 and buttonScaled[2].x == 32 and buttonScaled[2].y == -2
         and buttonScaled[2].w == 8,
@@ -974,16 +1066,52 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     _G.getTimestampMs = function() return 0 end
     NBToast.active = {}
     checkEqual(#patches, 2, "Toast 一幀 = 底 + 框")
-    check(patches[1].path == "media/ui/NoticeBoard/nb_round_fill.png" and patches[1].x == 1973
+    check(patches[1].path == "media/ui/MinidoracatUI/mui_round_fill.png" and patches[1].x == 1973
         and patches[1].y == 60 and patches[1].w == 300 and patches[1].h == 56,
         "Toast 動畫中的小數 x 必須 floor 後才交給 NinePatchTexture（1973.6 → 1973）")
     check(nearly(patches[1].a, 0.85 * 0.4) and nearly(patches[2].a, 0.9 * 0.4),
         "Toast 底／框的 alpha 要乘上動畫 alpha")
-    check(patches[2].path == "media/ui/NoticeBoard/nb_round_border.png" and patches[2].x == 1973
+    check(patches[2].path == "media/ui/MinidoracatUI/mui_round_border.png" and patches[2].x == 1973
         and nearly(patches[2].r, 1) and nearly(patches[2].g, 0.85),
-        "Toast 框 nb_round_border 染 TOAST_BORDER（琥珀）")
+        "Toast 框 mui_round_border 染 TOAST_BORDER（琥珀）")
 
     _G.NinePatchTexture = nil
+    NBSkin.reset()
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 框架缺席退回（adapter 的 FW == nil 分支）：ARCHITECTURE 三層防線的第 3 層。
+-- 在 MinidoracatUI 暫時拔掉的環境下**重新載入** NBSkin，驗 adapter 自己的直角／
+-- 方點退回真的會畫、fits 恆 false、且絕不 error——這 30 行退回碼是 adapter 模式
+-- 存在的理由，不能只有註解在保證。驗完還原正常綁定供後續段落使用。
+-- ---------------------------------------------------------------------------
+;(function()
+    local savedUI = MinidoracatUI
+    local function nearly(a, b) return type(a) == "number" and math.abs(a - b) < 1e-9 end
+    MinidoracatUI = nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBSkin.lua") -- FW 綁定重算：此環境下為 nil
+    local el = { rects = {}, borders = {} }
+    el.drawRect = function(_, x, y, w, h, a, r, g, b)
+        el.rects[#el.rects + 1] = { x = x, y = y, w = w, h = h, a = a, r = r, g = g, b = b }
+    end
+    el.drawRectBorder = function(_, x, y, w, h, a, r, g, b)
+        el.borders[#el.borders + 1] = { x = x, y = y, w = w, h = h, a = a, r = r, g = g, b = b }
+    end
+    local okAll = pcall(function()
+        NBSkin.fill(el, 1, 2, 300, 50, NBSkin.COLORS.BG_PANEL, false, 0.5)
+        NBSkin.border(el, 1, 2, 300, 50, NBSkin.COLORS.BORDER)
+        NBSkin.dot(el, 5, 5, 8, NBSkin.COLORS.UNREAD_DOT, NBSkin.COLORS.UNREAD_DOT_OUTLINE)
+        NBSkin.reset() -- FW nil 時 reset 也不得炸
+    end)
+    check(okAll, "框架缺席：fill/border/dot/reset 全程不炸")
+    check(#el.rects == 2 and #el.borders == 2,
+        "框架缺席：fill→drawRect、border→drawRectBorder、dot→方點＋描邊")
+    check(el.rects[1].x == 1 and el.rects[1].w == 300 and nearly(el.rects[1].a, 0.8 * 0.5),
+        "框架缺席：退回矩形用相對座標且 alphaScale 有效")
+    check(NBSkin.fits(500, 500, false) == false, "框架缺席：fits 恆 false（無貼圖可畫）")
+    MinidoracatUI = savedUI
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBSkin.lua") -- 還原：FW 重綁框架
+    check(NBSkin.fits(12, 12, false) == true, "還原後 fits 恢復框架夾限（重綁成功哨兵）")
     NBSkin.reset()
 end)()
 
@@ -1087,7 +1215,7 @@ end)()
 
 -- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
 -- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 160
+local EXPECTED_ASSERTIONS = 178
 assert(assertionCount == EXPECTED_ASSERTIONS,
     "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
         .. "（有測試被刪掉或跳過？）")
