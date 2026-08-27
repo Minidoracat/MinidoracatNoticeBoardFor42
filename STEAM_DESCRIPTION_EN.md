@@ -42,9 +42,4 @@ An in-game notice board. Write your announcements in Markdown, edit the files di
 [*] [url=https://discord.gg/Gur2V67]Discord community[/url]
 [/list]
 
-[h2]📺 Follow the author[/h2]
-[list]
-[*] [url=https://www.twitch.tv/minidoracat]Twitch[/url]
-[/list]
-
 [b]#Minidoracat[/b]
