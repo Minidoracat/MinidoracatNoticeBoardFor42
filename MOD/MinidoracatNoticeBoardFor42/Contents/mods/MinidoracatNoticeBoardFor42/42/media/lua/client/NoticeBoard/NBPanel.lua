@@ -3,6 +3,7 @@ require "ISUI/ISRichTextPanel"
 require "ISUI/ISButton"
 require "ISUI/ISContextMenu"
 require "ISUI/ISLayoutManager"
+require "ISUI/ISScrollingListBox"
 
 if not NBCore then
     require "NoticeBoard/NBCore"
@@ -42,22 +43,89 @@ NBPanel = ISCollapsableWindowJoypad:derive("NBPanel")
 -- 色票的唯一權威來源在 NBSkin.COLORS（三個 UI 檔共用；docs/UI_DESIGN.md §0）
 local COLORS = Skin.COLORS
 
+-- 家族 UI 框架的圖示表（框架 API v1 rev>=2 才有）。缺框架／舊框架／能力關閉一律留 nil，
+-- 文件樹與工具列各自退回純文字——圖示是外觀升級，不是功能前提（同 NBSkin 的退回紅線）。
+-- 綁定時機安全：NBSkin 在它的檔頭已經 pcall(require, "MinidoracatUI/V1")，而本檔 require
+-- 了 NBSkin，所以這裡讀到的全域已是最終狀態。
+local Icons = nil
+do
+    local ui = MinidoracatUI and MinidoracatUI.v1
+    if ui and ui.API_MAJOR == 1 and ui.API_REVISION >= 2
+        and ui.CAPABILITIES and ui.CAPABILITIES.icons and ui.Icons then
+        Icons = ui.Icons
+    end
+end
+
+-- 畫一顆圖示；回 true = 畫成功（呼叫端改用圖示版面），false = 呼叫端自己退回文字。
+-- 工具列每顆獨立依回傳值退回；文件樹的縮排彼此耦合，另在 NBDocTree:new 預探測四張
+-- 核心資產，採全有或全無，避免分類與公告落在不同縮排層。
+local function drawIcon(element, name, x, y, size, color)
+    if not Icons then
+        return false
+    end
+    return Icons.draw(element, name, x, y, size, color) == true
+end
+
 -- 預設尺寸取螢幕比例，讓各種解析度都佔差不多的視覺比重（固定像素在 1080p 剛好、在 4K 會小得可笑）。
 -- 但寬高都要設上限：純文字一行太長就難讀了，不能讓 4K 開出一條橫幅。
 -- 玩家調整過尺寸後由 ISLayoutManager 記憶（layout.ini），這裡只影響「沒有既有紀錄」的第一次開窗；
 -- 已經開過面板的玩家要按「重設大小」才會吃到新的預設值（同一份 defaultSize()）。
--- 比例從 0.52/0.68 調到 0.62/0.80（1080p：998×734 -> 1190×864）：實測 998 寬在有圖的公告上
--- 一開就得手動拉大，而 864 高把可見內文從 ~24 行拉到 ~29 行。上限同步從 1100×820 提到
--- 1280×960：1280 扣掉左右 margin 10＋捲軸 13 後文字寬約 1247，仍在單行可讀範圍內，
--- 4K 也不至於只佔畫面三分之一。
-local DEFAULT_WIDTH_RATIO = 0.62
-local DEFAULT_HEIGHT_RATIO = 0.80
-local MAX_DEFAULT_WIDTH = 1280
-local MAX_DEFAULT_HEIGHT = 960
+-- 比例從 0.62/0.80 調到 0.72/0.88（1080p：1190×864 -> 1382×950）：目錄改成「沒有偏好就展開」
+-- 之後，1190 寬扣掉 300 側欄只剩 890 給內文，含圖公告一開又得手動拉大；950 高把可見內文
+-- 從 ~29 行拉到 ~33 行。上限同步從 1280×960 提到 1440×1080：1440 扣掉側欄 300 與內文
+-- 左右各 23（margin 10＋捲軸 13）後文字寬約 1094，仍在單行可讀範圍內，4K 也不至於鋪滿。
+local DEFAULT_WIDTH_RATIO = 0.72
+local DEFAULT_HEIGHT_RATIO = 0.88
+local MAX_DEFAULT_WIDTH = 1440
+local MAX_DEFAULT_HEIGHT = 1080
 local SCREEN_MARGIN = 80
 local MINIMUM_WIDTH = 420
 local MINIMUM_HEIGHT = 260
-local TAB_BUTTON_GAP = 6
+local TOOLBAR_BUTTON_GAP = 6
+-- 工具列圖示：14px 在 24px 高的按鈕裡不擠到上下邊，又比 NewSmall 字高小一號。
+-- gap 5 不是自選值——原生 ISButton 把圖示與標題的間距寫死成 5（ISButton.lua:238-246），
+-- 按鈕寬要加的就是「圖示 + 那個 5」，少加會把標題推出按鈕右緣。
+local TOOLBAR_ICON_SIZE = 14
+local TOOLBAR_ICON_GAP = 5
+-- 側欄寬 = clamp(180, floor(視窗寬 x 0.26), 300)。比例讓大視窗多分一點給目錄，
+-- 兩端夾限則保證「窄視窗不被目錄吃掉內文」與「寬視窗的目錄不會寬到浪費」。
+local SIDEBAR_MIN_WIDTH = 180
+local SIDEBAR_MAX_WIDTH = 300
+local SIDEBAR_WIDTH_RATIO = 0.26
+-- 視窗窄於這個寬度就強制收合側欄：640 扣掉側欄下限 180 只剩 460 給內文，
+-- 再窄下去含圖公告會擠成一條。強制期間玩家的偏好照常保存，拉寬就自動回來。
+local SIDEBAR_FORCE_COLLAPSE_WIDTH = 640
+-- 文件樹一列的內部版面（單位 px，相對於側欄左緣）。圖示版與純文字版各一套：
+-- 圖示缺席（框架舊／資產缺）時退回原本的 ASCII 記號欄位，不能留著為圖示預留的縮排——
+-- 那會變成一整條看不出理由的空白。
+local TREE_MARKER_X = 6
+local TREE_CATEGORY_TEXT_X = 18
+local TREE_FILE_TEXT_X = 26
+-- 圖示版：分類是 chevron(4) -> folder(20) -> 文字(38)；公告是 document(22) -> 文字(40)，
+-- 讓公告的圖示落在 folder 與分類文字之間，視覺上就是「縮進一層」。
+local TREE_ICON_SIZE = 14
+local TREE_CHEVRON_X = 4
+local TREE_FOLDER_X = 20
+local TREE_ICON_CATEGORY_TEXT_X = 38
+local TREE_DOCUMENT_X = 22
+local TREE_ICON_FILE_TEXT_X = 40
+local TREE_ICON_KEYS = { "chevronDown", "chevronRight", "folder", "document" }
+local TREE_ROW_PAD_Y = 3
+local TREE_ACCENT_WIDTH = 2
+local TREE_DOT_SIZE = 8
+local TREE_DOT_RIGHT = 14
+local TREE_TEXT_RIGHT_PAD = 20
+-- 垂直捲軸出現時，文字留白與未讀點要一起讓開的寬度。原生 vscroll 是 x = 寬-16、寬 17
+-- （ISScrollBar.lua:274-276），而 ISScrollingListBox:prerender 把 stencil 右緣收到
+-- vscroll.x + 3 = 寬-13（ISScrollingListBox.lua:494-496）——未讀點原本從 寬-14 起、邊長 8，
+-- 只剩 1px 露在裁切範圍內。兩者同時平移 17px：紅點與文字之間原本的 6px 間距不變。
+local TREE_VSCROLL_WIDTH = 17
+-- 展開／收合記號。**只能是 ASCII**：Kahlua 原始碼不吃非 ASCII 字面值（見 docs 與家族慣例），
+-- 而這兩個字元在任何字型下都畫得出來，不需要額外貼圖。
+local TREE_MARKER_EXPANDED = "-"
+local TREE_MARKER_COLLAPSED = "+"
+-- 語系根層（伺服器沒給分類、或舊版 server 完全沒有這個概念）的分類鍵
+local ROOT_CATEGORY = ""
 local SCROLLBAR_WIDTH = 13
 local LINK_TOOLTIP_PAD = 6
 local POPUP_WAIT_MS = 10000
@@ -123,6 +191,52 @@ local function strippedVisibleText(text)
     result = string.gsub(result, "^%-%s*", "")
     result = string.gsub(result, "^%d+%.%s*", "")
     return result
+end
+
+-- 依像素寬度截斷並補省略號。標準 Lua 測試字串是 UTF-8 bytes；Kahlua 字串則以
+-- UTF-16 code unit 索引。呼叫端先用 NBCore.utf16Length 判斷這份字串是否需要走 UTF-8 邊界，
+-- Kahlua 路徑則在尾端是 low surrogate 時連同前一個 high surrogate 一起移除。
+local function dropLastCharacter(text, usesUtf8Bytes)
+    local index = string.len(text)
+    if index <= 0 then
+        return ""
+    end
+    if usesUtf8Bytes then
+        while index > 1 do
+            local byte = string.byte(text, index)
+            if byte < 128 or byte >= 192 then
+                break
+            end
+            index = index - 1
+        end
+    else
+        local lastUnit = string.byte(text, index)
+        local previousUnit = index > 1 and string.byte(text, index - 1) or nil
+        if lastUnit and previousUnit
+            and lastUnit >= 56320 and lastUnit <= 57343
+            and previousUnit >= 55296 and previousUnit <= 56319 then
+            index = index - 1
+        end
+    end
+    return string.sub(text, 1, index - 1)
+end
+
+local function truncateToWidth(text, font, maxWidth)
+    if maxWidth <= 0 then
+        return ""
+    end
+    local textManager = getTextManager()
+    if textManager:MeasureStringX(font, text) <= maxWidth then
+        return text
+    end
+    -- 從尾端砍：前面的字（網域、標題開頭）才是玩家最該看清的部分。
+    local usesUtf8Bytes = Core.utf16Length(text) ~= string.len(text)
+    local result = text
+    while result ~= ""
+        and textManager:MeasureStringX(font, result .. "...") > maxWidth do
+        result = dropLastCharacter(result, usesUtf8Bytes)
+    end
+    return result .. "..."
 end
 
 local function richTextColorPush(color)
@@ -396,6 +510,122 @@ function NBLinkRichTextPanel:new(x, y, width, height, owner)
     return o
 end
 
+-- 文件樹側欄。分類列（可展開／收合）與公告列共用一個原生 ISScrollingListBox：
+-- 展開狀態改變時**重建可見 items**，而不是把收合的列設成 height=0——原生的
+-- rowAt／ensureVisible／捲動高度全都以 items 陣列為準，留著零高列只是讓每一個
+-- 座標換算都要多想一次「這一列存不存在」。
+local NBDocTree = ISScrollingListBox:derive("NBDocTree")
+
+function NBDocTree:new(x, y, width, height, owner)
+    local o = ISScrollingListBox.new(self, x, y, width, height)
+    o.owner = owner
+    o.backgroundColor = COLORS.TAB_TRAY_BG
+    o.drawBorder = false
+    -- 文件樹採全有或全無：任一核心資產缺失時整棵退回 ASCII，避免分類與公告縮排倒置。
+    o.iconsAvailable = Icons ~= nil
+    if o.iconsAvailable then
+        local index
+        for index = 1, #TREE_ICON_KEYS do
+            if Icons.get(TREE_ICON_KEYS[index]) == nil then
+                o.iconsAvailable = false
+                break
+            end
+        end
+    end
+    return o
+end
+
+-- 整列自繪：原生版畫的是「固定 x=15 的文字 + 每列一圈 drawRectBorder」，
+-- 那個外觀對文件樹是雜訊（每列都有框），也沒有縮排、記號與未讀點的位置。
+function NBDocTree:doDrawItem(y, item, alt)
+    local height = item.height or self.itemheight
+    local scrollY = self:getYScroll()
+    if y + scrollY + height < 0 or y + scrollY >= self.height then
+        return y + height
+    end
+
+    local entry = item.item
+    if type(entry) ~= "table" then
+        return y + height
+    end
+
+    local width = self.width
+    local owner = self.owner
+    local isFile = entry.kind == "file"
+    local selected = isFile and entry.id == owner.selectedFileId
+
+    if selected then
+        Skin.fill(self, 0, y, width, height - 1, COLORS.TAB_SELECTED_FILL)
+        -- 選中標記畫在左緣：橫向頁籤時代的 2px 琥珀底線換了個方向，語意不變
+        local accent = COLORS.ACCENT_AMBER
+        self:drawRect(0, y, TREE_ACCENT_WIDTH, height - 1,
+            accent.a, accent.r, accent.g, accent.b)
+    elseif self.mouseoverselected == item.index and self:isMouseOver()
+        and not self:isMouseOverScrollBar() then
+        Skin.fill(self, 0, y, width, height - 1, COLORS.TAB_HOVER_FILL)
+    end
+
+    local textColor = selected and COLORS.TAB_TEXT_SELECTED or COLORS.TAB_TEXT_UNSELECTED
+    local textY = y + (self.itemPadY or 0)
+    -- 圖示不共用 textY：textY 是 listbox 自己的上緣內距（itemPadY），對字高才對；
+    -- 圖示是固定 14px 的方塊，要以列高置中才不會偏上。
+    local iconY = y + math.floor((height - TREE_ICON_SIZE) / 2)
+    local textX
+    if isFile then
+        textX = self.iconsAvailable
+            and drawIcon(self, "document", TREE_DOCUMENT_X, iconY, TREE_ICON_SIZE, textColor)
+            and TREE_ICON_FILE_TEXT_X or TREE_FILE_TEXT_X
+    else
+        -- chevron 決定版面；四顆核心 tree icons 在 constructor 全有才啟用。
+        local expanded = entry.expanded
+        if self.iconsAvailable and drawIcon(self, expanded and "chevronDown" or "chevronRight",
+            TREE_CHEVRON_X, iconY, TREE_ICON_SIZE, textColor) then
+            textX = TREE_ICON_CATEGORY_TEXT_X
+            drawIcon(self, "folder", TREE_FOLDER_X, iconY, TREE_ICON_SIZE, textColor)
+        else
+            textX = TREE_CATEGORY_TEXT_X
+            self:drawText(expanded and TREE_MARKER_EXPANDED or TREE_MARKER_COLLAPSED,
+                TREE_MARKER_X, textY,
+                textColor.r, textColor.g, textColor.b, textColor.a, self.font)
+        end
+    end
+
+    -- 捲軸出現時整條可用寬往左收：畫在 stencil 右緣之外的文字與紅點會被裁掉半截。
+    local rightInset = self:isVScrollBarVisible() and TREE_VSCROLL_WIDTH or 0
+
+    -- 截斷結果快取在列上：量測是每幀的呼叫，可用寬沒變就不重算
+    -- （側欄寬、圖示有無、捲軸有無任一改變都會改到這個數字，因此比對它就夠）。
+    local available = width - rightInset - textX - TREE_TEXT_RIGHT_PAD
+    if entry.fitWidth ~= available then
+        entry.fitWidth = available
+        entry.fitText = truncateToWidth(entry.label, self.font, available)
+    end
+    self:drawText(entry.fitText, textX, textY,
+        textColor.r, textColor.g, textColor.b, textColor.a, self.font)
+
+    if entry.unread then
+        Skin.dot(self, width - rightInset - TREE_DOT_RIGHT,
+            y + math.floor((height - TREE_DOT_SIZE) / 2), TREE_DOT_SIZE,
+            COLORS.UNREAD_DOT, COLORS.UNREAD_DOT_OUTLINE)
+    end
+
+    return y + height
+end
+
+-- 整段覆寫原生版：原生會把 self.selected 設成被點的那一列，但分類列不是「選取」而是
+-- 「展開／收合」——讓它改寫 selected 之後，選取高亮會從公告跳到分類上。
+-- 選取狀態一律由 owner.selectedFileId 決定，self.selected 由 owner 事後同步回來。
+function NBDocTree:onMouseDown(x, y)
+    if #self.items == 0 or self:isMouseOverScrollBar() then
+        return
+    end
+    local row = self:rowAt(x, y)
+    if row < 1 or row > #self.items then
+        return
+    end
+    self.owner:onTreeRowClicked(self.items[row].item)
+end
+
 local function hasAdminAccess()
     local ok, accessLevel = pcall(function()
         return getAccessLevel()
@@ -411,49 +641,130 @@ end
 function NBPanel:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
 
-    self.tabY = self:titleBarHeight()
-    self.tabHeight = getTextManager():getFontHeight(UIFont.Small) + 6
-    self.adminVisible = hasAdminAccess()
+    self.toolbarY = self:titleBarHeight()
+    self.toolbarHeight = getTextManager():getFontHeight(UIFont.Small) + 6
+    self.adminVisible = isClient() and hasAdminAccess()
 
-    -- 按鈕放在頁籤列右端，而不是自己獨占一條橫帶：單一按鈕撐開一整列會留下大片空白，
-    -- 視覺上像是壞掉的工具列，也白白吃掉內容高度。由右往左依序擺放。
-    local contentY = self.tabY + self.tabHeight
-    local rightEdge = self.width - TAB_BUTTON_GAP
+    -- 按鈕由右往左排在工具列上。橫向頁籤沒了之後這一條就是純工具列，
+    -- 但高度／y 仍與從前逐像素相同：內容區的起點跟著它算。
+    local contentY = self.toolbarY + self.toolbarHeight
+    local rightEdge = self.width - TOOLBAR_BUTTON_GAP
 
-    local function addTabRowButton(labelKey, callback)
+    -- 圖示是加法的：有圖示才多留「圖示 + 原生的 5px 間距」，沒有就維持原本純文字的寬度，
+    -- 不留空欄。三顆右側按鈕與最左的側欄開關共用下面這幾個小工具，避免兩處各算一次寬。
+    local function toolbarIcon(iconName)
+        return Icons and Icons.get(iconName)
+    end
+    local function toolbarButtonWidth(title, icon)
+        local width = getTextManager():MeasureStringX(UIFont.NewSmall, title) + 16
+        if icon then
+            width = width + TOOLBAR_ICON_SIZE + TOOLBAR_ICON_GAP
+        end
+        return width
+    end
+    local function styleToolbarButton(button, icon)
+        button:initialise()
+        button:setFont(UIFont.NewSmall)
+        if icon then
+            -- 原生 ISButton 自己認 iconTexture：圖示排在標題左邊、間距 5，尺寸只吃
+            -- joypadTextureWH（預設 32，對 24px 高的工具列太大）——ISButton.lua:238-246。
+            -- 它固定用 1,1,1,1 繪製，而資產是純白，所以不必自繪一份。
+            button.iconTexture = icon
+            button.joypadTextureWH = TOOLBAR_ICON_SIZE
+        end
+    end
+
+    local function addToolbarButton(labelKey, iconName, callback)
         local title = getText(labelKey)
-        local buttonWidth = getTextManager():MeasureStringX(UIFont.NewSmall, title) + 16
+        local icon = toolbarIcon(iconName)
+        local buttonWidth = toolbarButtonWidth(title, icon)
         local button = ISButton:new(
             rightEdge - buttonWidth,
-            self.tabY + 1,
+            self.toolbarY + 1,
             buttonWidth,
-            self.tabHeight - 2,
+            self.toolbarHeight - 2,
             title,
             self,
             callback
         )
-        button:initialise()
-        button:setFont(UIFont.NewSmall)
+        styleToolbarButton(button, icon)
         -- 錨定右上：視窗變寬時按鈕跟著右邊走
         button:setAnchorsTBLR(true, false, false, true)
         self:addChild(button)
-        rightEdge = rightEdge - buttonWidth - TAB_BUTTON_GAP
+        rightEdge = rightEdge - buttonWidth - TOOLBAR_BUTTON_GAP
         return button
     end
 
     if self.adminVisible then
-        self.reloadButton = addTabRowButton("IGUI_MinidoracatNB_Reload", NBPanel.onReload)
+        self.reloadButton = addToolbarButton(
+            "IGUI_MinidoracatNB_Reload", "reload", NBPanel.onReload)
+        -- 重建範例同樣只給 admin：它會**直接覆寫伺服器 live tree** 的 categories.txt、
+        -- README.txt 與選定語系的三份公告，server 端仍會再驗一次 access level。
+        -- 放在「重新載入」左邊——最右邊留給每天都會按的那顆，重建範例是一次性的入口。
+        -- 按下去不會馬上寫任何東西：先開一個選單讓 admin 挑語系（見 onExamples），
+        -- 因為「覆寫 categories.txt」這件事必須在動手前講明白。
+        -- 用 folder 圖示（框架既有資產，與文件樹的分類同一張）：它產出的就是一整套目錄內容。
+        self.examplesButton = addToolbarButton(
+            "IGUI_MinidoracatNB_Examples", "folder", NBPanel.onExamples)
     end
     -- 重設大小對所有玩家可見：尺寸被 layout.ini 記憶後，沒有這個入口就只能去編輯 ini
-    self.resetButton = addTabRowButton("IGUI_MinidoracatNB_ResetSize", NBPanel.resetToDefaultSize)
-    -- 語系選擇放在「重設大小」左邊（addTabRowButton 由右往左排，故後加的在左邊）
-    self.langButton = addTabRowButton("IGUI_MinidoracatNB_Language", NBPanel.onLanguageButton)
+    self.resetButton = addToolbarButton(
+        "IGUI_MinidoracatNB_ResetSize", "resetSize", NBPanel.resetToDefaultSize)
+    -- 語系選擇放在「重設大小」左邊（addToolbarButton 由右往左排，故後加的在左邊）
+    self.langButton = addToolbarButton(
+        "IGUI_MinidoracatNB_Language", "language", NBPanel.onLanguageButton)
+    -- 左組獨立在工具列最左，與右側的語系／尺寸／admin 操作分組；由左往右排，故後加的在右邊。
+    local leftEdge = TOOLBAR_BUTTON_GAP
+    local function addLeftToolbarButton(labelKey, iconName, callback)
+        local title = getText(labelKey)
+        local icon = toolbarIcon(iconName)
+        local buttonWidth = toolbarButtonWidth(title, icon)
+        local button = ISButton:new(
+            leftEdge, self.toolbarY + 1,
+            buttonWidth, self.toolbarHeight - 2,
+            title, self, callback)
+        styleToolbarButton(button, icon)
+        -- 錨定左上：視窗變寬時左組留在原處
+        button:setAnchorsTBLR(true, false, true, false)
+        self:addChild(button)
+        leftEdge = leftEdge + buttonWidth + TOOLBAR_BUTTON_GAP
+        return button
+    end
+    self.sidebarButton = addLeftToolbarButton(
+        "IGUI_MinidoracatNB_Sidebar", "sidebar", NBPanel.onSidebarToggle)
+    -- 批次展開／收合對所有玩家可見：分類多的伺服器上，逐列點開是唯一的替代方案。
+    -- 兩顆借用文件樹分類列同一組 chevron：向下＝展開、向右＝收合，語意與那些列一致。
+    self.expandAllButton = addLeftToolbarButton(
+        "IGUI_MinidoracatNB_ExpandAll", "chevronDown", NBPanel.onExpandAllCategories)
+    self.collapseAllButton = addLeftToolbarButton(
+        "IGUI_MinidoracatNB_CollapseAll", "chevronRight", NBPanel.onCollapseAllCategories)
+
+    -- 工具列的真實最小寬：左組 + 兩組間距 + 右組 + 左右 margin。
+    -- icon／翻譯／字型大小都已量完，不能再用固定 420，否則 admin 的四顆按鈕會互相覆蓋。
+    -- 左組的右緣要取**最右那顆**（目前是全部收合），日後增減左組按鈕要跟著改。
+    local rightGroupWidth = self.width - TOOLBAR_BUTTON_GAP - self.langButton:getX()
+    local toolbarMinimumWidth = self.collapseAllButton:getX()
+        + self.collapseAllButton:getWidth()
+        + TOOLBAR_BUTTON_GAP + rightGroupWidth + TOOLBAR_BUTTON_GAP
+    self.minimumWidth = math.max(MINIMUM_WIDTH, math.ceil(toolbarMinimumWidth))
+    if self.width < self.minimumWidth then
+        self:setWidth(self.minimumWidth)
+        self:recalcSize() -- 讓已建立且 anchorRight=true 的右側按鈕立即跟著新寬度移動
+    end
 
     self.contentY = contentY
-    local contentHeight = self.height - contentY - self:resizeWidgetHeight()
-    self.richText = NBLinkRichTextPanel:new(0, contentY, self.width, contentHeight, self)
+    local contentHeight = self:contentHeight()
+    local sidebarWidth = self:sidebarWidth()
+
+    self.docTree = NBDocTree:new(0, contentY, sidebarWidth, contentHeight, self)
+    self.docTree:initialise()
+    self.docTree:setFont("Small", TREE_ROW_PAD_Y)
+    self:addChild(self.docTree)
+    self.docTree:addScrollBars()
+
+    self.richText = NBLinkRichTextPanel:new(sidebarWidth, contentY,
+        self.width - sidebarWidth, contentHeight, self)
     self.richText:initialise()
-    self.richText:setAnchorsTBLR(true, true, true, true)
     self.richText.autosetheight = false
     self.richText.clip = true
     self.richText.doRepaintStencil = true
@@ -461,13 +772,77 @@ function NBPanel:createChildren()
     -- ISRichTextPanel 的置中算在 [marginLeft, width - marginRight] 之間
     -- （ISRichTextPanel.lua:649：lineX = marginLeft + (width - marginLeft - marginRight - lineLength)/2），
     -- 所以文字中心 = marginLeft + (width - marginLeft - marginRight)/2，與文字長度無關；
-    -- 右邊多預留捲軸寬（13）而左邊沒有時，中心恆偏左 (marginRight - marginLeft)/2 = 6.5px，
-    -- 與標題列的標題（drawTextCentre(title, width/2)，正中）差 6.5px、肉眼看得出兩行沒對齊。
-    -- 代價是左側留白從 10 變 23（文字可用寬少 13px），換來所有置中元素與標題列對齊。
+    -- 右邊多預留捲軸寬（13）而左邊沒有時，中心恆偏左 (marginRight - marginLeft)/2 = 6.5px。
+    -- 代價是左側留白從 10 變 23（文字可用寬少 13px），換來所有置中元素彼此對齊。
     self.richText:setMargins(10 + SCROLLBAR_WIDTH, 10, 10 + SCROLLBAR_WIDTH, 0)
     self:addChild(self.richText)
     self.richText:addScrollBars()
     self.richText:setVisible(false)
+
+    -- 兩個子元件的幾何**全部由 updateLayout 管**，不掛 anchors：側欄寬是視窗寬的函式
+    -- （還會被強制收合改寫），anchors 只會算出另一組答案再跟這裡打架。
+    self:updateLayout()
+end
+
+-- 內容區（側欄 + 內文）的高度。工具列下緣到 resize 列上緣。
+function NBPanel:contentHeight()
+    return self.height - self.contentY - self:resizeWidgetHeight()
+end
+
+-- 視窗太窄時強制收合：此時玩家的偏好原封不動保存著，拉寬就自動回來。
+function NBPanel:isSidebarForcedCollapsed()
+    return self.width < SIDEBAR_FORCE_COLLAPSE_WIDTH
+end
+
+function NBPanel:isSidebarCollapsed()
+    return self:isSidebarForcedCollapsed() or self.sidebarCollapsed == true
+end
+
+function NBPanel:sidebarWidth()
+    if self:isSidebarCollapsed() then
+        return 0
+    end
+    local width = math.floor(self.width * SIDEBAR_WIDTH_RATIO)
+    if width < SIDEBAR_MIN_WIDTH then
+        width = SIDEBAR_MIN_WIDTH
+    elseif width > SIDEBAR_MAX_WIDTH then
+        width = SIDEBAR_MAX_WIDTH
+    end
+    return width
+end
+
+-- 幾何唯一的落地點。每幀從 prerender 呼叫一次，靠三個值的比對早退——縮放視窗、
+-- 切換側欄、強制收合切線都會落在這裡，不必各自記得要重排一次版面。
+function NBPanel:updateLayout()
+    local sidebarWidth = self:sidebarWidth()
+    local height = self:contentHeight()
+    if self.layoutWidth == self.width and self.layoutHeight == self.height
+        and self.layoutSidebarWidth == sidebarWidth then
+        return false
+    end
+    self.layoutWidth = self.width
+    self.layoutHeight = self.height
+    self.layoutSidebarWidth = sidebarWidth
+
+    -- 兩個子元件都是 createChildren 建的，updateLayout 只可能在那之後跑。
+    self.docTree:setX(0)
+    self.docTree:setY(self.contentY)
+    self.docTree:setWidth(sidebarWidth)
+    self.docTree:setHeight(height)
+    self.docTree:setVisible(sidebarWidth > 0)
+
+    self.richText:setX(sidebarWidth)
+    self.richText:setY(self.contentY)
+    self.richText:setWidth(self.width - sidebarWidth)
+    self.richText:setHeight(height)
+    -- 寬度變了就重新走 renderSelected：換行點、圖片夾限與連結判定區全是寬度的函式；
+    -- 只設 textDirty 只會重新 paginate 舊的 <IMAGE:path,w,h>，寬圖仍沿用切換前的尺寸。
+    if self.selectedFileId then
+        self:renderSelected(false)
+    else
+        self.richText.textDirty = true
+    end
+    return true
 end
 
 function NBPanel:RestoreLayout(name, layout)
@@ -494,6 +869,42 @@ function NBPanel:onReload()
         NBToast.show(getText("IGUI_MinidoracatNB_ReloadSent"))
     else
         NBToast.show(getText("IGUI_MinidoracatNB_ReloadFailed"))
+    end
+end
+
+-- 重建範例的按鈕本身**什麼都不送**：它只開一個選單讓 admin 挑要重建哪個語系。
+-- 沒有這一步的話，一次誤觸就會覆寫伺服器的 categories.txt 與 README.txt，
+-- 而那兩份是服主的正式設定；原生 context menu（與語系選單同一套）是這個 UI 唯一
+-- 「動手前先講清楚」的地方，所以兩個選項的文字都必須明說會覆寫 categories.txt。
+-- 語系選單只有 CH／EN，與 NBClient.requestExamplePack 的白名單同一份契約——
+-- 範例文字是人手寫的資源，只有這兩份存在。
+function NBPanel:onExamples(button)
+    if not hasAdminAccess() or not isClient() then
+        return
+    end
+    local menu = ISContextMenu.get(0,
+        button:getAbsoluteX(), button:getAbsoluteY() + button:getHeight())
+    if not menu then
+        return
+    end
+    menu:addOption(getText("IGUI_MinidoracatNB_ExamplesLangCH"),
+        self, NBPanel.onExamplesLanguageSelected, "CH")
+    menu:addOption(getText("IGUI_MinidoracatNB_ExamplesLangEN"),
+        self, NBPanel.onExamplesLanguageSelected, "EN")
+end
+
+-- 選單裡真正動手的那一步。與 onReload 不同的是它**有 ack**：送出只代表指令上路了，
+-- 真正的結果（成功幾檔／寫入失敗／冷卻中／權限不足）由 NBPanel.onExamplesStatus
+-- 出第二則 toast。權限在這裡再驗一次：選單開著的期間服主可能當場撤掉權限。
+-- 送出成功的 toast 帶語系代碼——admin 連按兩次挑了不同語系時，兩則 toast 必須分得出來。
+function NBPanel:onExamplesLanguageSelected(language)
+    if not hasAdminAccess() or not isClient() then
+        return
+    end
+    if Client.requestExamplePack(language) then
+        NBToast.show(getText("IGUI_MinidoracatNB_ExamplesSent", tostring(language)))
+    else
+        NBToast.show(getText("IGUI_MinidoracatNB_ExamplesSendFailed"))
     end
 end
 
@@ -549,7 +960,7 @@ function NBPanel:onLanguageSelected(code)
     end
 end
 
--- 語系相關的非同步狀態（settings.ini 落地失敗／補寫成功／切換送出額度用盡）。
+-- settings.ini 的非同步狀態：語系／側欄落地失敗與補寫成功，以及切換送出額度用盡。
 -- NBClient 對同一次失敗只發一次事件，所以這裡直接出 toast 不會洗版。
 local function onLanguageStatus(payload)
     if type(payload) ~= "table" then
@@ -560,8 +971,32 @@ local function onLanguageStatus(payload)
         NBToast.show(getText("IGUI_MinidoracatNB_LanguageSaveFailed"))
     elseif kind == "save-recovered" then
         NBToast.show(getText("IGUI_MinidoracatNB_LanguageSaveRecovered"))
+    elseif kind == "sidebar-save-failed" then
+        NBToast.show(getText("IGUI_MinidoracatNB_SidebarSaveFailed"))
+    elseif kind == "sidebar-save-recovered" then
+        NBToast.show(getText("IGUI_MinidoracatNB_SidebarSaveRecovered"))
     elseif kind == "switch-exhausted" then
         NBToast.show(getText("IGUI_MinidoracatNB_LanguageSwitchExhausted"))
+    end
+end
+
+-- 範例包生成的結果。四種 kind 都必須有話講：admin 不能只靠畫面分辨寫入、冷卻與權限
+-- 結果；少任何一種就會有一次按下去毫無反應的情形。payload 已由 NBClient 過濾過形狀與
+-- enum，這裡只負責挑字串。**公開函式**（比照 onContentReady）：事件註冊與測試共用。
+function NBPanel.onExamplesStatus(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+    local kind = rawget(payload, "kind")
+    if kind == "success" then
+        NBToast.show(getText("IGUI_MinidoracatNB_ExamplesDone",
+            tostring(rawget(payload, "count"))))
+    elseif kind == "failed" then
+        NBToast.show(getText("IGUI_MinidoracatNB_ExamplesWriteFailed"))
+    elseif kind == "cooldown" then
+        NBToast.show(getText("IGUI_MinidoracatNB_ExamplesCooldown"))
+    elseif kind == "forbidden" then
+        NBToast.show(getText("IGUI_MinidoracatNB_ExamplesForbidden"))
     end
 end
 
@@ -590,12 +1025,11 @@ function NBPanel:onRichTextFailure(renderError)
 end
 
 -- 貼圖尺寸不可控——伺服器同步的圖是服主直接丟進目錄的原始 PNG，圖包 MOD 的貼圖同樣是
--- 服主自己做的。ISRichTextPanel 的 <IMAGE:路徑>（不帶寬高）會用貼圖原始像素尺寸畫
--- （ISRichTextPanel.lua:158-161），一張 4000x3000 會橫向被 stencil 裁掉、縱向把捲動區撐到 3000+。
--- 所以**兩條路徑都無條件走這裡**（伺服器同步圖、圖包 MOD 貼圖、服主手寫的原生 tag）。
--- 這裡把貼圖實際尺寸與公告要求的尺寸交給 NBCore.fitImageSize 夾限（純數學，可單元測試），
--- 回傳 nil 代表不需要尺寸參數 -> 產出仍是不帶逗號的 <IMAGE:路徑>，塞得下的圖行為完全不變。
--- ponytail: 縮放在 render 當下計算，縮放視窗後要等下一次重畫（切頁籤／內容更新）才會重算。
+-- 服主自己做的。ISRichTextPanel 的 <IMAGE:路徑>（不帶寬高）會用貼圖原始像素尺寸畫；
+-- 一張 4000x3000 會被 stencil 裁掉並把捲動區撐到 3000+，所以兩條來源都無條件走這裡。
+-- 貼圖實際尺寸與公告要求尺寸交給 NBCore.fitImageSize 夾限（純數學，可單元測試）；
+-- 回傳 nil 代表不需要尺寸參數，塞得下的圖行為完全不變。
+-- 內容寬度改變時 updateLayout 會重跑 renderSelected，當前公告立即重算。
 function NBPanel:imageFitSize(texture, requestedWidth, requestedHeight)
     local ok, width, height = pcall(function()
         return texture:getWidth(), texture:getHeight()
@@ -760,8 +1194,8 @@ function NBPanel:preflightImages(parsed)
 end
 
 function NBPanel:renderSelected(markRead)
-    local tab = self.tabs[self.selectedIndex]
-    if not tab then
+    local entry = self.fileEntries[self.selectedFileId]
+    if not entry then
         self.contentState = "empty"
         self.currentParsed = nil
         self.currentRenderedText = nil
@@ -770,9 +1204,9 @@ function NBPanel:renderSelected(markRead)
         return
     end
 
-    local resetScroll = self.lastRenderedFileId ~= tab.id
+    local resetScroll = self.lastRenderedFileId ~= entry.id
     local ok, renderError = pcall(function()
-        local parsed = Parser.parse(tab.file.content)
+        local parsed = Parser.parse(entry.file.content)
         local rendered = self:preflightImages(parsed)
         self.currentParsed = parsed
         self.currentRenderedText = rendered
@@ -788,7 +1222,7 @@ function NBPanel:renderSelected(markRead)
         if not paginated then
             error(pageError)
         end
-        self.lastRenderedFileId = tab.id
+        self.lastRenderedFileId = entry.id
     end)
 
     if not ok then
@@ -799,7 +1233,7 @@ function NBPanel:renderSelected(markRead)
     -- 會讓 PopupMode=unread 每場強制彈窗糾纏玩家（違反「玩家不被打擾」），比丟失未讀點更糟；
     -- 渲染失敗本身已寫 console log 供服主排查。
     if markRead then
-        Client.markRead(tab.id)
+        Client.markRead(entry.id)
     end
 end
 
@@ -1050,139 +1484,309 @@ function NBPanel:onRichTextMouseUp(x, y)
     return true
 end
 
--- 頁籤可用寬度要扣掉右側按鈕，否則頁籤會捲到按鈕底下被蓋住／點不到。
--- 直接讀按鈕的即時 X（它們錨定右側），縮放視窗後仍然正確——用建立當下算好的常數會失準。
-function NBPanel:tabAreaWidth()
-    local limit = self.width
-    if self.langButton then
-        limit = math.min(limit, self.langButton:getX() - TAB_BUTTON_GAP)
+-- 分類鍵 -> 顯示標籤。語系根層（category==""）用翻譯 key，其餘直接用 snapshot 給的標籤
+-- （producer 端已經把「玩家語系 -> DefaultLanguage -> 第一個可用標籤 -> key」的 fallback
+-- 解完了，這裡不再自己判斷）。標籤缺漏時退回 key，至少讓服主看得出是哪一個目錄。
+function NBPanel:categoryLabel(key)
+    if key == ROOT_CATEGORY then
+        return getText("IGUI_MinidoracatNB_CategoryRoot")
     end
-    if self.resetButton then
-        limit = math.min(limit, self.resetButton:getX() - TAB_BUTTON_GAP)
+    local label = self.categoryLabels[key]
+    if type(label) ~= "string" or label == "" then
+        return key
     end
-    if self.reloadButton then
-        limit = math.min(limit, self.reloadButton:getX() - TAB_BUTTON_GAP)
-    end
-    return math.max(0, limit)
+    return label
 end
 
-function NBPanel:getTotalTabWidth()
-    local total = 0
+function NBPanel:categoryHasUnread(key)
+    local bucket = self.categoryFiles[key]
+    if not bucket then
+        return false
+    end
     local index
-    for index = 1, #self.tabs do
-        total = total + self.tabs[index].width
+    for index = 1, #bucket do
+        if Client.isUnread(bucket[index].id) then
+            return true
+        end
     end
-    return total
+    return false
 end
 
-function NBPanel:updateSmoothTabScroll()
-    if not self.smoothScrollTargetX then
-        return
-    end
-    local difference = self.smoothScrollTargetX - self.smoothScrollX
-    local maximum = math.max(0, self:getTotalTabWidth() - self:tabAreaWidth())
-    local frameFraction = UIManager.getMillisSinceLastRender() / 33.3
-    local target = self.smoothScrollX + difference * 0.25 * frameFraction
-    if target > 0 then
-        target = 0
-    elseif target < -maximum then
-        target = -maximum
-    end
-    if math.abs(target - self.smoothScrollTargetX) > 1 then
-        self.tabScrollX = math.floor(target)
-        self.smoothScrollX = target
-    else
-        self.tabScrollX = self.smoothScrollTargetX
-        self.smoothScrollX = self.tabScrollX
-        self.smoothScrollTargetX = nil
-    end
-end
+-- 把快照攤成「分類順序 + 每個分類的公告」。**空分類不進 order**：伺服器宣告了但這個語系
+-- 一份檔案都沒有的分類，畫出來只是一列點不開的標題。
+-- 順序：語系根層永遠第一（那是「沒有分類」的公告，玩家最先看到的東西），接著照 snapshot
+-- 的 categories 順序（producer 端已依 key 的數字前綴排好），最後才是「檔案宣稱屬於某分類、
+-- 但 categories 沒列出來」的漏網之魚，依首次出現順序排。
+function NBPanel:rebuildCategories()
+    local snapshot = self.snapshot
+    local buckets = {}
+    local labels = {}
+    local declared = {}
+    local extras = {}
+    local seenExtra = {}
+    local fileEntries = {}
+    local fileCategory = {}
 
-function NBPanel:layoutTabs()
-    local x = self.tabScrollX
-    local index
-    for index = 1, #self.tabs do
-        local tab = self.tabs[index]
-        tab.x = x
-        x = x + tab.width
-    end
-end
-
-function NBPanel:ensureTabVisible(index)
-    local tab = self.tabs[index]
-    if not tab then
-        return
-    end
-    self:layoutTabs()
-    if not self.smoothScrollTargetX then
-        self.smoothScrollX = self.tabScrollX
-    end
-    if tab.x < 0 then
-        self.smoothScrollTargetX = self.tabScrollX - tab.x
-    elseif tab.x + tab.width > self:tabAreaWidth() then
-        self.smoothScrollTargetX = self.tabScrollX - (tab.x + tab.width - self:tabAreaWidth())
-    end
-end
-
-function NBPanel:drawTabs()
-    self:updateSmoothTabScroll()
-    self:layoutTabs()
-
-    local tray = COLORS.TAB_TRAY_BG
-    local border = COLORS.BORDER
-    self:drawRect(0, self.tabY, self.width, self.tabHeight,
-        tray.a, tray.r, tray.g, tray.b)
-    -- 軌道線：頁籤是上圓、底邊開放的 3 邊框，站在這條線上；選中頁籤的 2px 底線蓋掉它，
-    -- 形成「與內容相連」的感覺。畫在 stencil 之前、頁籤之前。
-    self:drawRect(0, self.tabY + self.tabHeight - 1, self:tabAreaWidth(), 1,
-        border.a, border.r, border.g, border.b)
-
-    local mouseX = self:getMouseX()
-    local mouseY = self:getMouseY()
-    local hoveringRow = self:isMouseOver()
-        and mouseY >= self.tabY and mouseY < self.tabY + self.tabHeight
-
-    self:setStencilRect(0, self.tabY, self:tabAreaWidth(), self.tabHeight)
-    local index
-    for index = 1, #self.tabs do
-        local tab = self.tabs[index]
-        if tab.x + tab.width >= 0 and tab.x <= self:tabAreaWidth() then
-            local selected = index == self.selectedIndex
-            local hovered = hoveringRow and mouseX >= tab.x and mouseX < tab.x + tab.width
-            if selected then
-                Skin.fill(self, tab.x, self.tabY, tab.width, self.tabHeight,
-                    COLORS.TAB_SELECTED_FILL, true)
-            elseif hovered then
-                Skin.fill(self, tab.x, self.tabY, tab.width, self.tabHeight,
-                    COLORS.TAB_HOVER_FILL, true)
-            end
-
-            Skin.border(self, tab.x, self.tabY, tab.width, self.tabHeight, border, true)
-            local textColor = selected and COLORS.TAB_TEXT_SELECTED
-                or COLORS.TAB_TEXT_UNSELECTED
-            self:drawTextCentre(tab.title, tab.x + tab.width / 2, self.tabY + 3,
-                textColor.r, textColor.g, textColor.b, textColor.a, UIFont.Small)
-
-            if selected then
-                local accent = COLORS.ACCENT_AMBER
-                self:drawRect(tab.x, self.tabY + self.tabHeight - 2, tab.width, 2,
-                    accent.a, accent.r, accent.g, accent.b)
-            end
-
-            if Client.isUnread(tab.id) then
-                -- 8x8 圓點的圓心 (right-6, +6) 正好是右上弧的圓心，半徑 4 < 邊框內緣 5，不壓弧線
-                Skin.dot(self, tab.x + tab.width - 10, self.tabY + 2, 8,
-                    COLORS.UNREAD_DOT, COLORS.UNREAD_DOT_OUTLINE)
+    local categories = type(snapshot) == "table" and rawget(snapshot, "categories") or nil
+    if type(categories) == "table" then
+        local index
+        for index = 1, #categories do
+            local category = categories[index]
+            local key = type(category) == "table" and rawget(category, "key") or nil
+            if type(key) == "string" and key ~= ROOT_CATEGORY then
+                labels[key] = rawget(category, "label")
+                declared[#declared + 1] = key
             end
         end
     end
-    self:clearStencilRect()
-    -- 巢狀 stencil 收尾用 repaint 而不是再 set 一次：clearStencilRect 只把 stencilLevel 減一，
-    -- 頁籤區在 stencil buffer 裡仍是 level+1，要用 repaintStencilRect（ALWAYS/REPLACE，
-    -- UIElement.java:1928-1940）寫回父層 level 才能再畫；再 set 一次會讓 set/clear 不成對，
-    -- 每幀淨 +1，render 的 clear 回不到 0 → 外框畫不出來、同幀之後的元件（alwaysOnTop 的
-    -- 浮窗／Toast）整個被 stencil 擋掉。原版同款：ISRichTextPanel.lua:688-690。
-    self:repaintStencilRect(0, self.tabY, self:tabAreaWidth(), self.tabHeight)
+
+    local files = type(snapshot) == "table" and rawget(snapshot, "files") or nil
+    if type(files) == "table" then
+        local index
+        for index = 1, #files do
+            local file = files[index]
+            local fileId = rawget(file, "id")
+            local title = rawget(file, "title")
+            if type(title) ~= "string" or title == "" then
+                title = fileId or ""
+            end
+            -- 舊版 server 的快照沒有這個欄位：一律歸語系根層，行為與分類上線前完全相同。
+            local key = rawget(file, "category")
+            if type(key) ~= "string" then
+                key = ROOT_CATEGORY
+            end
+            if key ~= ROOT_CATEGORY and labels[key] == nil and not seenExtra[key] then
+                seenExtra[key] = true
+                extras[#extras + 1] = key
+            end
+            local bucket = buckets[key]
+            if not bucket then
+                bucket = {}
+                buckets[key] = bucket
+            end
+            local entry = { id = fileId, title = title, file = file }
+            bucket[#bucket + 1] = entry
+            fileEntries[fileId] = entry
+            fileCategory[fileId] = key
+        end
+    end
+
+    local order = {}
+    local inserted = {}
+    local function push(key)
+        if buckets[key] and not inserted[key] then
+            inserted[key] = true
+            order[#order + 1] = key
+        end
+    end
+    push(ROOT_CATEGORY)
+    local index
+    for index = 1, #declared do
+        push(declared[index])
+    end
+    for index = 1, #extras do
+        push(extras[index])
+    end
+
+    self.categoryOrder = order
+    self.categoryLabels = labels
+    self.categoryFiles = buckets
+    self.fileEntries = fileEntries
+    self.fileCategory = fileCategory
+
+    -- 展開狀態跨快照沿用，但只留還存在的分類：伺服器刪掉某分類之後，那個鍵留在表裡
+    -- 只會在它哪天回來時帶著一份玩家早就忘了的舊狀態。
+    local expanded = self.expandedCategories
+    local kept = {}
+    for index = 1, #order do
+        local key = order[index]
+        kept[key] = expanded[key] ~= false
+    end
+    self.expandedCategories = kept
+end
+
+function NBPanel:isCategoryExpanded(key)
+    return self.expandedCategories[key] ~= false
+end
+
+-- 重建可見列。分類列一定在；它底下的公告列只有展開時才進 items。
+function NBPanel:rebuildTree()
+    local tree = self.docTree
+    tree:clear()
+
+    local order = self.categoryOrder
+    local index
+    for index = 1, #order do
+        local key = order[index]
+        local bucket = self.categoryFiles[key]
+        local expanded = self:isCategoryExpanded(key)
+        local label = self:categoryLabel(key)
+        -- 第一個參數是原生 listbox 的 item.text（getIndexOf／contains 用）；
+        -- 實際繪製走 doDrawItem 覆寫，讀的是第二個參數那張表。
+        tree:addItem(label, {
+            kind = "category",
+            key = key,
+            label = label,
+            expanded = expanded,
+            unread = self:categoryHasUnread(key),
+        })
+        if expanded then
+            local fileIndex
+            for fileIndex = 1, #bucket do
+                local entry = bucket[fileIndex]
+                tree:addItem(entry.title, {
+                    kind = "file",
+                    id = entry.id,
+                    label = entry.title,
+                    category = key,
+                    unread = Client.isUnread(entry.id),
+                })
+            end
+        end
+    end
+
+    self:syncTreeSelection()
+end
+
+-- 未讀點就地刷新，不重建：markRead 之後只有紅點會變，重建會連捲動位置一起洗掉。
+-- 分類的紅點是**整個 bucket 的 OR**（含收合起來看不見的公告），否則收合之後未讀就消失了。
+function NBPanel:refreshTreeUnread()
+    local tree = self.docTree
+    local index
+    for index = 1, #tree.items do
+        local entry = tree.items[index].item
+        if entry.kind == "category" then
+            entry.unread = self:categoryHasUnread(entry.key)
+        else
+            entry.unread = Client.isUnread(entry.id)
+        end
+    end
+end
+
+-- 原生 listbox 的 selected 只在鍵盤／手把導覽與 ensureVisible 用得到；
+-- 顯示上的選取由 selectedFileId 決定，這裡把兩者對齊。
+function NBPanel:syncTreeSelection()
+    local tree = self.docTree
+    local index
+    for index = 1, #tree.items do
+        local entry = tree.items[index].item
+        if entry.kind == "file" and entry.id == self.selectedFileId then
+            tree.selected = index
+            return index
+        end
+    end
+    tree.selected = -1
+    return nil
+end
+
+function NBPanel:onTreeRowClicked(entry)
+    if type(entry) ~= "table" then
+        return
+    end
+    if entry.kind == "category" then
+        -- entry.expanded 是這一列畫出來當下的狀態，取反就是玩家要的新狀態。
+        self.expandedCategories[entry.key] = not entry.expanded
+        self:rebuildTree()
+        return
+    end
+    self:selectFile(entry.id, self:getIsVisible())
+end
+
+-- 工具列的批次展開／收合。逐一覆寫目前**存在**的分類（categoryOrder 就是那份清單，
+-- 伺服器刪掉的鍵不必復活），最後才重建一次：每個鍵各自 rebuildTree 會把整棵樹連同
+-- 選取同步重跑 N 次，分類多的伺服器上一次點擊就是一次可見的頓卡。
+-- 只動展開狀態：選取、未讀、內容與分類順序都不在這裡改。
+function NBPanel:setAllCategoriesExpanded(expanded)
+    local value = expanded == true
+    local order = self.categoryOrder
+    for index = 1, #order do
+        self.expandedCategories[order[index]] = value
+    end
+    self:rebuildTree()
+end
+
+-- 玩家自己把側欄收起來的時候一併打開：分類全開卻沒有目錄可看，這顆按鈕在畫面上
+-- 就等於沒反應。窄視窗的強制收合**不在此列**——那是版面限制、不是玩家的意思，
+-- 硬開只會把內文擠爆；偏好照樣寫下去，拉寬之後目錄自己回來。
+function NBPanel:onExpandAllCategories()
+    self:setAllCategoriesExpanded(true)
+    if self.sidebarCollapsed == true then
+        self.sidebarCollapsed = false
+        Client.setSidebarCollapsedPreference(false)
+    end
+end
+
+-- 全部收合只收分類：側欄與側欄偏好一律不動。玩家要的是「把清單收乾淨」，
+-- 不是「把目錄關掉」——那是側欄開關的事。
+function NBPanel:onCollapseAllCategories()
+    self:setAllCategoriesExpanded(false)
+end
+
+-- 選取一份公告（id 是裸檔名）。渲染 -> 立刻刷新紅點（markRead 會清掉這一份的未讀）
+-- -> 對齊 listbox 的 selected 並捲到看得見的位置。
+function NBPanel:selectFile(fileId, markRead)
+    if not self.fileEntries[fileId] then
+        return false
+    end
+    self.selectedFileId = fileId
+    self:renderSelected(markRead == true)
+    self:refreshTreeUnread()
+    local index = self:syncTreeSelection()
+    if index then
+        self.docTree:ensureVisible(index)
+    end
+    return true
+end
+
+-- 選取並確保看得見：目標落在收合起來的分類裡時先把父分類展開。
+function NBPanel:revealFile(fileId, markRead)
+    if not self.fileEntries[fileId] then
+        return false
+    end
+    -- fileEntries 有這一份，fileCategory 就一定也有（同一個迴圈填的）。
+    local key = self.fileCategory[fileId]
+    if not self:isCategoryExpanded(key) then
+        self.expandedCategories[key] = true
+        self:rebuildTree()
+    end
+    return self:selectFile(fileId, markRead)
+end
+
+-- order 只收「確實有檔案」的分類（見 rebuildCategories），所以第一個分類的第一份就是答案。
+function NBPanel:firstFileId()
+    local key = self.categoryOrder[1]
+    if key == nil then
+        return nil
+    end
+    return self.categoryFiles[key][1].id
+end
+
+-- 工具列的側欄開關。強制收合期間照樣記下偏好：玩家的意思是「我要目錄」，
+-- 只是現在的視窗塞不下；拉寬之後就該直接出現，而不是要他再按一次。
+function NBPanel:onSidebarToggle()
+    local collapsed = not self:isSidebarCollapsed()
+    self.sidebarCollapsed = collapsed
+    Client.setSidebarCollapsedPreference(collapsed)
+end
+
+function NBPanel:drawToolbar()
+    local tray = COLORS.TAB_TRAY_BG
+    local border = COLORS.BORDER
+    self:drawRect(0, self.toolbarY, self.width, self.toolbarHeight,
+        tray.a, tray.r, tray.g, tray.b)
+    self:drawRect(0, self.toolbarY + self.toolbarHeight - 1, self.width, 1,
+        border.a, border.r, border.g, border.b)
+end
+
+-- 側欄與內文之間的 1px 分隔線。側欄自己的底色由 NBDocTree 的 backgroundColor 畫。
+function NBPanel:drawSidebarDivider()
+    local width = self:sidebarWidth()
+    if width <= 0 then
+        return
+    end
+    local border = COLORS.BORDER
+    self:drawRect(width - 1, self.contentY, 1, self:contentHeight(),
+        border.a, border.r, border.g, border.b)
 end
 
 function NBPanel:drawContentPlaceholder()
@@ -1190,15 +1794,19 @@ function NBPanel:drawContentPlaceholder()
         return
     end
 
+    -- 占位訊息屬於**內文區**，不是整個面板：側欄展開時要一起往右讓，
+    -- 否則「目前沒有公告」會壓在目錄上、而且相對內文是偏左的。
+    local x = self:sidebarWidth()
+    local width = self.width - x
     local y = self.contentY
-    local height = self.height - y - self:resizeWidgetHeight()
+    local height = self:contentHeight()
     if self.contentState == "error" then
         local blockHeight = 48
         local blockY = y + math.max(8, (height - blockHeight) / 2)
         local textColor = COLORS.ERROR_TEXT
-        Skin.fill(self, 10, blockY, self.width - 20, blockHeight, COLORS.ERROR_BG)
+        Skin.fill(self, x + 10, blockY, width - 20, blockHeight, COLORS.ERROR_BG)
         self:drawTextCentre(getText("IGUI_MinidoracatNB_ParseError"),
-            self.width / 2, blockY + 15,
+            x + width / 2, blockY + 15,
             textColor.r, textColor.g, textColor.b, textColor.a, UIFont.NewSmall)
         return
     end
@@ -1210,7 +1818,7 @@ function NBPanel:drawContentPlaceholder()
         key = "IGUI_MinidoracatNB_NoContent"
     end
     local textColor = COLORS.PLACEHOLDER_TEXT
-    self:drawTextCentre(getText(key), self.width / 2,
+    self:drawTextCentre(getText(key), x + width / 2,
         y + math.max(8, height / 2 - getTextManager():getFontHeight(UIFont.NewSmall) / 2),
         textColor.r, textColor.g, textColor.b, textColor.a, UIFont.NewSmall)
 end
@@ -1220,6 +1828,8 @@ end
 -- 的圓角會露角。順序與父類逐行對應、只換繪製呼叫；父類的 drawFrame／background 旗標在本面板
 -- 恆為 true，不再分支。版面數字（titleBarHeight／resizeWidgetHeight／stencil 範圍）一個都不動。
 function NBPanel:prerender()
+    -- 幾何先落地再畫：縮放視窗、切換側欄、跨過強制收合的門檻都靠這一次比對收斂。
+    self:updateLayout()
     local width = self:getWidth()
     local height = self:getHeight()
     local th = self:titleBarHeight()
@@ -1229,7 +1839,7 @@ function NBPanel:prerender()
     -- 面板底一次畫滿（父類分「標題列」與「內容區」兩段 drawRect），四角 r=6；
     -- 標題列疊一層上圓下直的淺色，取代原生 Panel_TitleBar.png；下緣只留 1px 分隔線，外框由 render 統一畫。
     -- 收合時面板只剩標題列這一條：疊色改四角圓（否則下兩角的直角會從面板底的弧線外露出來）、
-    -- 不畫分隔線（外框就是底線）、不畫頁籤與占位——原版 drawRect／drawTextCentre 靠 isCollapsed
+    -- 不畫分隔線（外框就是底線）、不畫工具列與占位——原版 drawRect／drawTextCentre 靠 isCollapsed
     -- 守衛不畫（ISUIElement.lua:1191-1197,:1280-1284），9-slice 沒有那道守衛，得自己跳過。
     Skin.fill(self, 0, 0, width, height, COLORS.BG_PANEL)
     Skin.fill(self, 0, 0, width, th, COLORS.TITLEBAR_FILL, not self.isCollapsed)
@@ -1247,7 +1857,8 @@ function NBPanel:prerender()
     end
 
     if not self.isCollapsed then
-        self:drawTabs()
+        self:drawToolbar()
+        self:drawSidebarDivider()
         self:drawContentPlaceholder()
     end
 end
@@ -1304,15 +1915,7 @@ function NBPanel:renderLinkTooltip()
     -- 截斷結果快取：量測是 render 內的呼叫，同一個網址不重算（per-frame 不配置新 table）
     local cache = self.linkTooltipCache
     if not cache or cache.url ~= region.url or cache.maxWidth ~= maxWidth then
-        local text = region.url
-        if textManager:MeasureStringX(font, text) > maxWidth then
-            -- 從尾端砍：網域在前面，那是玩家最該看清的部分
-            while string.len(text) > 1
-                and textManager:MeasureStringX(font, text .. "...") > maxWidth do
-                text = string.sub(text, 1, string.len(text) - 1)
-            end
-            text = text .. "..."
-        end
+        local text = truncateToWidth(region.url, font, maxWidth)
         cache = {
             url = region.url,
             maxWidth = maxWidth,
@@ -1345,134 +1948,42 @@ function NBPanel:renderLinkTooltip()
         textColor.r, textColor.g, textColor.b, textColor.a, font)
 end
 
-function NBPanel:tabAt(x)
-    self:layoutTabs()
-    local index
-    for index = 1, #self.tabs do
-        local tab = self.tabs[index]
-        if x >= tab.x and x < tab.x + tab.width then
-            return index
-        end
-    end
-    return nil
-end
-
+-- 標題列以外一律吞掉：面板本體不該被當成拖曳把手，子元件（文件樹／內文）自己收事件。
 function NBPanel:onMouseDown(x, y)
-    if y >= self.tabY and y < self.tabY + self.tabHeight then
-        self.pressedTab = self:tabAt(x)
-        return true
-    end
     if y < self:titleBarHeight() then
         return ISCollapsableWindowJoypad.onMouseDown(self, x, y)
     end
     return true
 end
 
-function NBPanel:onMouseUp(x, y)
-    if self.pressedTab then
-        local pressed = self.pressedTab
-        self.pressedTab = nil
-        if y >= self.tabY and y < self.tabY + self.tabHeight
-            and self:tabAt(x) == pressed then
-            self:selectTab(pressed, self:getIsVisible())
-        end
-        return true
-    end
-    return ISCollapsableWindowJoypad.onMouseUp(self, x, y)
-end
-
-function NBPanel:onMouseWheel(del)
-    local mouseY = self:getMouseY()
-    if mouseY < self.tabY or mouseY >= self.tabY + self.tabHeight then
-        return false
-    end
-
-    local maximum = math.max(0, self:getTotalTabWidth() - self:tabAreaWidth())
-    if maximum == 0 then
-        return true
-    end
-    if not self.smoothScrollTargetX then
-        self.smoothScrollX = self.tabScrollX
-        self.smoothScrollTargetX = self.tabScrollX
-    end
-    self.smoothScrollTargetX = self.smoothScrollTargetX + del * 40
-    if self.smoothScrollTargetX > 0 then
-        self.smoothScrollTargetX = 0
-    elseif self.smoothScrollTargetX < -maximum then
-        self.smoothScrollTargetX = -maximum
-    end
-    return true
-end
-
-function NBPanel:selectTab(index, markRead)
-    if not self.tabs[index] then
-        return false
-    end
-    self.selectedIndex = index
-    self:ensureTabVisible(index)
-    self:renderSelected(markRead == true)
-    return true
-end
-
-function NBPanel:selectTabById(fileId, markRead)
-    local index
-    for index = 1, #self.tabs do
-        if self.tabs[index].id == fileId then
-            return self:selectTab(index, markRead)
-        end
-    end
-    return false
-end
-
 function NBPanel:setSnapshot(snapshot, preferredId)
     self.snapshot = snapshot
-    local previousId = preferredId
-    if not previousId and self.tabs[self.selectedIndex] then
-        previousId = self.tabs[self.selectedIndex].id
+    -- 選取以**裸檔名**保存：分類只是顯示上的分組，公告換了目錄仍是同一份公告。
+    local targetId = preferredId or self.selectedFileId
+
+    self:rebuildCategories()
+    self.selectedFileId = nil
+
+    if targetId == nil or self.fileEntries[targetId] == nil then
+        targetId = self:firstFileId()
     end
 
-    self.tabs = {}
-    local files = type(snapshot) == "table" and rawget(snapshot, "files") or nil
-    if type(files) == "table" then
-        local index
-        for index = 1, #files do
-            local file = files[index]
-            local title = rawget(file, "title")
-            if type(title) ~= "string" or title == "" then
-                title = rawget(file, "id") or ""
-            end
-            self.tabs[index] = {
-                id = rawget(file, "id"),
-                title = title,
-                file = file,
-                width = math.max(80,
-                    getTextManager():MeasureStringX(UIFont.Small, title) + 28),
-            }
-        end
-    end
-
-    self.tabScrollX = 0
-    self.smoothScrollX = 0
-    self.smoothScrollTargetX = nil
-    self.selectedIndex = nil
-
-    if #self.tabs == 0 then
+    self:rebuildTree()
+    if targetId == nil then
         self:renderSelected(false)
         return
     end
-
-    if previousId and self:selectTabById(previousId, self:getIsVisible()) then
-        return
-    end
-    self:selectTab(1, self:getIsVisible())
+    -- revealFile：目標所在的分類被玩家收起來時先展開，否則選取的公告在目錄上看不到
+    self:revealFile(targetId, self:getIsVisible())
 end
 
 function NBPanel:setVisible(visible)
     ISCollapsableWindowJoypad.setVisible(self, visible)
     if visible then
         self:bringToTop()
-        if self.selectedIndex then
+        if self.selectedFileId then
             self:renderSelected(true)
+            self:refreshTreeUnread()
         elseif not self.snapshot then
             self.contentState = NBPanel.session.timedOut and "timeout" or "syncing"
             self.richText:setVisible(false)
@@ -1496,10 +2007,12 @@ end
 -- 尺寸由 ISLayoutManager 記憶在 layout.ini，改過就回不去了；提供這個入口讓玩家不必去編輯 ini。
 function NBPanel:resetToDefaultSize()
     local width, height = NBPanel.defaultSize()
+    width = math.max(width, self.minimumWidth or MINIMUM_WIDTH)
     local screenWidth = getCore():getScreenWidth()
     local screenHeight = getCore():getScreenHeight()
     self:setWidth(width)
     self:setHeight(height)
+    self:recalcSize()
     self:setX(math.max(0, math.floor(screenWidth / 2 - width / 2)))
     self:setY(math.max(0, math.floor(screenHeight / 2 - height / 2)))
 end
@@ -1515,11 +2028,20 @@ function NBPanel:new()
     o.resizable = true
     o.minimumWidth = MINIMUM_WIDTH
     o.minimumHeight = MINIMUM_HEIGHT
-    o.tabs = {}
-    o.selectedIndex = nil
-    o.tabScrollX = 0
-    o.smoothScrollX = 0
-    o.smoothScrollTargetX = nil
+    -- 文件樹模型。createChildren 之前就先備妥空值，讓 setSnapshot 之前的任何呼叫都安全。
+    o.categoryOrder = {}
+    o.categoryLabels = {}
+    o.categoryFiles = {}
+    o.expandedCategories = {}
+    o.fileEntries = {}
+    o.fileCategory = {}
+    o.selectedFileId = nil
+    -- 側欄預設**展開**：目錄是這個面板的主要導覽，沒有它玩家看不出還有其他公告。
+    -- 舊版依「公告數 > 4 或有 server 分類」自動決定，結果小型公告板永遠開不出目錄，
+    -- 而那個門檻對玩家不可見也解釋不了；現在只有玩家自己按過收合鈕才會收起來。
+    -- nil = 玩家沒按過收合鈕 -> 展開；有值就照它走（視窗過窄的強制收合仍然優先）。
+    -- 這個值只由玩家操作（側欄開關、全部展開）改寫，不需要在每次 setSnapshot 再套一次。
+    o.sidebarCollapsed = Client.getSidebarCollapsedPreference() == true
     o.linkHitRegions = {}
     o.contentState = "syncing"
     return o
@@ -1552,7 +2074,7 @@ end
 function NBPanel.show(preferredId)
     local panel = NBPanel.ensureInstance()
     if preferredId then
-        panel:selectTabById(preferredId, false)
+        panel:revealFile(preferredId, false)
     end
     panel:setVisible(true)
     return panel
@@ -1696,7 +2218,7 @@ end
 -- **測試專用的閘，不是執行期入口**（比照 NBServer 暴露 processQueue／scanImages 的理由）：
 -- 出貨路徑一個呼叫點都沒有，handleContentReady 走的是上面那個 local。
 -- 留著是因為「一批公告只響一聲」與「沙盒關掉就不響」光讀碼保證不了，而從
--- handleContentReady 那端跑要把整個進場流程（ensureInstance／setSnapshot／頁籤重建）
+-- handleContentReady 那端跑要把整個進場流程（ensureInstance／setSnapshot／文件樹重建）
 -- 都 stub 起來，測到的多半是 stub 而不是這裡的收斂邏輯。
 NBPanel.notifyUnread = notifyUnread
 
@@ -1755,8 +2277,9 @@ function NBPanel.onGameStart()
 
     local panel = NBPanel.ensureInstance()
     panel.snapshot = nil
-    panel.tabs = {}
-    panel.selectedIndex = nil
+    panel.selectedFileId = nil
+    panel:rebuildCategories()
+    panel:rebuildTree()
     panel.contentState = "syncing"
     panel.richText:setVisible(false)
     panel:setVisible(false)
@@ -1778,7 +2301,7 @@ function NBPanel.onTick()
     if readyVersion ~= session.imageReadyVersion then
         session.imageReadyVersion = readyVersion
         local panel = NBPanel.instance
-        if panel and panel.selectedIndex then
+        if panel and panel.selectedFileId then
             panel:renderSelected(false)
         end
     end
@@ -1804,8 +2327,11 @@ function NBPanel.onContentReady(snapshot)
 end
 
 function NBPanel.onUnreadChanged(unreadIds)
-    if NBPanel.instance then
-        NBPanel.instance.unreadIds = unreadIds
+    local panel = NBPanel.instance
+    if panel then
+        panel.unreadIds = unreadIds
+        -- 未讀集合是 NBClient 算的；面板這端只要把已建好的列重新問一次紅點。
+        panel:refreshTreeUnread()
     end
 end
 
@@ -1815,6 +2341,7 @@ if not NBPanel._eventsInstalled then
     Events[Client.CONTENT_READY_EVENT].Add(NBPanel.onContentReady)
     Events[Client.UNREAD_CHANGED_EVENT].Add(NBPanel.onUnreadChanged)
     Events[Client.LANGUAGE_STATUS_EVENT].Add(onLanguageStatus)
+    Events[Client.EXAMPLES_STATUS_EVENT].Add(NBPanel.onExamplesStatus)
     Events[ImageCache.STATUS_EVENT].Add(onImageStatus)
     NBPanel._eventsInstalled = true
 end

@@ -71,7 +71,7 @@ do NOT need to build or publish a separate texture mod.
    max-image-count-max）與「MaxImageTotalKB」（範圍 max-total-kb-min 到
    max-total-kb-max KB）。超限時依檔名排序，排在後面的被略過。**調高上限＝每一位玩家
    要下載的量等比增加**；另外玩家端有自己的快取寫入上限，服主再怎麼調都突破不了。
-4. 在公告裡引用：![說明文字](images/檔名.png)
+4. 在公告裡引用：![說明文字](images/my-image.png)
    可指定顯示尺寸：=600x200（寬x高）、=600x（只給寬）、=x200（只給高）。
    例：![地圖](images/map.png =600x200)
 5. 更新機制：放進**新檔名**的圖，下一輪輪詢就會自動生效。**原地覆蓋同名檔案**現在
@@ -98,7 +98,7 @@ do NOT need to build or publish a separate texture mod.
    max-image-count-max）与「MaxImageTotalKB」（范围 max-total-kb-min 到
    max-total-kb-max KB）。超限时按文件名排序，排在后面的被跳过。**调高上限＝每一位玩家
    要下载的量等比增加**；另外玩家端有自己的缓存写入上限，服主再怎么调都突破不了。
-4. 在公告里引用：![说明文字](images/文件名.png)
+4. 在公告里引用：![说明文字](images/my-image.png)
    可指定显示尺寸：=600x200（宽x高）、=600x（只给宽）、=x200（只给高）。
    例：![地图](images/map.png =600x200)
 5. 更新机制：放进**新文件名**的图，下一轮轮询就会自动生效。**原地覆盖同名文件**现在
@@ -128,7 +128,7 @@ do NOT need to build or publish a separate texture mod.
    スキップされます。上限を引き上げると全プレイヤーのダウンロード量が比例して増えます。
    またプレイヤー側には、サーバー設定では引き上げられない独自のキャッシュ書き込み上限が
    あります。
-4. お知らせでの書き方: ![説明](images/ファイル名.png)
+4. お知らせでの書き方: ![説明](images/my-image.png)
    表示サイズの指定: =600x200 (幅x高さ)、=600x (幅のみ)、=x200 (高さのみ)。
    例: ![地図](images/map.png =600x200)
 5. 更新: 新しいファイル名の画像は次のポーリングで自動的に反映されます。同名ファイルの

@@ -19,6 +19,7 @@ local MEDIA_LUA = "MOD/MinidoracatNoticeBoardFor42/Contents/mods/"
 local VANILLA_LUA = os.getenv("PZ_LUA")
     or "D:/SteamLibrary/steamapps/common/ProjectZomboid/media/lua"
 local ENGINE_FILE = VANILLA_LUA .. "/client/ISUI/ISRichTextPanel.lua"
+local LISTBOX_FILE = VANILLA_LUA .. "/client/ISUI/ISScrollingListBox.lua"
 
 local probe = io.open(ENGINE_FILE, "r")
 if not probe then
@@ -111,6 +112,8 @@ _G.UIFont = { NewSmall = "NewSmall", Small = "Small", Medium = "Medium",
 -- 顏色與圖片尺寸，不斷言「一列排幾張圖」這種需要真實字寬的結論。
 local CHAR_WIDTH = 8
 local LINE_HEIGHT = 18
+local SCREEN_WIDTH = 1920
+local SCREEN_HEIGHT = 1080
 _G.getTextManager = function()
     return {
         MeasureStringX = function(_, _, text) return string.len(text or "") * CHAR_WIDTH end,
@@ -128,8 +131,8 @@ _G.getCore = function()
         getGoodHighlitedColor = function() return colorStub(0.1, 0.9, 0.1) end,
         getBadHighlitedColor = function() return colorStub(0.9, 0.1, 0.1) end,
         getKey = function() return 1 end,
-        getScreenWidth = function() return 1920 end,
-        getScreenHeight = function() return 1080 end,
+        getScreenWidth = function() return SCREEN_WIDTH end,
+        getScreenHeight = function() return SCREEN_HEIGHT end,
         getOptionDoVideoEffects = function() return false end,
     }
 end
@@ -137,6 +140,8 @@ _G.Core = { getInstance = function()
     return { getOptionDoVideoEffects = function() return false end }
 end }
 _G.getKeyName = function() return "K" end
+_G.getMouseX = function() return 0 end
+_G.getMouseY = function() return 0 end
 
 local TEXTURE_SIZES = {}
 _G.getTexture = function(path)
@@ -144,7 +149,10 @@ _G.getTexture = function(path)
     if not size then
         return nil
     end
+    -- path 只給測試用：圖示是「一堆長得一樣的白色貼圖」，繪製呼叫裡沒有它就分不出
+    -- 畫的是 chevron 還是 folder。引擎的 Texture 沒有這個欄位，實作端不得依賴它。
     return {
+        path = path,
         getWidth = function() return size[1] end,
         getHeight = function() return size[2] end,
     }
@@ -174,7 +182,32 @@ end
 function Base:initialise() end
 function Base:createChildren() end
 function Base:setHeight(height) self.height = height end
+-- 父層改寬時就地重排子層：只錨右的子層與右緣保持固定距離（原生在 Java 端做，
+-- UIElement.resizeChildren）。這件事不能留成 no-op：工具列的動態 minimumWidth 會在
+-- createChildren 當下把面板夾寬，右側按鈕的 x 若不跟著走，「左右兩組不得重疊」
+-- 這類斷言就變成拿脫節的座標在比，永遠是綠的。
+function Base:setWidth(width)
+    local delta = width - (self.width or width)
+    self.width = width
+    local children = self.children
+    if delta == 0 or children == nil then
+        return
+    end
+    local index
+    for index = 1, #children do
+        local child = children[index]
+        if child.anchorRight and not child.anchorLeft then
+            child:setX(child:getX() + delta)
+        end
+    end
+end
 function Base:setScrollHeight(height) self.scrollHeight = height end
+function Base:getScrollHeight() return self.scrollHeight or 0 end
+function Base:noBackground() self.background = false end
+-- 真實 listbox 是否需要 vscroll 的最小行為：有 vscroll 且 scrollHeight 超過 viewport。
+function Base:isVScrollBarVisible()
+    return self.vscroll ~= nil and self:getScrollHeight() > self.height
+end
 function Base:getYScroll() return 0 end
 function Base:getXScroll() return 0 end
 function Base:setYScroll() end
@@ -191,9 +224,18 @@ function Base:getMouseX() return 0 end
 function Base:getMouseY() return 0 end
 function Base:isMouseOver() return false end
 function Base:getIsVisible() return true end
-function Base:addChild() end
+function Base:addChild(child)
+    if child == nil then
+        return
+    end
+    self.children = self.children or {}
+    self.children[#self.children + 1] = child
+end
 function Base:addScrollBars() end
-function Base:setAnchorsTBLR() end
+function Base:setAnchorsTBLR(top, bottom, left, right)
+    self.anchorTop, self.anchorBottom = top, bottom
+    self.anchorLeft, self.anchorRight = left, right
+end
 function Base:setFont() end
 function Base:setStencilRect() end
 function Base:clearStencilRect() end
@@ -202,6 +244,7 @@ function Base:drawText() end
 function Base:drawTextCentre() end
 function Base:drawTextRight() end
 function Base:drawTextureScaled() end
+function Base:recalcSize() end
 function Base:drawRect() end
 function Base:drawRectBorder() end
 function Base:setVisible() end
@@ -214,8 +257,13 @@ function Base:removeFromUIManager() end
 _G.ISLayoutManager = { RegisterWindow = function() end }
 _G.ISPanel = Base
 _G.ISBaseObject = Base
+-- ISScrollingListBox 與 ISRichTextPanel 同樣**載原版**（不移植、不重寫）：文件樹側欄的
+-- addItem／clear／rowAt／ensureVisible／捲動高度全部靠它，自己寫一份模擬器等於讓模擬器
+-- 與實作一起錯時兩邊都看不出來。它 derive 自 ISPanelJoypad，本 harness 把那一層當 Base。
+_G.ISPanelJoypad = Base:derive("ISPanelJoypad")
 
 dofile(ENGINE_FILE)
+dofile(LISTBOX_FILE)
 
 local NBCore = realRequire "NoticeBoard/NBCore"
 _G.NBCore = NBCore
@@ -233,10 +281,36 @@ _G.NBImageCache = {
     pathForHash = function(hash) return CACHE_PATH_OF_HASH[hash] end,
 }
 local UNREAD_IDS = {}
+local READ_MARKS = {}
+-- 側欄收合偏好：harness 端當成一顆可讀寫的記憶體格子（真模組寫 settings.ini）。
+local SIDEBAR_PREFERENCE = { value = nil, writes = 0, allow = true }
+-- 範例重建請求：harness 端記次數與**選到的語系**，並可切成「送不出去」，
+-- 驗面板的兩條送出 toast 分支與「選單選了哪個語系就送哪個」。
+local EXAMPLE_REQUESTS = { count = 0, allow = true, langs = {} }
 _G.NBClient = { CONTENT_READY_EVENT = "e1", UNREAD_CHANGED_EVENT = "e2",
     LANGUAGE_STATUS_EVENT = "e3",
     isUnread = function(fileId) return UNREAD_IDS[fileId] == true end,
-    getUnreadIds = function() return {} end }
+    markRead = function(fileId)
+        READ_MARKS[#READ_MARKS + 1] = fileId
+        UNREAD_IDS[fileId] = nil
+        return true
+    end,
+    getSidebarCollapsedPreference = function() return SIDEBAR_PREFERENCE.value end,
+    setSidebarCollapsedPreference = function(collapsed)
+        SIDEBAR_PREFERENCE.writes = SIDEBAR_PREFERENCE.writes + 1
+        if not SIDEBAR_PREFERENCE.allow then
+            return false
+        end
+        SIDEBAR_PREFERENCE.value = collapsed
+        return true
+    end,
+    getUnreadIds = function() return {} end,
+    EXAMPLES_STATUS_EVENT = "e5",
+    requestExamplePack = function(language)
+        EXAMPLE_REQUESTS.count = EXAMPLE_REQUESTS.count + 1
+        EXAMPLE_REQUESTS.langs[#EXAMPLE_REQUESTS.langs + 1] = language
+        return EXAMPLE_REQUESTS.allow
+    end }
 _G.NBToast = { show = function() end }
 -- 玩家端音效設定（真模組會去讀 PZAPI.ModOptions／ModOptions.ini，harness 沒有那一套）。
 -- 音量預設 1 = 滿音量，這樣「不呼叫 setVolume」是可斷言的行為；下面音效那段會改它。
@@ -248,11 +322,60 @@ _G.ISCollapsableWindowJoypad = Base:derive("ISCollapsableWindowJoypad")
 -- 下方版面測試的期望值就是用這兩個數字手算出來的字面值。
 function ISCollapsableWindowJoypad:titleBarHeight() return 19 end
 function ISCollapsableWindowJoypad:resizeWidgetHeight() return 14 end
+-- ISButton 的建構參數比 Base:new 多三個（title／target／onclick）。工具列按鈕的
+-- 「標題取自哪個翻譯鍵、按下去呼叫誰」是可觀察契約：Base:new 把它們丟掉的話，
+-- 把某顆按鈕接到錯的 callback（貼上時很容易發生）測試完全看不出來。
 _G.ISButton = Base:derive("ISButton")
+function ISButton:new(x, y, width, height, title, target, onclick)
+    local instance = Base.new(self, x, y, width, height)
+    instance.title = title
+    instance.target = target
+    instance.onclick = onclick
+    return instance
+end
+-- 原生 context menu。語系選單與重建範例選單都靠它，而「按下按鈕之後開出哪些選項、
+-- 選項接到誰、帶什麼參數」是那兩顆按鈕唯一的可觀察契約：ISContextMenu.get 在原生端
+-- 是可以回 nil 的（沒有這位玩家的 UI），所以 allow=false 那條路徑也必須驗。
+local CONTEXT_MENUS = { list = {}, allow = true }
 _G.ISContextMenu = Base:derive("ISContextMenu")
+function ISContextMenu.get(playerIndex, x, y)
+    if not CONTEXT_MENUS.allow then
+        return nil
+    end
+    local menu = { playerIndex = playerIndex, x = x, y = y, options = {} }
+    menu.addOption = function(_, title, target, callback, param)
+        local option = {
+            title = title,
+            target = target,
+            callback = callback,
+            param = param,
+        }
+        menu.options[#menu.options + 1] = option
+        return option
+    end
+    menu.setOptionChecked = function(_, option, checked)
+        option.checked = checked
+    end
+    CONTEXT_MENUS.list[#CONTEXT_MENUS.list + 1] = menu
+    return menu
+end
 _G.ISLayoutManager = { RegisterWindow = function() end }
 _G.Events = setmetatable({}, { __index = function(events, key)
-    local event = { Add = function() end, Remove = function() end }
+    -- handlers 只給測試用：「面板把哪個函式掛到哪個事件上」是按鈕按下去之後有沒有人接的
+    -- 唯一契約，Add 什麼都不記就驗不到漏註冊（事件本身在 harness 裡不會真的觸發）。
+    local event = { handlers = {} }
+    event.Add = function(handler)
+        event.handlers[#event.handlers + 1] = handler
+    end
+    event.Remove = function(handler)
+        local index
+        for index = 1, #event.handlers do
+            if event.handlers[index] == handler then
+                table.remove(event.handlers, index)
+                return
+            end
+        end
+    end
     rawset(events, key, event)
     return event
 end })
@@ -291,6 +414,27 @@ dofile(MEDIA_LUA .. "client/NoticeBoard/NBPanel.lua")
 
 local NBLinkRichTextPanel = derivedClasses["NBLinkRichTextPanel"]
 check(NBLinkRichTextPanel ~= nil, "沒有側錄到 NBLinkRichTextPanel（NBPanel.lua 結構變了？）")
+
+-- 事件註冊必須在**第一次**載入之後立刻驗：下面的圖示段會為了重算 Icons 綁定再 dofile
+-- 一次 NBPanel.lua，那會把 NBPanel.onExamplesStatus 換成新的 closure，而註冊表裡留著的
+-- 是第一次載入的那一個（_eventsInstalled 讓註冊只跑一次），比對就會誤判成沒註冊。
+;(function()
+    local function registeredOn(eventName, handler)
+        local handlers = Events[eventName].handlers
+        local index
+        for index = 1, #handlers do
+            if handlers[index] == handler then
+                return true
+            end
+        end
+        return false
+    end
+    check(registeredOn(NBClient.EXAMPLES_STATUS_EVENT, NBPanel.onExamplesStatus),
+        "面板必須把 onExamplesStatus 掛上 NBClient.EXAMPLES_STATUS_EVENT，"
+            .. "否則 server 的範例包結果永遠沒人接")
+    check(registeredOn(NBClient.CONTENT_READY_EVENT, NBPanel.onContentReady),
+        "前提檢查：既有的內容就緒事件也必須在同一份註冊表裡（證明比對方式有效）")
+end)()
 
 -- ---------------------------------------------------------------------------
 -- 測試用具
@@ -740,23 +884,47 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
 --   E0 沒有 NinePatchTexture（本 harness 原生狀態）→ 全部退回 drawRect／drawRectBorder；
 --   E1 有貼圖（stub 記錄 render 落點，並模擬引擎「第一次 getSharedTexture 回 null」）；
 --   E2 貼圖壞掉（永遠 nil）／render 會拋 → 退回、不拋錯、同名不重試。
--- 面板 1190×864 是 NBPanel.defaultSize() 在 1920×1080 stub 下的結果（0.62／0.80 比例）。
+-- 面板 1382×950 是 NBPanel.defaultSize() 在 1920×1080 stub 下的結果（0.72／0.88 比例）。
 -- ---------------------------------------------------------------------------
 ;(function()
     local panel = NBPanel:new()
     panel:createChildren()
 
-    -- 版面回歸紅線：內容區 ISRichTextPanel 的 rect 與 margins 逐像素等於換皮前的值。
-    -- 期望值全是字面數字（tabY 19 + tabHeight 18+6=24 → 43；864-43-14 → 807；捲軸寬 13）。
-    checkEqual(panel.width, 1190, "面板預設寬（1920×0.62）")
-    checkEqual(panel.height, 864, "面板預設高（1080×0.80）")
-    checkEqual(panel.tabY, 19, "頁籤列 y = titleBarHeight")
-    checkEqual(panel.tabHeight, 24, "頁籤列高 = 字高 + 6")
-    checkEqual(panel.contentY, 43, "內容區 y = tabY + tabHeight")
-    checkEqual(panel.richText.x, 0, "richText x 不得改變")
+    -- 版面回歸紅線：工具列與內容區的 rect／margins 逐像素釘死。
+    -- 期望值全是字面數字（toolbarY 19 + toolbarHeight 18+6=24 → 43；950-43-14 → 893；
+    -- 側欄 clamp(180, floor(1382*0.26)=359, 300) → 300；內文寬 1382-300 → 1082；捲軸寬 13）。
+    checkEqual(panel.width, 1382, "面板預設寬（1920×0.72）")
+    checkEqual(panel.height, 950, "面板預設高（1080×0.88）")
+    checkEqual(panel.toolbarY, 19, "工具列 y = titleBarHeight")
+    checkEqual(panel.toolbarHeight, 24, "工具列高 = 字高 + 6")
+    checkEqual(panel.contentY, 43, "內容區 y = toolbarY + toolbarHeight")
+    checkEqual(panel:contentHeight(), 893, "內容區高 = height - contentY - resizeWidgetHeight")
+
+    local savedScreenWidth, savedScreenHeight = SCREEN_WIDTH, SCREEN_HEIGHT
+    SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
+    local sizedWidth, sizedHeight = NBPanel.defaultSize()
+    check(sizedWidth == 576 and sizedHeight == 520,
+        "800×600：寬走 72%、高由螢幕邊界 600-80 夾到 520")
+    SCREEN_WIDTH, SCREEN_HEIGHT = 2560, 1440
+    sizedWidth, sizedHeight = NBPanel.defaultSize()
+    check(sizedWidth == 1440 and sizedHeight == 1080,
+        "2560×1440：預設尺寸吃 1440×1080 上限")
+    SCREEN_WIDTH, SCREEN_HEIGHT = 300, 250
+    sizedWidth, sizedHeight = NBPanel.defaultSize()
+    check(sizedWidth == 420 and sizedHeight == 260,
+        "極小畫面：仍由 420×260 最小值保底")
+    SCREEN_WIDTH, SCREEN_HEIGHT = savedScreenWidth, savedScreenHeight
+    checkEqual(panel:sidebarWidth(), 300, "側欄寬吃上限 300（floor(1382*0.26)=359 被夾）")
+    checkEqual(panel.docTree.x, 0, "文件樹貼齊內容區左緣")
+    checkEqual(panel.docTree.y, 43, "文件樹 y = contentY")
+    checkEqual(panel.docTree.width, 300, "文件樹寬 = 側欄寬")
+    checkEqual(panel.docTree.height, 893, "文件樹高 = 內容區高")
+    checkEqual(panel.docTree.itemheight, 24, "文件樹列高 = 字高 18 + padY 3 x 2")
+    checkEqual(panel.sidebarButton.x, 6, "側欄開關獨立貼齊工具列左側")
+    checkEqual(panel.richText.x, 300, "richText 從側欄右緣起算")
     checkEqual(panel.richText.y, 43, "richText y 不得改變")
-    checkEqual(panel.richText.width, 1190, "richText 寬不得改變")
-    checkEqual(panel.richText.height, 807, "richText 高不得改變（height - contentY - resizeWidgetHeight）")
+    checkEqual(panel.richText.width, 1082, "richText 寬 = 面板寬 - 側欄寬")
+    checkEqual(panel.richText.height, 893, "richText 高不得改變（height - contentY - resizeWidgetHeight）")
     checkEqual(panel.richText.marginLeft, 23, "richText marginLeft（10 + 捲軸 13，與右邊對稱）")
     checkEqual(panel.richText.marginTop, 10, "richText marginTop 不得改變")
     checkEqual(panel.richText.marginRight, 23, "richText marginRight 不得改變（10 + 捲軸 13）")
@@ -772,12 +940,8 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     -- 以及 stub NinePatchTexture 的 render 落點。
     panel.x, panel.y = 100, 50
     panel.resizeWidget = { getIsVisible = function() return true end }
-    panel.tabs = {
-        { id = "a", title = "Alpha", width = 100 },
-        { id = "b", title = "Beta", width = 90 },
-    }
-    panel.selectedIndex = 1
-    UNREAD_IDS.b = true
+    -- 內容尚未同步（contentState="syncing"）：面板這一層只畫工具列、側欄分隔線與占位字，
+    -- 側欄裡的列由 NBDocTree 這個子元件自己畫（見下方文件樹段落）。
 
     local rects, borders, scaled, patches = {}, {}, {}, {}
     local function record(list)
@@ -851,38 +1015,34 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     -- E0：沒有 NinePatchTexture 全域 → 全部走退回，且落點與換皮前的 drawRect 版完全一致
     checkEqual(_G.NinePatchTexture, nil, "harness 原生狀態不該有 NinePatchTexture")
     drawFrame()
-    local bgRect = findRect(rects, 0, 0, 1190, 864)
+    local bgRect = findRect(rects, 0, 0, 1382, 950)
     check(bgRect ~= nil and nearly(bgRect.a, 0.8) and bgRect.r == 0,
         "E0 面板底必須退回 drawRect(0,0,w,h) BG_PANEL：" .. describe(bgRect))
-    local titleRect = findRect(rects, 0, 0, 1190, 19)
+    local titleRect = findRect(rects, 0, 0, 1382, 19)
     check(titleRect ~= nil and nearly(titleRect.a, 0.10) and titleRect.r == 1,
         "E0 標題列疊色必須退回 drawRect(0,0,w,th) TITLEBAR_FILL：" .. describe(titleRect))
-    check(findRect(rects, 0, 18, 1190, 1) ~= nil, "標題列下緣 1px 分隔線 (0, th-1, w, 1)")
-    check(findRect(rects, 0, 19, 1190, 24) ~= nil, "頁籤列底 (0, tabY, w, tabHeight)")
-    check(findRect(rects, 0, 42, panel:tabAreaWidth(), 1) ~= nil,
-        "頁籤軌道線 (0, tabY+tabHeight-1, tabAreaWidth, 1)")
-    local tabFill = findRect(rects, 0, 19, 100, 24)
-    check(tabFill ~= nil and nearly(tabFill.a, 0.12), "E0 選中頁籤填色退回 drawRect：" .. describe(tabFill))
-    check(findRect(rects, 0, 41, 100, 2) ~= nil, "選中頁籤 2px 琥珀底線 (x, tabY+tabHeight-2, w, 2)")
-    check(findRect(borders, 0, 19, 100, 24) ~= nil and findRect(borders, 100, 19, 90, 24) ~= nil,
-        "E0 兩個頁籤框都退回 drawRectBorder")
-    local dotRect = findRect(rects, 180, 21, 8, 8)
-    check(dotRect ~= nil and findRect(borders, 180, 21, 8, 8) ~= nil,
-        "E0 未讀點退回方點：(right-10, tabY+2, 8, 8) 填色＋描邊：" .. describe(dotRect))
-    check(findRect(rects, 0, 850, 1190, 1) ~= nil, "resize 列上緣 1px 分隔線 (0, height-rh, w, 1)")
-    check(#scaled == 1 and scaled[1].x == 1177 and scaled[1].y == 851
+    check(findRect(rects, 0, 18, 1382, 1) ~= nil, "標題列下緣 1px 分隔線 (0, th-1, w, 1)")
+    check(findRect(rects, 0, 19, 1382, 24) ~= nil, "工具列底 (0, toolbarY, w, toolbarHeight)")
+    check(findRect(rects, 0, 42, 1382, 1) ~= nil,
+        "工具列下緣分隔線 (0, toolbarY+toolbarHeight-1, w, 1) 橫貫整個面板寬")
+    check(findRect(rects, 299, 43, 1, 893) ~= nil,
+        "側欄與內文之間的 1px 分隔線 (sidebarWidth-1, contentY, 1, contentHeight)")
+    -- 舊的橫向頁籤（每個頁籤一塊填色＋3 邊框＋底線＋未讀點）已整批移除
+    checkEqual(findRect(rects, 0, 41, 100, 2), nil, "不得再有選中頁籤的 2px 底線")
+    checkEqual(findRect(borders, 0, 19, 100, 24), nil, "不得再有頁籤外框")
+    check(findRect(rects, 0, 936, 1382, 1) ~= nil, "resize 列上緣 1px 分隔線 (0, height-rh, w, 1)")
+    check(#scaled == 1 and scaled[1].x == 1369 and scaled[1].y == 937
         and scaled[1].w == 10 and scaled[1].h == 10,
         "resize 把手圖示：原位 (w-rh+1, height-rh+1)、邊長 rh-4（留在分隔線下方、直角在弧線內）")
-    local frameBorder = findRect(borders, 0, 0, 1190, 864)
+    local frameBorder = findRect(borders, 0, 0, 1382, 950)
     check(frameBorder ~= nil and nearly(frameBorder.a, 1) and nearly(frameBorder.r, 0.4),
         "E0 面板外框退回 drawRectBorder(0,0,w,H) BORDER：" .. describe(frameBorder))
     checkEqual(#patches, 0, "E0 不可能有 9-slice 落點")
 
     -- stencil 收支：UIElement.stencilLevel 是 static、只在 UIManager.render 開頭歸零
-    -- （UIManager.java:274），元素之間不重設。set 與 clear 必須成對，巢狀的頁籤區用
-    -- repaintStencilRect 還回父層（UIElement.java:1928-1940；原版 ISRichTextPanel.lua:688-690）；
-    -- 若像過去那樣 clear 後再 set 一次，每幀淨 +1，render 的 clear 回不到 0 → 外框畫不出來、
-    -- 同幀之後的 alwaysOnTop 元件（浮窗／Toast）整個被 stencil 擋掉。
+    -- （UIManager.java:274），元素之間不重設。set 與 clear 必須成對。
+    -- 頁籤區那一層巢狀 stencil 隨著橫向頁籤一起消失了：側欄現在是**子元件**
+    -- （NBDocTree），它的裁切由原版 ISScrollingListBox:prerender 自己收支。
     do
         panel.clearStentil = true -- ISCollapsableWindow:new / ISCollapsableWindowJoypad:new:43 在引擎裡恆為 true
         local level, maxLevel, repaints = 0, 0, {}
@@ -899,15 +1059,11 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         end
         drawFrame()
         checkEqual(level, 0, "一幀畫完 stencilLevel 必須回到 0（set/clear 成對）")
-        checkEqual(maxLevel, 2, "頁籤區是面板 stencil 之下的一層巢狀（最深 2）")
-        checkEqual(#repaints, 1, "頁籤區 clear 後 repaint 一次還回父層")
-        check(repaints[1].x == 0 and repaints[1].y == 19 and repaints[1].w == panel:tabAreaWidth()
-            and repaints[1].h == 24 and repaints[1].level == 1,
-            "repaint 的 rect 就是頁籤區 (0, tabY, tabAreaWidth, tabHeight)，且在父層 level 1 執行")
+        checkEqual(maxLevel, 1, "面板只開一層 stencil（頁籤區那層巢狀已隨頁籤移除）")
+        checkEqual(#repaints, 0, "沒有巢狀 stencil 就不該有 repaintStencilRect")
         panel.setStencilRect, panel.clearStencilRect, panel.repaintStencilRect = nil, nil, nil
         clearDraws()
     end
-
     -- E1：有貼圖。落點是絕對座標（panel.x/y = 100/50），尺寸與退回版一模一樣。
     local good = { calls = {} }
     _G.NinePatchTexture = makeNinePatchStub(good)
@@ -926,38 +1082,23 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         end
         return nil
     end
-    local bgPatch = findPatch("mui_round_fill.png", 100, 50, 1190, 864)
+    local bgPatch = findPatch("mui_round_fill.png", 100, 50, 1382, 950)
     check(bgPatch ~= nil and nearly(bgPatch.a, 0.8) and bgPatch.r == 0,
-        "E1 面板底 mui_round_fill 落在絕對座標 (100,50,1190,864) 染 BG_PANEL")
-    local titlePatch = findPatch("mui_roundtop_fill.png", 100, 50, 1190, 19)
+        "E1 面板底 mui_round_fill 落在絕對座標 (100,50,1382,950) 染 BG_PANEL")
+    local titlePatch = findPatch("mui_roundtop_fill.png", 100, 50, 1382, 19)
     check(titlePatch ~= nil and nearly(titlePatch.a, 0.10) and titlePatch.r == 1,
-        "E1 標題列 mui_roundtop_fill (100,50,1190,19) 染 TITLEBAR_FILL")
-    local tabPatch = findPatch("mui_roundtop_fill.png", 100, 69, 100, 24)
-    check(tabPatch ~= nil and nearly(tabPatch.a, 0.12),
-        "E1 選中頁籤 mui_roundtop_fill (100,69,100,24) 染 TAB_SELECTED_FILL")
-    check(findPatch("mui_roundtop_border.png", 100, 69, 100, 24) ~= nil
-        and findPatch("mui_roundtop_border.png", 200, 69, 90, 24) ~= nil,
-        "E1 兩個頁籤框 mui_roundtop_border（3 邊框）")
-    local framePatch = findPatch("mui_round_border.png", 100, 50, 1190, 864)
+        "E1 標題列 mui_roundtop_fill (100,50,1382,19) 染 TITLEBAR_FILL")
+    local framePatch = findPatch("mui_round_border.png", 100, 50, 1382, 950)
     check(framePatch ~= nil and nearly(framePatch.a, 1) and nearly(framePatch.r, 0.4),
-        "E1 面板外框 mui_round_border (100,50,1190,864) 染 BORDER")
-    checkEqual(#patches, 6, "E1 一幀恰好 6 次 9-slice：底、標題、選中頁籤、2 頁籤框、外框")
-    check(findRect(rects, 0, 0, 1190, 864) == nil and findRect(rects, 0, 0, 1190, 19) == nil
-        and findRect(borders, 0, 0, 1190, 864) == nil,
+        "E1 面板外框 mui_round_border (100,50,1382,950) 染 BORDER")
+    checkEqual(#patches, 3, "E1 一幀恰好 3 次 9-slice：底、標題、外框（頁籤那 3 次已移除）")
+    check(findRect(rects, 0, 0, 1382, 950) == nil and findRect(rects, 0, 0, 1382, 19) == nil
+        and findRect(borders, 0, 0, 1382, 950) == nil,
         "E1 走了 9-slice 就不得再畫直角底／標題／外框（會疊成雙倍 alpha）")
-    check(findRect(rects, 0, 42, panel:tabAreaWidth(), 1) ~= nil
-        and findRect(rects, 0, 41, 100, 2) ~= nil and findRect(rects, 0, 850, 1190, 1) ~= nil,
-        "E1 軌道線／底線／resize 分隔線仍是 drawRect")
-    -- 未讀圓點：光暈（描邊色、放大一圈）先畫，主點後畫
-    checkEqual(#scaled, 3, "E1 drawTextureScaled = resize 把手 + 光暈 + 主點")
-    check(scaled[1].x == 179 and scaled[1].y == 20 and scaled[1].w == 10 and scaled[1].h == 10
-        and nearly(scaled[1].a, 0.6) and scaled[1].r == 0,
-        "E1 光暈 (x-1, y-1, 10, 10) 染 UNREAD_DOT_OUTLINE")
-    check(scaled[2].x == 180 and scaled[2].y == 21 and scaled[2].w == 8 and scaled[2].h == 8
-        and nearly(scaled[2].r, 0.85) and nearly(scaled[2].a, 1),
-        "E1 主點 (right-10, tabY+2, 8, 8) 染 UNREAD_DOT")
-    check(scaled[1].texture == scaled[2].texture and scaled[1].texture ~= nil,
-        "E1 光暈與主點用同一張 mui_dot.png")
+    check(findRect(rects, 0, 42, 1382, 1) ~= nil and findRect(rects, 299, 43, 1, 893) ~= nil
+        and findRect(rects, 0, 936, 1382, 1) ~= nil,
+        "E1 工具列分隔線／側欄分隔線／resize 分隔線仍是 drawRect")
+    checkEqual(#scaled, 1, "E1 drawTextureScaled 只剩 resize 把手（未讀點移到 NBDocTree）")
     -- 首呼叫回 null 的引擎行為：每張貼圖恰好呼叫兩次；第二幀不再呼叫（已快取）
     local roundFillCalls = good.calls["media/ui/MinidoracatUI/mui_round_fill.png"]
     checkEqual(roundFillCalls, 2, "E1 getSharedTexture 連呼兩次繞過首呼叫回 null")
@@ -965,7 +1106,7 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     drawFrame()
     checkEqual(good.calls["media/ui/MinidoracatUI/mui_round_fill.png"], 2,
         "E1 第二幀不得再呼叫 getSharedTexture（框架 Skin 已快取）")
-    checkEqual(#patches, 6, "E1 第二幀仍是 6 次 9-slice")
+    checkEqual(#patches, 3, "E1 第二幀仍是 3 次 9-slice")
 
     -- 收合（釘選解除後滑鼠離開 ISCollapsableWindow.lua:237-244，或 layout.ini pin=false）：
     -- 面板只剩標題列一條。原版靠 drawRect／drawTextCentre 的 isCollapsed 守衛
@@ -975,8 +1116,8 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     panel.contentState = "error"
     clearDraws()
     drawFrame()
-    check(findPatch("mui_round_fill.png", 100, 50, 1190, 19) ~= nil,
-        "收合：面板底 mui_round_fill 只畫標題列高 (100,50,1190,19)")
+    check(findPatch("mui_round_fill.png", 100, 50, 1382, 19) ~= nil,
+        "收合：面板底 mui_round_fill 只畫標題列高 (100,50,1382,19)")
     local collapsedTitleCount = 0
     local collapsedIndex
     for collapsedIndex = 1, #patches do
@@ -992,9 +1133,9 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
             .. entry.path .. " y=" .. tostring(entry.y) .. " h=" .. tostring(entry.h))
     end
     checkEqual(collapsedTitleCount, 1, "收合：標題疊色 TITLEBAR_FILL 改走四角圓 mui_round_fill 一次")
-    check(findPatch("mui_round_border.png", 100, 50, 1190, 19) ~= nil, "收合：外框 mui_round_border (100,50,1190,19)")
+    check(findPatch("mui_round_border.png", 100, 50, 1382, 19) ~= nil, "收合：外框 mui_round_border (100,50,1382,19)")
     checkEqual(#patches, 3, "收合：一幀恰好 3 次 9-slice（底、標題疊色、外框），頁籤／錯誤區塊不畫")
-    checkEqual(#rects, 0, "收合：不畫分隔線／頁籤列底／軌道線／resize 線（drawRect 0 次）")
+    checkEqual(#rects, 0, "收合：不畫分隔線／工具列底／側欄線／resize 線（drawRect 0 次）")
     checkEqual(#borders, 0, "收合：不畫任何 drawRectBorder")
     checkEqual(#scaled, 0, "收合：不畫 resize 把手與未讀點")
     panel.isCollapsed = false
@@ -1008,7 +1149,7 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     clearDraws()
     drawFrame()
     checkEqual(#patches, 0, "E2a 貼圖 nil 時不得有 9-slice 落點")
-    check(findRect(rects, 0, 0, 1190, 864) ~= nil and findRect(borders, 0, 0, 1190, 864) ~= nil,
+    check(findRect(rects, 0, 0, 1382, 950) ~= nil and findRect(borders, 0, 0, 1382, 950) ~= nil,
         "E2a 貼圖 nil 時面板底／外框退回 drawRect／drawRectBorder")
     local badTotal = 0
     local badPath
@@ -1016,14 +1157,14 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         badTotal = badTotal + bad.calls[badPath]
         checkEqual(bad.calls[badPath], 2, "E2a 每張壞貼圖恰好呼叫兩次：" .. badPath)
     end
-    checkEqual(badTotal, 8, "E2a 一幀碰到 4 張貼圖 × 2 次")
+    checkEqual(badTotal, 6, "E2a 一幀碰到 3 張貼圖 × 2 次")
     clearDraws()
     drawFrame()
     local badTotalAfter = 0
     for badPath in pairs(bad.calls) do
         badTotalAfter = badTotalAfter + bad.calls[badPath]
     end
-    checkEqual(badTotalAfter, 8, "E2a 第二幀不得重試同名壞貼圖")
+    checkEqual(badTotalAfter, 6, "E2a 第二幀不得重試同名壞貼圖")
 
     -- E2b：getSharedTexture 給了物件但 render 會拋（PNG 解碼失敗 → texture 為 null）
     local broken = { calls = {}, throwOnRender = true, renderAttempts = 0 }
@@ -1032,12 +1173,12 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     clearDraws()
     local okFrame = pcall(drawFrame)
     check(okFrame, "E2b render 拋錯不得外洩到 prerender/render")
-    checkEqual(broken.renderAttempts, 4, "E2b 4 張貼圖各只嘗試 render 一次就標為壞")
-    check(findRect(rects, 0, 0, 1190, 864) ~= nil and findRect(borders, 0, 0, 1190, 864) ~= nil,
+    checkEqual(broken.renderAttempts, 3, "E2b 3 張貼圖各只嘗試 render 一次就標為壞")
+    check(findRect(rects, 0, 0, 1382, 950) ~= nil and findRect(borders, 0, 0, 1382, 950) ~= nil,
         "E2b render 拋錯的同一幀就退回 drawRect／drawRectBorder")
     clearDraws()
     drawFrame()
-    checkEqual(broken.renderAttempts, 4, "E2b 第二幀不再嘗試 render 壞掉的貼圖")
+    checkEqual(broken.renderAttempts, 3, "E2b 第二幀不再嘗試 render 壞掉的貼圖")
 
     -- 浮鈕與 Toast 已上移家族框架：dofile 真框架 widget，驗 wrapper 端到端
     -- （wrapper 業務：色票/標題/內容/位置 clamp → 框架繪製落點與舊版逐位相同）。
@@ -1358,9 +1499,1014 @@ end)()
     check(box.y < 295, "下方空間不足時提示翻到游標上方")
 end)()
 
+-- ---------------------------------------------------------------------------
+-- A 款文件樹側欄：分類展開／收合、未讀聚合、選取保存、強制收合與偏好。
+-- 用真的 ISScrollingListBox（上方 dofile 原版）：items／rowAt／捲動高度都是引擎的，
+-- 這裡驗的是 NBPanel 疊在上面的模型與繪製。
+-- ---------------------------------------------------------------------------
+;(function()
+    local function newSidebarPanel()
+        local panel = NBPanel:new()
+        panel:createChildren()
+        panel.resizeWidget = { getIsVisible = function() return true end }
+        return panel
+    end
+
+    local function file(id, title, category, content)
+        return { id = id, title = title, category = category, h = id,
+            content = content or ("# " .. title) }
+    end
+
+    local function kinds(panel)
+        local result = {}
+        local index
+        for index = 1, #panel.docTree.items do
+            local entry = panel.docTree.items[index].item
+            result[index] = entry.kind .. ":" .. (entry.kind == "category"
+                and entry.key or entry.id)
+        end
+        return table.concat(result, ",")
+    end
+
+    -- 舊版 server 的快照：沒有 categories、files 也沒有 category 欄位。
+    local legacy = { sid = "s", files = {
+        file("alpha", "Alpha"), file("beta", "Beta"),
+    } }
+    local panel = newSidebarPanel()
+    panel:setSnapshot(legacy, nil)
+    checkEqual(kinds(panel), "category:,file:alpha,file:beta",
+        "舊快照（無 categories／category）顯示單一語系根層分類，公告全掛在它底下")
+    checkEqual(panel.docTree.items[1].item.label, "[IGUI_MinidoracatNB_CategoryRoot]",
+        "根層分類用翻譯 key，不是硬寫的字面文字")
+    checkEqual(panel.selectedFileId, "alpha", "沒有 preferredId 時選第一份公告")
+    check(panel:selectFile("beta", false), "舊快照的每一份公告都選得到")
+    checkEqual(panel.selectedFileId, "beta", "選取以裸檔名保存")
+
+    -- 伺服器分類：order 依 snapshot.categories，空分類不顯示，未宣告的分類補在最後。
+    local snapshot = { sid = "s",
+        categories = {
+            { key = "10_rules", label = "Rules" },
+            { key = "20_events", label = "Events" },
+            { key = "90_empty", label = "Empty" },
+        },
+        files = {
+            file("welcome", "Welcome", ""),
+            file("rule1", "No griefing", "10_rules"),
+            file("rule2", "Base rules", "10_rules"),
+            file("party", "Summer party", "20_events"),
+            file("stray", "Stray notice", "99_undeclared"),
+        } }
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(kinds(panel),
+        "category:,file:welcome,category:10_rules,file:rule1,file:rule2,"
+            .. "category:20_events,file:party,category:99_undeclared,file:stray",
+        "順序：語系根層 -> snapshot 宣告的分類 -> 未宣告的漏網分類；空分類整列不出現")
+    checkEqual(panel.docTree.items[3].item.label, "Rules",
+        "伺服器分類用 snapshot 給的 label")
+    checkEqual(panel.docTree.items[8].item.label, "99_undeclared",
+        "沒有 label 的分類退回 key，服主看得出是哪個目錄")
+
+    -- 展開／收合：分類列點擊只切換展開，不改選取
+    panel:selectFile("rule2", false)
+    checkEqual(panel.selectedFileId, "rule2", "先選一份 10_rules 底下的公告")
+    panel:onTreeRowClicked(panel.docTree.items[3].item)
+    checkEqual(kinds(panel),
+        "category:,file:welcome,category:10_rules,category:20_events,file:party,"
+            .. "category:99_undeclared,file:stray",
+        "收合分類後它底下的公告列整批消失（重建可見 items，不是設 height=0）")
+    checkEqual(panel.selectedFileId, "rule2", "點分類列不得改變選取的公告")
+    checkEqual(panel.docTree.selected, -1, "選取的公告被收起來時 listbox 沒有選中列")
+    panel:onTreeRowClicked(panel.docTree.items[3].item)
+    checkEqual(kinds(panel),
+        "category:,file:welcome,category:10_rules,file:rule1,file:rule2,"
+            .. "category:20_events,file:party,category:99_undeclared,file:stray",
+        "再點一次展開回來")
+    checkEqual(panel.docTree.selected, 5, "展開後 listbox 的 selected 對回選取的公告")
+
+    -- 收合的分類裡有 preferredId：setSnapshot 必須展開父分類再選
+    panel:onTreeRowClicked(panel.docTree.items[3].item)
+    check(panel.docTree.items[4].item.kind == "category", "10_rules 現在是收合狀態")
+    panel:setSnapshot(snapshot, "rule1")
+    checkEqual(panel.selectedFileId, "rule1", "preferredId 被選中")
+    checkEqual(kinds(panel),
+        "category:,file:welcome,category:10_rules,file:rule1,file:rule2,"
+            .. "category:20_events,file:party,category:99_undeclared,file:stray",
+        "preferredId 落在收合分類時，父分類必須被展開")
+
+    -- 未讀聚合：分類的紅點是子項的 OR，收合起來也還在
+    UNREAD_IDS = {}
+    UNREAD_IDS.rule2 = true
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(panel.docTree.items[3].item.unread, true, "有未讀子項的分類要亮紅點")
+    checkEqual(panel.docTree.items[5].item.unread, true, "未讀的公告列自己也亮紅點")
+    checkEqual(panel.docTree.items[6].item.unread, false, "沒有未讀子項的分類不亮")
+    panel:onTreeRowClicked(panel.docTree.items[3].item)
+    checkEqual(panel.docTree.items[3].item.unread, true,
+        "分類收合後紅點仍在（否則未讀會整批消失在看不見的地方）")
+    panel:onTreeRowClicked(panel.docTree.items[3].item)
+
+    -- markRead 之後紅點立刻消失，且不重建（捲動位置不被洗掉）
+    READ_MARKS = {}
+    panel:selectFile("rule2", true)
+    checkEqual(READ_MARKS[1], "rule2", "選取時 markRead 走裸檔名")
+    checkEqual(panel.docTree.items[5].item.unread, false, "markRead 後公告列的紅點立刻消失")
+    checkEqual(panel.docTree.items[3].item.unread, false, "最後一個未讀清掉後分類紅點也跟著滅")
+    UNREAD_IDS = {}
+
+    -- 側欄幾何：clamp(180, floor(width*0.26), 300)
+    panel = newSidebarPanel()
+    panel.width = 500
+    checkEqual(panel:sidebarWidth(), 0, "寬度 <640 強制收合，側欄寬 0")
+    check(panel:isSidebarForcedCollapsed(), "500px 屬於強制收合區間")
+    panel.width = 640
+    checkEqual(panel:sidebarWidth(), 180,
+        "640px 剛好不強制收合；floor(640*0.26)=166 被下限 180 夾住")
+    panel.width = 900
+    checkEqual(panel:sidebarWidth(), 234, "900px：floor(900*0.26)=234 落在夾限之間")
+    panel.width = 2000
+    checkEqual(panel:sidebarWidth(), 300, "2000px：floor(2000*0.26)=520 被上限 300 夾住")
+
+    -- 強制收合時 richText 吃滿全寬，工具列按鈕照樣在
+    panel.width = 500
+    panel:updateLayout()
+    checkEqual(panel.richText.x, 0, "強制收合：內文從最左緣起算")
+    checkEqual(panel.richText.width, 500, "強制收合：內文吃滿面板全寬")
+    checkEqual(panel.docTree.width, 0, "強制收合：文件樹寬 0")
+    check(panel.langButton ~= nil and panel.resetButton ~= nil
+        and panel.sidebarButton ~= nil,
+        "收合狀態仍保留工具列按鈕（語言／重設大小／側欄開關）")
+
+    -- 內容寬度改變必須重跑 renderSelected，讓圖片尺寸與連結區依新寬度重建；
+    -- 只設 textDirty 只會 paginate 舊的 <IMAGE:path,w,h>。
+    panel.selectedFileId = "wide"
+    panel.fileEntries.wide = { id = "wide", file = file("wide", "Wide") }
+    local rerenders = {}
+    local originalRenderSelected = panel.renderSelected
+    panel.renderSelected = function(_, markRead)
+        rerenders[#rerenders + 1] = markRead
+    end
+    panel.width = 900
+    panel:updateLayout()
+    checkEqual(#rerenders, 1, "側欄／視窗改變內容寬度時必須重跑目前公告")
+    checkEqual(rerenders[1], false, "幾何重排不得把公告誤標成已讀")
+    panel.renderSelected = originalRenderSelected
+    panel.selectedFileId = nil
+    panel.fileEntries.wide = nil
+
+    -- 偏好：手動切換寫進 NBClient，拉寬視窗後回到偏好值
+    SIDEBAR_PREFERENCE.value = nil
+    SIDEBAR_PREFERENCE.writes = 0
+    panel.width = 1382
+    panel:onSidebarToggle()
+    checkEqual(SIDEBAR_PREFERENCE.writes, 1, "手動切換寫一次偏好")
+    checkEqual(SIDEBAR_PREFERENCE.value, true, "從展開切到收合，偏好記 true")
+    checkEqual(panel:sidebarWidth(), 0, "偏好收合時側欄寬 0")
+    panel.width = 500
+    panel:onSidebarToggle()
+    checkEqual(SIDEBAR_PREFERENCE.value, false,
+        "強制收合期間切換照樣記下偏好（玩家的意思是「我要目錄」）")
+    checkEqual(panel:sidebarWidth(), 0, "但視窗還是太窄，實際仍收合")
+    panel.width = 1382
+    checkEqual(panel:sidebarWidth(), 300, "拉寬之後偏好生效，側欄自己回來")
+
+    -- 沒有偏好時一律展開：目錄是這個面板的主要導覽，不再依公告數／有無分類猜。
+    -- 舊版的門檻（>4 份或有 server 分類）刻意連同常數一起刪掉，這幾條就是它的墓碑。
+    SIDEBAR_PREFERENCE.value = nil
+    panel = newSidebarPanel()
+    panel:setSnapshot(legacy, nil)
+    checkEqual(panel:sidebarWidth(), 300, "無偏好 + 無分類 + 只有 2 份公告 -> 仍然預設展開")
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(panel:sidebarWidth(), 300, "無偏好但伺服器有分類 -> 預設展開")
+    panel = newSidebarPanel()
+    panel:setSnapshot({ sid = "s", files = { file("only", "Only") } }, nil)
+    checkEqual(panel:sidebarWidth(), 300, "無偏好、只有 1 份公告 -> 一樣展開（不再有數量門檻）")
+    SIDEBAR_PREFERENCE.value = true
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(panel:sidebarWidth(), 0, "偏好收合時照偏好走，換快照也不會被翻回展開")
+    SIDEBAR_PREFERENCE.value = false
+    panel = newSidebarPanel()
+    panel:setSnapshot(legacy, nil)
+    checkEqual(panel:sidebarWidth(), 300, "偏好展開時照偏好走")
+    SIDEBAR_PREFERENCE.value = nil
+
+    -- 列的繪製：選中公告的 2px 琥珀線在左緣、未讀紅點在右緣、分類有展開記號。
+    -- **這一段是「沒有圖示」的版面**：圖示資產（mui_icon_*.png）還沒註冊進 TEXTURE_SIZES，
+    -- 框架的 Icons.draw 一律回 false，所以走的是 ASCII 記號 + 18/26 縮排那條退回路徑。
+    -- 圖示版面（chevron／folder／document 與加寬的按鈕）在下面獨立一段驗。
+    UNREAD_IDS = {}
+    UNREAD_IDS.party = true
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    local tree = panel.docTree
+    local rowRects, rowTexts = {}, {}
+    tree.drawRect = function(_, x, y, w, h, a, r, g, b)
+        rowRects[#rowRects + 1] = { x = x, y = y, w = w, h = h, a = a, r = r, g = g, b = b }
+    end
+    tree.drawRectBorder = function(_, x, y, w, h)
+        rowRects[#rowRects + 1] = { x = x, y = y, w = w, h = h, border = true }
+    end
+    tree.drawText = function(_, text, x, y)
+        rowTexts[#rowTexts + 1] = { text = text, x = x, y = y }
+    end
+    -- mui_dot.png 在上方的皮膚段落已註冊進 TEXTURE_SIZES，所以未讀點走的是框架的
+    -- 貼圖路徑（光暈 + 主點兩次 drawTextureScaled），不是 E0 那條方點退回。
+    local rowScaled = {}
+    tree.drawTextureScaled = function(_, texture, x, y, w, h)
+        rowScaled[#rowScaled + 1] = { x = x, y = y, w = w, h = h }
+    end
+    local function drawRow(index)
+        rowRects, rowTexts, rowScaled = {}, {}, {}
+        tree.items[index].index = index
+        tree:doDrawItem(0, tree.items[index], false)
+    end
+
+    drawRow(2) -- file:welcome（目前選中的第一份公告）
+    checkEqual(panel.selectedFileId, "welcome", "第一份公告預設被選中")
+    local accent = nil
+    local rowIndex
+    for rowIndex = 1, #rowRects do
+        if rowRects[rowIndex].w == 2 and rowRects[rowIndex].x == 0 then
+            accent = rowRects[rowIndex]
+        end
+    end
+    check(accent ~= nil and accent.h == 23 and accent.r == 1 and accent.g == 0.85,
+        "選中公告的左緣 2px 琥珀線（高 = 列高 24 - 1）")
+    checkEqual(rowTexts[1].x, 26, "公告列的文字縮排在分類之下（x=26）")
+
+    drawRow(6) -- category:20_events（有未讀子項 party）
+    checkEqual(rowTexts[1].text, "-", "展開中的分類記號是 ASCII 的 -")
+    checkEqual(rowTexts[1].x, 6, "分類記號畫在最左的記號欄")
+    checkEqual(rowTexts[2].x, 18, "分類文字接在記號右側")
+    checkEqual(#rowScaled, 2, "未讀點 = 光暈 + 主點兩次 drawTextureScaled")
+    check(rowScaled[2].x == 300 - 14 and rowScaled[2].y == 8
+        and rowScaled[2].w == 8 and rowScaled[2].h == 8,
+        "未讀紅點畫在列的右緣（width-14）並垂直置中")
+
+    panel:onTreeRowClicked(tree.items[6].item)
+    drawRow(6)
+    checkEqual(rowTexts[1].text, "+", "收合中的分類記號是 ASCII 的 +")
+
+    -- 長標題依側欄寬截斷（stub 量測是每 byte 8px）
+    panel = newSidebarPanel()
+    panel:setSnapshot({ sid = "s", files = {
+        file("long", string.rep("W", 200)),
+    } }, nil)
+    tree = panel.docTree
+    rowTexts = {}
+    tree.drawText = function(_, text, x, y)
+        rowTexts[#rowTexts + 1] = { text = text, x = x, y = y }
+    end
+    tree.items[2].index = 2
+    tree:doDrawItem(0, tree.items[2], false)
+    check(string.len(rowTexts[1].text) < 200, "過長標題必須截斷")
+    check(string.sub(rowTexts[1].text, -3) == "...", "截斷後補省略號")
+    check(string.len(rowTexts[1].text) * 8 <= tree.width - 26 - 20,
+        "截斷後寬度不超過側欄可用寬（width - 文字 x - 右側留白）")
+
+    local emoji = "😀"
+    panel = newSidebarPanel()
+    panel:setSnapshot({ sid = "s", files = {
+        file("emoji", "prefix-" .. string.rep(emoji, 100)),
+    } }, nil)
+    tree = panel.docTree
+    rowTexts = {}
+    tree.drawText = function(_, value)
+        rowTexts[#rowTexts + 1] = value
+    end
+    tree:doDrawItem(0, tree.items[2], false)
+    local fitted = rowTexts[1]
+    check(string.sub(fitted, -3) == "...", "emoji 長標題截斷後仍要補省略號")
+    check(string.sub(fitted, -7, -4) == emoji,
+        "標準 Lua 的 UTF-8 測試環境不得把 emoji 砍在續接位元組中間")
+    UNREAD_IDS = {}
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 工具列的「全部展開」／「全部收合」：一次點擊處理整棵樹。
+-- 每一條都經由**按鈕自己的 onclick**跑（原生 ISButton 就是 onclick(target, self)），
+-- 不直接呼叫方法：兩顆按鈕接到對調的 callback（貼上時最常見的錯）只有這樣驗得出來。
+-- 這一段在圖示資產註冊之前，所以兩顆是純文字按鈕——批次行為與有沒有圖示無關。
+-- ---------------------------------------------------------------------------
+;(function()
+    local savedPreferenceValue = SIDEBAR_PREFERENCE.value
+
+    local function file(id, title, category)
+        return { id = id, title = title, category = category, h = id,
+            content = "# " .. title }
+    end
+    local snapshot = { sid = "s",
+        categories = {
+            { key = "10_rules", label = "Rules" },
+            { key = "20_events", label = "Events" },
+        },
+        files = {
+            file("welcome", "Welcome", ""),
+            file("rule1", "No griefing", "10_rules"),
+            file("rule2", "Base rules", "10_rules"),
+            file("party", "Summer party", "20_events"),
+        } }
+    local ALL_EXPANDED = "category:,file:welcome,category:10_rules,file:rule1,"
+        .. "file:rule2,category:20_events,file:party"
+
+    local function kinds(panel)
+        local result = {}
+        local index
+        for index = 1, #panel.docTree.items do
+            local entry = panel.docTree.items[index].item
+            result[index] = entry.kind .. ":" .. (entry.kind == "category"
+                and entry.key or entry.id)
+        end
+        return table.concat(result, ",")
+    end
+    -- 真的按下去。原生 ISButton 的 onclick 收 (target, button)。
+    local function click(button)
+        button.onclick(button.target, button)
+    end
+    local function newPanel()
+        local panel = NBPanel:new()
+        panel:createChildren()
+        panel:setSnapshot(snapshot, nil)
+        return panel
+    end
+    -- 重建次數是這兩顆按鈕的效能合約：逐一分類各自 rebuildTree 也會通過下面每一條
+    -- 狀態斷言，但分類多的伺服器上一次點擊就是一次看得見的頓卡。
+    local function countCalls(panel, methodName)
+        local counter = { count = 0 }
+        local original = panel[methodName]
+        panel[methodName] = function(...)
+            counter.count = counter.count + 1
+            return original(...)
+        end
+        return counter
+    end
+
+    -- 兩顆按鈕對每個玩家都存在：純本地操作，不經過網路，與 admin 權限無關。
+    local panel = newPanel()
+    check(panel.expandAllButton ~= nil and panel.collapseAllButton ~= nil,
+        "非 admin 的連線玩家也有全部展開／全部收合")
+    checkEqual(panel.expandAllButton.title, "[IGUI_MinidoracatNB_ExpandAll]",
+        "全部展開的標題取自翻譯鍵，不是硬寫的字面文字")
+    checkEqual(panel.collapseAllButton.title, "[IGUI_MinidoracatNB_CollapseAll]",
+        "全部收合的標題取自翻譯鍵")
+    local savedIsClient = _G.isClient
+    _G.isClient = function() return false end
+    local spPanel = NBPanel:new()
+    spPanel:createChildren()
+    _G.isClient = savedIsClient
+    checkEqual(spPanel.adminVisible, false, "前提：SP 環境沒有 admin 按鈕")
+    check(spPanel.expandAllButton ~= nil and spPanel.collapseAllButton ~= nil,
+        "SP 同樣要有這兩顆按鈕（它們不送任何網路封包）")
+
+    -- 全部收合：整棵樹只剩分類列，選取／內文／未讀／側欄偏好一概不動。
+    UNREAD_IDS = {}
+    UNREAD_IDS.party = true
+    SIDEBAR_PREFERENCE.value = false
+    panel = newPanel()
+    checkEqual(kinds(panel), ALL_EXPANDED, "前提：分類預設全部展開")
+    panel:selectFile("rule2", false)
+    checkEqual(panel.selectedFileId, "rule2", "前提：先選一份 10_rules 底下的公告")
+    local rebuilds = countCalls(panel, "rebuildTree")
+    local renders = countCalls(panel, "renderSelected")
+    READ_MARKS = {}
+    SIDEBAR_PREFERENCE.writes = 0
+    click(panel.collapseAllButton)
+    checkEqual(kinds(panel), "category:,category:10_rules,category:20_events",
+        "全部收合：所有公告列一次消失，只剩三列分類")
+    checkEqual(rebuilds.count, 1,
+        "一次點擊只准重建一棵樹（不是每個分類重建一次）")
+    local index
+    for index = 1, #panel.categoryOrder do
+        local key = panel.categoryOrder[index]
+        checkEqual(panel.expandedCategories[key], false,
+            "全部收合：分類「" .. key .. "」的狀態必須是布林 false")
+    end
+    checkEqual(panel.selectedFileId, "rule2", "全部收合不得改變選取的公告")
+    checkEqual(renders.count, 0, "全部收合的點擊處理器本身不得重跑公告內容")
+    checkEqual(#READ_MARKS, 0, "全部收合不得把任何公告標成已讀")
+    checkEqual(panel.docTree.items[3].item.unread, true,
+        "全部收合後未讀仍在（分類紅點是整個 bucket 的 OR）")
+    checkEqual(panel.docTree.selected, -1,
+        "選取的公告被收起來時 listbox 沒有選中列（與單列收合同一條紀律）")
+    checkEqual(SIDEBAR_PREFERENCE.writes, 0, "全部收合不得寫側欄偏好")
+    check(panel:sidebarWidth() > 0, "全部收合不得把側欄一起關掉")
+
+    -- server refresh 仍沿用既有「選中的公告必須在目錄裡看得見」不變式：只重新展開
+    -- selectedFileId 的父分類，其他分類維持批次收合狀態。
+    local refreshPanel = newPanel()
+    refreshPanel:selectFile("rule2", false)
+    click(refreshPanel.collapseAllButton)
+    refreshPanel:setVisible(false)
+    refreshPanel:setSnapshot(snapshot, nil)
+    checkEqual(kinds(refreshPanel),
+        "category:,category:10_rules,file:rule1,file:rule2,category:20_events",
+        "快照刷新只重新展開選中公告的父分類")
+    checkEqual(refreshPanel.expandedCategories[""], false,
+        "快照刷新不得展開沒有選中公告的根分類")
+    checkEqual(refreshPanel.expandedCategories["10_rules"], true,
+        "快照刷新必須展開選中公告所在分類")
+    checkEqual(refreshPanel.expandedCategories["20_events"], false,
+        "快照刷新不得展開其他分類")
+    checkEqual(refreshPanel.selectedFileId, "rule2",
+        "快照刷新後仍選中原公告")
+    READ_MARKS = {}
+
+    -- 全部展開：公告列全部回來，選取自己對回去。
+    rebuilds.count = 0
+    click(panel.expandAllButton)
+    checkEqual(kinds(panel), ALL_EXPANDED, "全部展開：所有公告列一次回來")
+    checkEqual(rebuilds.count, 1, "全部展開同樣只重建一棵樹")
+    for index = 1, #panel.categoryOrder do
+        local key = panel.categoryOrder[index]
+        checkEqual(panel.expandedCategories[key], true,
+            "全部展開：分類「" .. key .. "」的狀態必須是布林 true")
+    end
+    checkEqual(panel.selectedFileId, "rule2", "全部展開不得改變選取的公告")
+    checkEqual(panel.docTree.selected, 5,
+        "全部展開後 listbox 的 selected 對回選取的公告")
+    checkEqual(renders.count, 0, "全部展開的點擊處理器本身不得重跑公告內容")
+    checkEqual(#READ_MARKS, 0, "全部展開不得把任何公告標成已讀")
+    checkEqual(panel.docTree.items[7].item.unread, true, "未讀狀態不受批次操作影響")
+    checkEqual(SIDEBAR_PREFERENCE.writes, 0,
+        "側欄本來就開著時全部展開不得多寫一次偏好")
+
+    -- 批次操作不得配置「每分類一個」的 UI 元件：兩顆工具列按鈕就是全部的介面，
+    -- 面板的子層數在點擊前後必須一模一樣。
+    local childrenBefore = #panel.children
+    click(panel.collapseAllButton)
+    click(panel.expandAllButton)
+    checkEqual(#panel.children, childrenBefore,
+        "批次操作不得新增任何子元件（可見列仍只由 docTree 的 items 表示）")
+
+    -- 唯一直接呼叫 setter 的一條：正規化是它自己的合約，按鈕永遠只傳字面 true／false。
+    -- expandedCategories 混進 "yes"／1 這類值時，isCategoryExpanded 的 `~= false`
+    -- 會把它們一律當展開，狀態就再也對不回按鈕按的是哪一顆。
+    panel:setAllCategoriesExpanded("yes")
+    checkEqual(panel.expandedCategories[panel.categoryOrder[1]], false,
+        "只有布林 true 算展開：非布林的真值一律正規化成 false（全檔的 == true 紀律）")
+    click(panel.expandAllButton)
+
+    -- 玩家自己把側欄收起來：全部展開必須一併把目錄打開，否則按了畫面上毫無反應。
+    SIDEBAR_PREFERENCE.value = nil
+    panel = newPanel()
+    click(panel.sidebarButton)
+    checkEqual(panel:sidebarWidth(), 0, "前提：玩家手動收起側欄")
+    checkEqual(SIDEBAR_PREFERENCE.value, true, "前提：收起側欄的偏好已寫下")
+    SIDEBAR_PREFERENCE.writes = 0
+    click(panel.collapseAllButton)
+    checkEqual(SIDEBAR_PREFERENCE.writes, 0,
+        "全部收合不碰側欄偏好，側欄已經收起時也一樣")
+    checkEqual(panel.sidebarCollapsed, true, "全部收合不得把側欄翻回展開")
+    click(panel.expandAllButton)
+    checkEqual(panel.sidebarCollapsed, false,
+        "全部展開必須把玩家收起的側欄一併打開（不然這顆按鈕看起來沒反應）")
+    check(panel:sidebarWidth() > 0, "全部展開之後目錄真的看得見")
+    checkEqual(SIDEBAR_PREFERENCE.writes, 1, "打開側欄的偏好只寫一次")
+    checkEqual(SIDEBAR_PREFERENCE.value, false, "打開側欄的偏好必須被保存")
+
+    -- 窄視窗的強制收合是版面限制、不是玩家的意思：不得硬撐出側欄把內文擠爆。
+    panel.width = 500
+    panel.sidebarCollapsed = false
+    SIDEBAR_PREFERENCE.value = false
+    SIDEBAR_PREFERENCE.writes = 0
+    click(panel.collapseAllButton)
+    click(panel.expandAllButton)
+    check(panel:isSidebarForcedCollapsed(), "前提：500px 仍在強制收合區間")
+    checkEqual(panel:sidebarWidth(), 0,
+        "強制收合期間全部展開不得硬撐出側欄")
+    checkEqual(SIDEBAR_PREFERENCE.writes, 0,
+        "側欄偏好本來就是展開時，強制收合期間也不得多寫一次")
+    for index = 1, #panel.categoryOrder do
+        checkEqual(panel.expandedCategories[panel.categoryOrder[index]], true,
+            "強制收合期間分類照樣全部打開（拉寬視窗就看得到）")
+    end
+    -- 但玩家明確收起過側欄時，偏好照樣記下「我要目錄」——與側欄開關同一條紀律。
+    panel.sidebarCollapsed = true
+    SIDEBAR_PREFERENCE.value = true
+    SIDEBAR_PREFERENCE.writes = 0
+    click(panel.expandAllButton)
+    checkEqual(SIDEBAR_PREFERENCE.value, false,
+        "強制收合期間也照樣記下「我要目錄」的偏好")
+    checkEqual(SIDEBAR_PREFERENCE.writes, 1, "偏好仍然只寫一次")
+    checkEqual(panel:sidebarWidth(), 0, "但視窗還是太窄，實際仍收合")
+
+    -- 舊的單列 toggle 不得退化：批次之後單獨點一列仍然只影響那一列。
+    SIDEBAR_PREFERENCE.value = false
+    panel = newPanel()
+    click(panel.collapseAllButton)
+    panel:onTreeRowClicked(panel.docTree.items[2].item) -- category:10_rules
+    checkEqual(kinds(panel),
+        "category:,category:10_rules,file:rule1,file:rule2,category:20_events",
+        "全部收合之後單獨展開一列，只有那一列展開")
+    click(panel.expandAllButton)
+    panel:onTreeRowClicked(panel.docTree.items[6].item) -- category:20_events
+    checkEqual(kinds(panel),
+        "category:,file:welcome,category:10_rules,file:rule1,file:rule2,"
+            .. "category:20_events",
+        "全部展開之後單獨收合一列，只有那一列收合")
+
+    -- 還沒收到快照時兩顆按鈕就已經可以按：空樹不得拋錯。
+    local emptyPanel = NBPanel:new()
+    emptyPanel:createChildren()
+    checkEqual(#emptyPanel.categoryOrder, 0, "前提：還沒收到快照時沒有任何分類")
+    click(emptyPanel.collapseAllButton)
+    click(emptyPanel.expandAllButton)
+    checkEqual(#emptyPanel.docTree.items, 0, "空樹批次操作後仍是空樹，且不得拋錯")
+
+    -- 宣告了卻沒有檔案的分類不得被批次操作復活成一列。
+    local emptyCategoryPanel = NBPanel:new()
+    emptyCategoryPanel:createChildren()
+    emptyCategoryPanel:setSnapshot({ sid = "s",
+        categories = { { key = "90_empty", label = "Empty" } },
+        files = { file("only", "Only", "") } }, nil)
+    click(emptyCategoryPanel.collapseAllButton)
+    click(emptyCategoryPanel.expandAllButton)
+    checkEqual(kinds(emptyCategoryPanel), "category:,file:only",
+        "全部展開不得把空分類變出一列（可見列的來源仍是 categoryOrder）")
+    checkEqual(emptyCategoryPanel.expandedCategories["90_empty"], nil,
+        "空分類不在 categoryOrder 裡，展開狀態也不該被寫進去")
+
+    UNREAD_IDS = {}
+    READ_MARKS = {}
+    SIDEBAR_PREFERENCE.value = savedPreferenceValue
+    SIDEBAR_PREFERENCE.writes = 0
+end)()
+
+-- ---------------------------------------------------------------------------
+-- A 設計稿的圖示（框架 Icons，API v1 rev>=2）：文件樹的 chevron／folder／document，
+-- 以及工具列四顆按鈕的 sidebar／language／resetSize／reload。
+-- 玩家實際會遇到三種環境，三種都要驗——圖示是外觀升級，缺了不能吃掉文字或操作：
+--   I1 框架有能力但**資產缺**（服主換掉圖、檔名打錯、舊資產包）→ draw 回 false，退回 ASCII；
+--   I2 資產齊全 → 圖示版面（座標、tint、按鈕加寬）；
+--   I0 **舊框架**（rev 1）→ NBPanel 綁定期就當沒有圖示，資產在也一律 ASCII。
+-- 順序刻意是 I1 -> I2 -> I0：I0 放在資產已註冊之後，才證明得了「擋的是 API 版本、不是資產」。
+-- ---------------------------------------------------------------------------
+;(function()
+    local UI = MinidoracatUI.v1
+    check(UI.API_REVISION >= 2 and UI.CAPABILITIES.icons == true and UI.Icons ~= nil,
+        "前提：框架已發布 Icons（rev>=2 + capability + 模組），否則以下三段驗不到東西")
+
+    -- 契約表（家族共用，見框架 repo 的 Icons 段）：key -> 檔名。任一邊改名這段就紅。
+    local ICON_DIR = "media/ui/MinidoracatUI/"
+    local ICON_FILES = {
+        sidebar = "mui_icon_sidebar.png",
+        folder = "mui_icon_folder.png",
+        document = "mui_icon_document.png",
+        chevronRight = "mui_icon_chevron_right.png",
+        chevronDown = "mui_icon_chevron_down.png",
+        language = "mui_icon_language.png",
+        reload = "mui_icon_reload.png",
+        resetSize = "mui_icon_reset_size.png",
+    }
+    local function iconPath(key)
+        return ICON_DIR .. ICON_FILES[key]
+    end
+    -- NBSkin.reset() 連 Icons 的「載不到」黑名單一起清（框架的 Icons 與 Skin 共用同一份
+    -- 貼圖快取），否則前面段落記下的 false 會讓 I2 永遠看不到圖示。
+    local function setIconAssets(present)
+        local key
+        for key in pairs(ICON_FILES) do
+            TEXTURE_SIZES[iconPath(key)] = present and { 32, 32 } or nil
+        end
+        NBSkin.reset()
+    end
+
+    local function file(id, title, category)
+        return { id = id, title = title, category = category, h = id,
+            content = "# " .. title }
+    end
+    local snapshot = { sid = "s",
+        categories = { { key = "10_rules", label = "Rules" } },
+        files = {
+            file("welcome", "Welcome", ""),
+            file("rule1", "No griefing", "10_rules"),
+        } }
+    -- items：1 = 語系根層分類、2 = file:welcome、3 = category:10_rules、4 = file:rule1
+
+    -- 面板 + 一棵被攔下所有繪製呼叫的文件樹。drawRow 回傳這一列畫了哪些文字與貼圖。
+    local function newPanel()
+        local panel = NBPanel:new()
+        panel:createChildren()
+        panel:setSnapshot(snapshot, nil)
+        local tree = panel.docTree
+        local texts, images = {}, {}
+        tree.drawRect = function() end
+        tree.drawRectBorder = function() end
+        tree.drawText = function(_, text, x, y, r, g, b)
+            texts[#texts + 1] = { text = text, x = x, y = y,
+                tint = string.format("%s,%s,%s", tostring(r), tostring(g), tostring(b)) }
+        end
+        tree.drawTextureScaled = function(_, texture, x, y, w, h, a, r, g, b)
+            images[#images + 1] = { path = texture and texture.path, x = x, y = y,
+                w = w, h = h,
+                tint = string.format("%s,%s,%s", tostring(r), tostring(g), tostring(b)) }
+        end
+        local function drawRow(index)
+            texts, images = {}, {}
+            tree.items[index].index = index
+            tree:doDrawItem(0, tree.items[index], false)
+            return texts, images
+        end
+        return panel, tree, drawRow
+    end
+
+    -- I1：資產缺 → 版面與「從來沒有圖示」的舊版逐位相同
+    setIconAssets(false)
+    local panel, tree, drawRow = newPanel()
+    local texts, images = drawRow(1)
+    checkEqual(texts[1].text, "-", "I1 資產缺：分類記號退回 ASCII 的 -")
+    checkEqual(texts[1].x, 6, "I1 資產缺：ASCII 記號留在原本的記號欄 x=6")
+    checkEqual(texts[2].x, 18, "I1 資產缺：分類文字留在 x=18，不留圖示的空欄")
+    checkEqual(#images, 0, "I1 資產缺：一顆圖示都不畫")
+    texts = drawRow(2)
+    checkEqual(texts[1].x, 26, "I1 資產缺：公告文字留在 x=26")
+    checkEqual(panel.sidebarButton.iconTexture, nil, "I1 資產缺：側欄開關沒有 iconTexture")
+    checkEqual(panel.langButton.iconTexture, nil, "I1 資產缺：語系按鈕沒有 iconTexture")
+    checkEqual(panel.resetButton.iconTexture, nil, "I1 資產缺：重設大小按鈕沒有 iconTexture")
+    checkEqual(panel.expandAllButton.iconTexture, nil,
+        "I1 資產缺：全部展開沒有 iconTexture（純文字按鈕照樣可按）")
+    checkEqual(panel.collapseAllButton.iconTexture, nil,
+        "I1 資產缺：全部收合沒有 iconTexture")
+    local plainSidebarWidth = panel.sidebarButton.width
+    local plainLangWidth = panel.langButton.width
+    local plainExpandWidth = panel.expandAllButton.width
+    local plainCollapseWidth = panel.collapseAllButton.width
+
+
+    -- 核心 tree icon 任一張缺失時整棵退回文字，避免分類有圖示縮排、公告卻比它更靠左。
+    setIconAssets(true)
+    TEXTURE_SIZES[iconPath("document")] = nil
+    NBSkin.reset()
+    panel, tree, drawRow = newPanel()
+    texts, images = drawRow(1)
+    checkEqual(texts[1].text, "-", "I1 單張 document 缺失時整棵 tree 退回 ASCII")
+    texts = drawRow(2)
+    checkEqual(texts[1].x, 26, "I1 單張缺失時公告文字也回純文字縮排，不與分類倒置")
+    -- I2：資產齊全 → 圖示版面
+    setIconAssets(true)
+    panel, tree, drawRow = newPanel()
+    texts, images = drawRow(1)
+    checkEqual(#texts, 1, "I2 分類列只剩標籤一段文字（ASCII 記號由 chevron 取代）")
+    checkEqual(texts[1].x, 38, "I2 分類文字讓開 chevron 與 folder（x=38）")
+    checkEqual(#images, 2, "I2 展開中的分類 = chevron + folder 兩顆圖示")
+    checkEqual(images[1].path, iconPath("chevronDown"), "I2 展開中的分類畫 chevronDown")
+    check(images[1].x == 4 and images[1].y == 5 and images[1].w == 14 and images[1].h == 14,
+        "I2 chevron 落在 (4, 列高 24 置中 → 5)、邊長 14")
+    checkEqual(images[2].path, iconPath("folder"), "I2 分類的第二顆圖示是 folder")
+    checkEqual(images[2].x, 20, "I2 folder 接在 chevron 右側（x=20）")
+    checkEqual(images[1].tint, "0.7,0.7,0.7", "I2 未選中列的圖示染 TAB_TEXT_UNSELECTED")
+    checkEqual(texts[1].tint, images[1].tint,
+        "I2 圖示必須與同列文字同色，否則圖示看起來像壞掉的資產")
+
+    panel:onTreeRowClicked(tree.items[3].item) -- 收合 10_rules
+    texts, images = drawRow(3)
+    checkEqual(images[1].path, iconPath("chevronRight"), "I2 收合中的分類畫 chevronRight")
+
+    texts, images = drawRow(2) -- file:welcome（預設選中）
+    checkEqual(images[1].path, iconPath("document"), "I2 公告列畫 document")
+    checkEqual(images[1].x, 22, "I2 document 落在 folder 與分類文字之間（x=22）")
+    checkEqual(texts[1].x, 40, "I2 公告文字讓開 document（x=40）")
+    checkEqual(images[1].tint, "1,1,1", "I2 選中的公告列圖示染 TAB_TEXT_SELECTED")
+
+    checkEqual(panel.sidebarButton.iconTexture.path, iconPath("sidebar"),
+        "I2 側欄開關掛 sidebar 圖示")
+    checkEqual(panel.sidebarButton.joypadTextureWH, 14,
+        "I2 圖示尺寸走原生 joypadTextureWH（預設 32 對 24px 高的工具列太大）")
+    checkEqual(panel.langButton.iconTexture.path, iconPath("language"),
+        "I2 語系按鈕掛 language 圖示")
+    checkEqual(panel.resetButton.iconTexture.path, iconPath("resetSize"),
+        "I2 重設大小按鈕掛 resetSize 圖示")
+    checkEqual(panel.sidebarButton.width - plainSidebarWidth, 19,
+        "I2 有圖示的按鈕寬 = 純文字寬 + 圖示 14 + 原生間距 5")
+    checkEqual(panel.langButton.width - plainLangWidth, 19,
+        "I2 加寬規則對每顆按鈕都一樣（少加會把標題推出按鈕右緣）")
+    checkEqual(panel.expandAllButton.iconTexture.path, iconPath("chevronDown"),
+        "I2 全部展開掛 chevronDown（與展開中的分類列同一張資產）")
+    checkEqual(panel.collapseAllButton.iconTexture.path, iconPath("chevronRight"),
+        "I2 全部收合掛 chevronRight（與收合中的分類列同一張資產）")
+    checkEqual(panel.expandAllButton.joypadTextureWH, 14,
+        "I2 批次按鈕的圖示尺寸與其他工具列按鈕一致")
+    checkEqual(panel.collapseAllButton.joypadTextureWH, 14,
+        "I2 兩顆批次按鈕的圖示尺寸都不得留在原生預設 32")
+    checkEqual(panel.expandAllButton.width - plainExpandWidth, 19,
+        "I2 全部展開的加寬規則與其他按鈕相同")
+    checkEqual(panel.collapseAllButton.width - plainCollapseWidth, 19,
+        "I2 全部收合的加寬規則與其他按鈕相同")
+    -- 左組順序（由左往右）：目錄 -> 全部展開 -> 全部收合。順序寫成斷言是因為它是
+    -- 肌肉記憶，而且三顆的功能相鄰（都只動目錄的可見範圍），接錯位置玩家會按錯。
+    checkEqual(panel.sidebarButton:getX(), 6,
+        "I2 目錄仍貼在工具列最左（左緣留一個 6px 間距）")
+    checkEqual(panel.expandAllButton:getX(),
+        panel.sidebarButton:getX() + panel.sidebarButton:getWidth() + 6,
+        "I2 全部展開緊接在目錄右邊（間距與其他按鈕相同）")
+    checkEqual(panel.collapseAllButton:getX(),
+        panel.expandAllButton:getX() + panel.expandAllButton:getWidth() + 6,
+        "I2 全部收合緊接在全部展開右邊")
+    check(panel.expandAllButton.anchorLeft == true
+        and panel.expandAllButton.anchorRight == false,
+        "I2 批次按鈕錨左：視窗變寬時留在目錄旁邊，不跟著右緣跑")
+    -- 範例包會寫伺服器磁碟，非 admin 連按鈕都不該有（server 端仍是權威）
+    checkEqual(panel.examplesButton, nil, "I2 非 admin 不得建立範例按鈕")
+    checkEqual(panel.reloadButton, nil, "前提檢查：非 admin 同樣沒有重新載入按鈕")
+
+    -- SP／本地權威端沒有 player-targeted ack 收件人，admin 字串即使存在也不能建立兩顆
+    -- 永遠無反應的網路操作按鈕。
+    local savedAccess = _G.getAccessLevel
+    local savedIsClient = _G.isClient
+    _G.getAccessLevel = function() return "admin" end
+    _G.isClient = function() return false end
+    local localAdminPanel = NBPanel:new()
+    localAdminPanel:createChildren()
+    checkEqual(localAdminPanel.adminVisible, false,
+        "非 client 環境不得把 admin 網路操作標成可見")
+    checkEqual(localAdminPanel.examplesButton, nil,
+        "非 client 環境不得建立重建範例按鈕")
+    checkEqual(localAdminPanel.reloadButton, nil,
+        "非 client 環境不得建立重新載入按鈕")
+    _G.isClient = savedIsClient
+
+    -- 重新載入只有 admin 看得到，單獨換一次權限建面板
+    _G.getAccessLevel = function() return "admin" end
+    local adminPanel = NBPanel:new()
+    adminPanel:createChildren()
+    _G.getAccessLevel = savedAccess
+    checkEqual(adminPanel.reloadButton.iconTexture.path, iconPath("reload"),
+        "I2 admin 的重新載入按鈕掛 reload 圖示")
+    checkEqual(adminPanel.examplesButton.iconTexture.path, iconPath("folder"),
+        "I2 admin 的範例按鈕掛 folder 圖示（與文件樹的分類同一張資產）")
+    checkEqual(adminPanel.examplesButton.joypadTextureWH, 14,
+        "I2 範例按鈕的圖示尺寸與其他工具列按鈕一致")
+    -- 右側順序（addToolbarButton 由右往左排）：重新載入最右、範例在它左邊，
+    -- 再往左是重設大小與語系。順序寫成斷言是因為它是肌肉記憶：每天要按的那顆留在最右。
+    checkEqual(adminPanel.width - 6 - adminPanel.reloadButton:getWidth(),
+        adminPanel.reloadButton:getX(),
+        "I2 重新載入必須貼在工具列最右（右緣留一個 6px 間距）")
+    check(adminPanel.examplesButton:getX() + adminPanel.examplesButton:getWidth()
+        < adminPanel.reloadButton:getX(),
+        "I2 範例按鈕必須排在重新載入的左邊")
+    check(adminPanel.resetButton:getX() + adminPanel.resetButton:getWidth()
+        < adminPanel.examplesButton:getX(),
+        "I2 重設大小必須排在範例按鈕的左邊")
+    check(adminPanel.langButton:getX() + adminPanel.langButton:getWidth()
+        < adminPanel.resetButton:getX(),
+        "I2 語系必須排在重設大小的左邊（右側整組維持既有相對順序）")
+    check(adminPanel.minimumWidth > panel.minimumWidth,
+        "I2 多一顆 admin 按鈕必須把動態 minimumWidth 一起撐大，否則工具列會重疊")
+    -- 左組的右緣是**最右那顆**（全部收合），不是側欄開關：拿側欄開關算會少算兩顆按鈕，
+    -- 左右兩組就會在預設寬度下重疊。
+    local expectedMinimum = adminPanel.collapseAllButton:getX()
+        + adminPanel.collapseAllButton:getWidth()
+        + 6 + (adminPanel.width - 6 - adminPanel.langButton:getX()) + 6
+    checkEqual(adminPanel.minimumWidth, math.max(420, math.ceil(expectedMinimum)),
+        "I2 minimumWidth 必須由左組最右按鈕與 admin 右側整組的實際寬度決定")
+    check(adminPanel.collapseAllButton:getX() + adminPanel.collapseAllButton:getWidth() + 6
+        <= adminPanel.langButton:getX(),
+        "I2 預設寬度下左／右工具列群不得重疊")
+
+    -- 小畫面／大字型／admin 四鈕：建立當下就要把目前寬度夾到動態 minimum，
+    -- 不能只改限制值後仍讓這一幀維持重疊。
+    local savedScreenW, savedScreenH = SCREEN_WIDTH, SCREEN_HEIGHT
+    SCREEN_WIDTH, SCREEN_HEIGHT = 640, 480
+    _G.getAccessLevel = function() return "admin" end
+    local narrowAdmin = NBPanel:new()
+    narrowAdmin:createChildren()
+    _G.getAccessLevel = savedAccess
+    check(narrowAdmin.minimumWidth > 460,
+        "I2 640×480 admin 工具列需要的動態 minimumWidth 應高於 72% 預設寬 460")
+    checkEqual(narrowAdmin.width, narrowAdmin.minimumWidth,
+        "I2 createChildren 必須立即把目前寬度夾到動態 minimumWidth")
+    narrowAdmin:setWidth(700)
+    narrowAdmin:resetToDefaultSize()
+    checkEqual(narrowAdmin.width, narrowAdmin.minimumWidth,
+        "I2 重設大小也不得把面板重新縮回工具列會重疊的寬度")
+    SCREEN_WIDTH, SCREEN_HEIGHT = savedScreenW, savedScreenH
+
+    -- 真實 vscroll：捲軸出現時文字留白與未讀點一起讓開 17px。原生 stencil 右緣收到
+    -- vscroll.x + 3 = 寬-13（ISScrollingListBox.lua:494-496），而紅點原本從 寬-14 起、
+    -- 邊長 8——只剩 1px 露在裁切範圍內，看起來就是紅點消失了。
+    UNREAD_IDS.rule1 = true
+    panel, tree, drawRow = newPanel()
+    texts, images = drawRow(4) -- file:rule1（未讀、未選中）
+    checkEqual(images[#images].x, 300 - 14, "捲軸不可見時未讀點仍在 width-14")
+    local availableNoScroll = tree.items[4].item.fitWidth
+    tree.height = 48
+    tree.vscroll = {
+        x = tree.width - 16,
+        width = 17,
+        height = tree.height,
+        getWidth = function(self) return self.width end,
+        getHeight = function(self) return self.height end,
+    }
+    check(tree:isVScrollBarVisible(), "vscroll 必須由實際 scrollHeight > viewport 觸發")
+    local stencilRect = nil
+    tree.setStencilRect = function(_, x, y, w, h)
+        stencilRect = { x = x, y = y, w = w, h = h }
+    end
+    tree.clearStencilRect = function() end
+    tree:prerender()
+    check(stencilRect ~= nil and stencilRect.w == tree.width - 13,
+        "原生 listbox prerender 在 vscroll 可見時把 stencil 右緣收到 width-13")
+    texts, images = drawRow(4)
+    checkEqual(images[#images].x, 300 - 17 - 14,
+        "捲軸可見時未讀點左移 17px（避開 stencil 右緣，不被裁掉）")
+    checkEqual(tree.items[4].item.fitWidth, availableNoScroll - 17,
+        "捲軸可見時文字可用寬同步少 17px（紅點與文字之間的 6px 間距不變）")
+    tree.vscroll = nil
+    UNREAD_IDS = {}
+
+    -- I0：舊框架（rev 1）→ 綁定期就當沒有圖示。資產仍註冊著，所以擋的是 API 版本。
+    local savedRevision = UI.API_REVISION
+    UI.API_REVISION = 1
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBPanel.lua") -- Icons 綁定重算：此環境下為 nil
+    panel, tree, drawRow = newPanel()
+    texts, images = drawRow(1)
+    checkEqual(texts[1].text, "-", "I0 舊框架：分類記號退回 ASCII，資產在也不畫圖示")
+    checkEqual(texts[2].x, 18, "I0 舊框架：分類文字留在 x=18")
+    checkEqual(#images, 0, "I0 舊框架：不畫任何圖示")
+    checkEqual(panel.sidebarButton.iconTexture, nil, "I0 舊框架：工具列按鈕沒有 iconTexture")
+    checkEqual(panel.sidebarButton.width, plainSidebarWidth,
+        "I0 舊框架：按鈕寬回到純文字寬（不留圖示的空欄）")
+    checkEqual(panel.collapseAllButton.iconTexture, nil,
+        "I0 舊框架：批次按鈕同樣沒有 iconTexture")
+    checkEqual(panel.collapseAllButton.width, plainCollapseWidth,
+        "I0 舊框架：批次按鈕寬回到純文字寬")
+    UI.API_REVISION = savedRevision
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBPanel.lua") -- 還原正常綁定
+    setIconAssets(false)
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 重建範例按鈕的互動（按鈕 -> 語系選單 -> 送出）與六則 toast。
+-- 這顆按鈕會**直接覆寫伺服器 live tree** 的 categories.txt、README.txt 與選定語系的
+-- 三份公告，所以互動契約本身就是安全機制：
+--   * 按下按鈕**不得送出任何東西**，只開一個選單（誤觸不該覆寫服主的分類設定）；
+--   * 選單恰好兩項（CH／EN），兩項的文字都必須明說會覆寫 categories.txt；
+--   * 選了哪個語系就必須送哪個語系（接錯參數＝重建錯語系，服主的公告被換掉）；
+--   * 送出成功／送不出去各一則 toast（送出 != 伺服器已寫好）；
+--   * server 的四種結果各一則，成功那則必須把檔數帶進文字；
+--   * 非 admin 呼叫任一入口都不得送出（按鈕本來就不存在，這是第二層）。
+-- getText 的 stub 平常只回 "[key]"，這一段臨時換成會把參數接在後面的版本——
+-- 否則「成功幾檔」與「送出的是哪個語系」進不進 toast 完全驗不到。
+-- ---------------------------------------------------------------------------
+;(function()
+    local savedAccess = _G.getAccessLevel
+    local savedGetText = _G.getText
+    local savedToastShow = NBToast.show
+    local toasts = {}
+    NBToast.show = function(message)
+        toasts[#toasts + 1] = message
+    end
+    _G.getText = function(key, ...)
+        local parts = { tostring(key) }
+        local values = { ... }
+        local index
+        for index = 1, #values do
+            parts[#parts + 1] = tostring(values[index])
+        end
+        return "[" .. table.concat(parts, "|") .. "]"
+    end
+
+    local function resetRequests()
+        EXAMPLE_REQUESTS.count = 0
+        EXAMPLE_REQUESTS.langs = {}
+        CONTEXT_MENUS.list = {}
+        toasts = {}
+    end
+
+    _G.getAccessLevel = function() return "admin" end
+    local panel = NBPanel:new()
+    panel:createChildren()
+
+    -- 按鈕的 callback 必須真的是 onExamples：測試若自己直接呼叫 onExamples，
+    -- 接錯 callback（例如貼上成 onReload）這一段就完全看不出來。
+    checkEqual(panel.examplesButton.onclick, NBPanel.onExamples,
+        "重建範例按鈕的 callback 必須是 NBPanel.onExamples")
+    checkEqual(panel.examplesButton.title, "[IGUI_MinidoracatNB_Examples]",
+        "重建範例按鈕的標題走自己的翻譯鍵")
+
+    -- --- 1. 按一下只開選單，**零送出** ------------------------------------------
+    resetRequests()
+    EXAMPLE_REQUESTS.allow = true
+    panel.examplesButton.onclick(panel, panel.examplesButton)
+    checkEqual(EXAMPLE_REQUESTS.count, 0,
+        "按下按鈕不得送出任何請求（誤觸不該覆寫伺服器的 categories.txt）")
+    checkEqual(#toasts, 0, "按下按鈕不得出 toast（還沒送出任何東西）")
+    checkEqual(#CONTEXT_MENUS.list, 1, "按下按鈕必須恰好開一個原生 context menu")
+
+    local menu = CONTEXT_MENUS.list[1]
+    checkEqual(#menu.options, 2, "選單必須恰好兩項（CH／EN），不得列出其他語系")
+    checkEqual(menu.options[1].title, "[IGUI_MinidoracatNB_ExamplesLangCH]",
+        "第一項是繁體中文，走自己的翻譯鍵")
+    checkEqual(menu.options[2].title, "[IGUI_MinidoracatNB_ExamplesLangEN]",
+        "第二項是 English，走自己的翻譯鍵")
+    local optionIndex
+    for optionIndex = 1, #menu.options do
+        checkEqual(menu.options[optionIndex].callback,
+            NBPanel.onExamplesLanguageSelected,
+            "選單每一項都必須接到 onExamplesLanguageSelected（接錯就重建錯東西）")
+        checkEqual(menu.options[optionIndex].target, panel,
+            "選單每一項的 target 必須是面板自己")
+    end
+    checkEqual(menu.options[1].param, "CH", "第一項必須帶 CH")
+    checkEqual(menu.options[2].param, "EN", "第二項必須帶 EN")
+    -- 選單開在按鈕正下方（與語系選單同一套定位）
+    checkEqual(menu.x, panel.examplesButton:getAbsoluteX(),
+        "選單必須對齊按鈕左緣")
+    checkEqual(menu.y,
+        panel.examplesButton:getAbsoluteY() + panel.examplesButton:getHeight(),
+        "選單必須開在按鈕正下方")
+
+    -- --- 2. 兩個語系各選一次：送出的語系必須與選項一致 ---------------------------
+    local SELECTED = { "CH", "EN" }
+    local selectIndex
+    for selectIndex = 1, #SELECTED do
+        local language = SELECTED[selectIndex]
+        resetRequests()
+        panel.examplesButton.onclick(panel, panel.examplesButton)
+        local option = CONTEXT_MENUS.list[1].options[selectIndex]
+        option.callback(option.target, option.param)
+        checkEqual(EXAMPLE_REQUESTS.count, 1,
+            "選了語系才送出，而且恰好一次：" .. language)
+        checkEqual(EXAMPLE_REQUESTS.langs[1], language,
+            "送出的語系必須就是選單那一項帶的值：" .. language)
+        checkEqual(#toasts, 1, "送出後必須有一則回饋：" .. language)
+        checkEqual(toasts[1], "[IGUI_MinidoracatNB_ExamplesSent|" .. language .. "]",
+            "送出成功顯示『已送出』並帶語系（連按兩次不同語系要分得出來）：" .. language)
+    end
+
+    -- --- 3. 送不出去（網路層拋錯／client 端語系驗證失敗） -----------------------
+    resetRequests()
+    EXAMPLE_REQUESTS.allow = false
+    panel:onExamplesLanguageSelected("CH")
+    checkEqual(EXAMPLE_REQUESTS.count, 1, "送出失敗仍必須真的嘗試過一次")
+    checkEqual(toasts[1], "[IGUI_MinidoracatNB_ExamplesSendFailed]",
+        "送不出去必須明說，不得靜默（否則分不出按鈕壞了還是伺服器沒反應）")
+    EXAMPLE_REQUESTS.allow = true
+
+    -- --- 4. 原生端沒有可用的 context menu -------------------------------------
+    resetRequests()
+    CONTEXT_MENUS.allow = false
+    local menuOk = pcall(function()
+        panel.examplesButton.onclick(panel, panel.examplesButton)
+    end)
+    CONTEXT_MENUS.allow = true
+    check(menuOk, "ISContextMenu.get 回 nil 時不得拋錯")
+    checkEqual(EXAMPLE_REQUESTS.count, 0, "開不出選單時不得改成直接送出")
+    checkEqual(#toasts, 0, "開不出選單時不得出誤導的 toast")
+
+    -- --- 5. 權限當場被撤掉：按鈕還在畫面上，但兩個入口都不得動作 ----------------
+    resetRequests()
+    _G.getAccessLevel = function() return "None" end
+    panel:onExamples(panel.examplesButton)
+    checkEqual(#CONTEXT_MENUS.list, 0, "非 admin 不得開出重建範例選單")
+    panel:onExamplesLanguageSelected("CH")
+    checkEqual(EXAMPLE_REQUESTS.count, 0, "非 admin 不得送出重建範例請求")
+    checkEqual(#toasts, 0, "非 admin 的點擊不得留下任何 toast")
+    _G.getAccessLevel = function() return "admin" end
+
+    -- --- 6. server 的四種結果：走的是真正註冊上去的那個 handler -----------------
+    toasts = {}
+    NBPanel.onExamplesStatus({ kind = "success", count = 5 })
+    checkEqual(toasts[1], "[IGUI_MinidoracatNB_ExamplesDone|5]",
+        "成功的 toast 必須帶上實際寫出的檔數")
+
+    toasts = {}
+    NBPanel.onExamplesStatus({ kind = "failed" })
+    checkEqual(toasts[1], "[IGUI_MinidoracatNB_ExamplesWriteFailed]",
+        "伺服器寫入失敗必須有自己的訊息（不可與送出失敗共用）")
+
+    toasts = {}
+    NBPanel.onExamplesStatus({ kind = "cooldown" })
+    checkEqual(toasts[1], "[IGUI_MinidoracatNB_ExamplesCooldown]",
+        "冷卻中必須明說，不得看起來像成功")
+
+    toasts = {}
+    NBPanel.onExamplesStatus({ kind = "forbidden" })
+    checkEqual(toasts[1], "[IGUI_MinidoracatNB_ExamplesForbidden]",
+        "權限不足必須明說")
+
+    -- 形狀壞掉不得炸面板、也不得出無意義的 toast
+    toasts = {}
+    NBPanel.onExamplesStatus(nil)
+    NBPanel.onExamplesStatus("success")
+    NBPanel.onExamplesStatus({})
+    NBPanel.onExamplesStatus({ kind = "partial" })
+    checkEqual(#toasts, 0, "不認識的狀態 payload 一律不出 toast")
+
+    CONTEXT_MENUS.list = {}
+    EXAMPLE_REQUESTS.count = 0
+    EXAMPLE_REQUESTS.langs = {}
+    _G.getAccessLevel = savedAccess
+    _G.getText = savedGetText
+    NBToast.show = savedToastShow
+end)()
+
 -- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
 -- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 204
+local EXPECTED_ASSERTIONS = 438
 assert(assertionCount == EXPECTED_ASSERTIONS,
     "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
         .. "（有測試被刪掉或跳過？）")

@@ -5,7 +5,7 @@
 This line contains **highlighted text**.
 
 - Notices can use list items.
-- Add more files to create more tabs.
+- Add more files to populate the notice list.
 
 ---
 

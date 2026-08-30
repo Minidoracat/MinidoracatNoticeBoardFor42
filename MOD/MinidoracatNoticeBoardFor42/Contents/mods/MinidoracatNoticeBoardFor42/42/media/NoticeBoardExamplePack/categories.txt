@@ -1,0 +1,51 @@
+# Notice Board categories / 公告分類宣告
+#
+# THIS FILE IS THE LIVE categories.txt. The "Rebuild examples" button writes it
+# straight to NoticeBoard/categories.txt, replacing every category line that
+# was in it. There is nothing to copy anywhere.
+# 這份檔案就是正式的 categories.txt：「重建範例」按鈕會直接寫進
+# NoticeBoard/categories.txt，取代裡面原有的每一行分類宣告。不需要再複製到任何地方。
+#
+# WARNING: a category you declared before and that is not listed at the bottom
+# of this file is no longer declared, so it and its notices drop out of the
+# sidebar until you add the line back. The notice files stay on disk; this
+# feature never deletes anything. Back up your categories.txt before rebuilding.
+# 注意：你原本宣告過、但本檔最下方沒有列出的分類，等於不再被宣告，它與裡面的公告會
+# 從側欄消失，直到你把那一行加回來。公告檔仍留在磁碟上，這個功能不刪任何東西。
+# 重建之前請先備份自己的 categories.txt。
+#
+# Format / 格式:  <category key>|<PZ language code>|<display label>
+#
+#   * The key is also the real folder name: NoticeBoard/<LANG>/<key>/
+#     key 同時就是實體目錄名：NoticeBoard/<語系>/<key>/
+#   * ASCII letters, digits, "_" and "-" only, 48 characters at most.
+#     只能用 ASCII 英數、底線與連字號，最長 48 字元。
+#   * The leading number decides the order in the sidebar, same rule as file
+#     names. Leave gaps (10, 20, 30) so you can insert 15_events later.
+#     開頭數字決定側欄順序，規則與檔名相同。留間隔（10、20、30）方便日後插入 15_events。
+#   * One line per language. A player sees: their own language -> the
+#     DefaultLanguage label -> the first label declared for that key -> the key.
+#     每個語系一行。玩家看到的標籤依「自己的語系 -> DefaultLanguage -> 該 key 第一個
+#     宣告的標籤 -> key 原文」回退。
+#   * 32 categories at most, labels 80 characters at most, no "|" in a label.
+#     最多 32 個分類，標籤最長 80 字元，標籤內不得有 "|"。
+#   * Blank lines and lines starting with "#" are ignored, so a file of nothing
+#     but comments declares zero categories.
+#     空行與 "#" 開頭的行會被忽略，所以一份純註解的檔案等於沒有宣告任何分類。
+#   * This file only DECLARES folders. Create NoticeBoard/EN/10_news/ and the
+#     rest yourself - the game's directory API cannot list folders, so an
+#     undeclared folder is invisible and its notices never appear.
+#     本檔只「宣告」目錄，不會建立目錄。請自行建立 NoticeBoard/EN/10_news/ 等資料夾
+#     ——遊戲的目錄 API 無法列出子目錄，沒宣告的資料夾等於不存在，裡面的公告不會出現。
+#   * Do not put emoji in a label: PZ draws text from pre-baked bitmap fonts
+#     with no OS emoji fallback, so it shows up as "?" or as nothing.
+#     標籤不要放 emoji：PZ 用預先烘焙的點陣字型，沒有作業系統 emoji 字型的 fallback，
+#     會變成 "?" 或整個不繪製。
+#   * Categories only regroup the sidebar. They never change who can see a
+#     notice - that is decided by the language folder and the .only marker.
+#     分類只改變側欄分組，不改變可見範圍：可見範圍只由語系目錄與 .only 標記決定。
+
+10_news|EN|News
+10_news|CH|最新消息
+20_rules|EN|Server Rules
+20_rules|CH|伺服器規則

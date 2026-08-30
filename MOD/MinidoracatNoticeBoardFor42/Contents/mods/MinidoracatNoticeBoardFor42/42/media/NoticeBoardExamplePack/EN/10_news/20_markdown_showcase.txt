@@ -1,0 +1,195 @@
+# Markdown showcase
+
+Everything below is real syntax that this mod parses. Read this notice in game
+with the text file open beside it: what the panel shows is what the parser did
+with what is written on disk.
+
+## Headings
+
+Six levels are parsed. The engine only has three font sizes: H3 shares H2's
+size and only differs in colour, and H4 and below all fall back to the body
+size, told apart by brightness alone.
+
+## H2 - medium, light grey, left aligned
+
+### H3 - same size as H2, cyan
+
+#### H4 - body size
+
+##### H5 - body size, dimmer
+
+###### H6 - body size, dimmest; never put anything important in H5 or H6
+
+The `#` heading at the top of the file is also the name of this notice in the
+sidebar. A `#` heading is always centred, except when it contains an image: then
+the whole line switches to left aligned so the picture and the text stay
+together.
+
+## Paragraphs and forced line breaks
+
+A single newline inside a paragraph is a soft break: this sentence
+and this sentence are merged into one paragraph and re-flowed by the panel.
+
+A blank line starts a new paragraph.
+
+There are exactly two ways to force a break inside one paragraph.
+This line ends with two spaces, so the break is kept.  
+This line ends with a backslash, so the break is kept as well.\
+This is the last line of that paragraph.
+
+## Lists
+
+Three unordered markers are accepted, and all three render as the same bullet,
+exactly like an HTML list.
+
+- hyphen marker
+* asterisk marker
++ plus marker
+
+Ordered lists number themselves: only the first item's number is read, the rest
+count up from it. Writing `1.` three times therefore renders 1. 2. 3.
+
+1. first item
+1. second item
+1. third item
+
+A closing parenthesis works too, and any starting number is honoured. The two
+items below render as 5. and 6.
+
+5) numbering starts at five
+6) and counts up from there
+
+Nest with indentation, two spaces or more per level, four levels deep at most.
+An indented line with no marker is merged back into the item above it.
+
+1. depth 1
+   - depth 2
+     - depth 3
+       - depth 4, the deepest level
+         - anything deeper is clamped back to depth 4
+2. depth 1 again
+   this indented line carries no marker, so it continues the item above
+
+## Block quotes
+
+> A quote is indented, greyed out and prefixed with an ASCII bar.
+>> A second angle bracket nests it one level deeper, four levels at most.
+
+## Thematic breaks
+
+Three or more `-`, `*` or `_` alone on a line draw a horizontal rule: `---`,
+`***`, `___` and `- - -` all work. Here is one:
+
+---
+
+## Fenced code blocks
+
+Nothing inside a fence is parsed and angle brackets are escaped. Only leading
+indentation survives: the engine collapses runs of spaces inside a line and has
+no monospace font, so ASCII tables and aligned comments will not line up.
+
+```ini
+PVP=false
+PublicName=My Server
+```
+
+Use a tilde fence when the block itself has to contain backticks.
+
+~~~markdown
+Inline code is written with `backticks`.
+A backtick fence is three of them: ```
+~~~
+
+## Inline syntax
+
+- Bold: **important** - amber, because the engine has no bold font
+- Italic: *emphasis* - green, because the engine has no italic font
+- Bold italic: ***both*** - colours stack and the inner one wins, so it looks
+  the same as italic
+- Underscore forms: __bold__ and _emphasis_
+- Inline code: `getTexture()` - pink, no monospace font and no background box
+- More backticks when the code itself contains one: ``a ` inside code``
+- Strikethrough: ~~withdrawn~~ - the markers are eaten and the text stays; the
+  engine cannot draw a line through text
+- Backslash escape: \*not italic\*, \#not a heading, \_not italic\_
+
+The engine splits text on spaces, so a space appears on both sides of every
+bold, italic, code and link run. That is the panel's own behaviour, not a bug.
+It shows up most in Chinese and Japanese text - if the spacing matters in a
+sentence, do not use an inline style there.
+
+A link takes a display line of its own, so give each link its own line in the
+file as well.
+
+[Project Zomboid](https://projectzomboid.com)
+
+<https://projectzomboid.com>
+
+Clicking any valid link copies the address to the clipboard. Approved official
+Project Zomboid domains are also opened through the game's whitelist; other
+sites are copy-only. Only `http` and `https` are accepted, and a bare address
+written without brackets never becomes a link.
+
+## Images
+
+![Sample image shipped with this mod](media/ui/NoticeBoard/nb_sample.png =240x)
+
+The picture above is bundled with the mod. Your own pictures go into
+`NoticeBoard/images/` as PNG files and are referenced as
+`![caption](images/your-file.png)` - the server syncs them to every player, so
+you do not need a separate texture pack mod. Limits and file naming rules are
+in `NoticeBoard/images/00_README.txt`.
+
+The display size is optional: `=600x200` for both, `=600x` for width only,
+`=x200` for height only. There must be at least one space between the path and
+the `=`, and the `x` must be lower case. Get any of that wrong and the whole
+image tag prints as raw markdown instead - that is deliberate, so typos are
+visible rather than looking like an image that has not finished syncing.
+
+## Native RichText tags
+
+A short whitelist of the engine's own tags is passed through untouched.
+Everything else in angle brackets is shown as plain text.
+
+```text
+no parameter:   <LINE> <BR> <H1> <H2> <TEXT> <CENTRE> <LEFT> <RIGHT> <SPACE> <POPRGB>
+with parameter: <RGB:r,g,b> <PUSHRGB:r,g,b> <SIZE:font> <INDENT:n>
+                <IMAGE:path> <IMAGECENTRE:path>
+<SIZE:> takes small, medium, large, intro, credits1, credits2 and nothing else.
+```
+
+Parameters must be numeric where numbers are expected and must never contain a
+space. `<RGB:1,0,0>` runs; `<RGB:1, 0, 0>` and `<RGB:1,0>` are printed as plain
+text instead, because handing the engine a broken parameter would kill the
+whole notice. Two live examples:
+
+This sentence turns <RGB:1,0.55,0.2> orange here <RGB:1,1,1> and white again.
+
+<INDENT:40> This whole line is pushed 40 pixels to the right.
+
+## Not supported
+
+- Tables. The engine has no column layout primitive at all, so there is nothing
+  to build one on. Use a list or a fenced code block instead.
+- YAML front matter, or any metadata header at the top of a file. It is printed
+  as plain text. Category assignment comes from `NoticeBoard/categories.txt`,
+  and there is no scheduling or expiry date anywhere in this mod.
+- HTML, reference style links, footnotes, setext headings, indented four-space
+  code blocks, and block level content nested inside a list item.
+
+## Emoji: treat them as unsupported
+
+Emoji break nothing. The files, the hashes, the network sync and the sidebar
+all handle them correctly. The game simply cannot draw them: PZ renders text
+from pre-baked bitmap fonts and never falls back to an operating system emoji
+font, so a missing glyph comes out as a question mark or as nothing at all,
+depending on the font.
+
+Never carry meaning with an emoji - not in a notice title, not in a category
+label, not in the body. Use plain words, a PNG from `NoticeBoard/images/`, or
+the shared icons of the Minidoracat UI Library.
+
+This file deliberately contains no emoji characters: an example that renders as
+question marks would teach the wrong lesson. Paste one in yourself if you want
+to see what happens. U+1F600 and U+2764 are both missing from the 42.20.4
+fonts.

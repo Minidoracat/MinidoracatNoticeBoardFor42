@@ -1,0 +1,46 @@
+# Server rules
+
+Short version: play like other people exist. The full list is five lines long,
+so there is no excuse for not reading it.
+
+1. **No griefing.** Do not destroy, loot or wall in someone else's base. Doors
+   you did not build are not yours to open.
+2. **No cheating.** Item spawners, mod menus and speed hacks are a permanent
+   ban on the first offence. So is sharing an account with someone who uses
+   them.
+3. **Safe zones are PvP free.** The spawn town and the trade post are safe.
+   Everywhere else you fight at your own risk and we will not restore losses.
+4. **One base per group.** Mark it with a sign at the entrance. If a base has
+   been abandoned for three weeks, it can be claimed by someone else.
+5. **Keep chat usable.** Slurs, harassment and spam are removed on sight;
+   repeat offenders are removed with them.
+
+Breaking a rule costs you your character, your base or your account, in that
+order. Admins do not negotiate in chat - if you disagree with a decision, take
+it to the Discord.
+
+> Maintenance is announced in this notice board and in Discord at least one
+> hour ahead. Log out during maintenance: a character left online can lose
+> gear or the whole save slot.
+
+Report a problem to an admin in game, or here (replace this URL with your own):
+
+[Server Discord](https://example.com/discord)
+
+---
+
+Notes for the admin editing this file, delete them before you publish:
+
+This file is named `30_server_rules.only.txt`. The `.only` segment means it is
+**never** laid out as a base copy for other languages - only players reading
+this language see it. Drop the `.only` part if you would rather have every
+language fall back to this text when it has no translation of its own.
+
+Keep the file name identical in every language folder that carries a
+translation, and remember that renaming it makes the notice unread again for
+everyone who can see it.
+
+Do not decorate the rules with emoji. The game draws text from pre-baked
+bitmap fonts with no operating system fallback, so an emoji shows up as a
+question mark or as nothing at all. Words, a PNG from `NoticeBoard/images/`,
+or the shared icons of the Minidoracat UI Library are the reliable options.

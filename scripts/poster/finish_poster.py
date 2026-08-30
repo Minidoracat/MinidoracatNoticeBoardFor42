@@ -1,110 +1,79 @@
 # -*- coding: utf-8 -*-
-"""把主視覺（codex imagegen 產出的 1024x1024）疊上 PZ 風標題板，
-輸出 poster.png / preview.png（512x512）並部署到 MOD 目錄。Deterministic：無隨機數。
+"""把外部 1920x1080 完成稿轉成 PZ 需要的 512x512 preview / poster。
 
-前置：把主視覺放成本目錄下的 main_art.png（1024x1024，上方 25% 需留白給標題板）。
-用法：python scripts/poster/finish_poster.py
+只做等比縮放與純黑 letterbox：完整原圖縮成 512x288、水平置中，
+上下各補 112px 黑邊。不裁切、不拉伸、不重畫、不修改來源內容。
 
-家族視覺語言：暗橄欖告示板＋警戒黃斜紋條＋泛黃膠帶，標題用 Impact 金色、品牌名 Segoe UI Bold 米白。
+用法：python scripts/poster/finish_poster.py <source.png>
+來源是一次性輸入，不留在 repo；出貨只保留生成後的 preview.png / poster.png。
 """
-import os
-from PIL import Image, ImageDraw, ImageFont
+import io
+from pathlib import Path
+import sys
 
-SP = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(SP))
-MOD_42 = os.path.join(REPO, "MOD", "MinidoracatNoticeBoardFor42", "Contents", "mods", "MinidoracatNoticeBoardFor42", "42")
-MOD_ROOT = os.path.join(REPO, "MOD", "MinidoracatNoticeBoardFor42")
+from PIL import Image, ImageOps
 
-TITLE = "NOTICE BOARD"      # 主標（英文大寫，如 MINIMAP / CLEANER）
-BRAND = "Minidoracat"
-SUBTITLE = "for Build 42"
+SP = Path(__file__).resolve().parent
+REPO = SP.parent.parent
+MOD = REPO / "MOD" / "MinidoracatNoticeBoardFor42"
 
-FONTS = r"C:/Windows/Fonts"
-GOLD = (233, 195, 90, 255)
-PALE = (240, 234, 214, 255)
-INK = (28, 26, 20, 255)
-BOARD = (38, 40, 30, 235)
-BOARD_EDGE = (18, 18, 12, 255)
-TAPE = (214, 200, 160, 210)
-HAZ_Y = (208, 168, 40, 255)
-HAZ_K = (24, 22, 18, 255)
+SIZE = 512
+SOURCE_SIZE = (1920, 1080)
+FOREGROUND_SIZE = (512, 288)
+MAX_BYTES = 1_024_000
 
-
-def font(size, *names):
-    for n in names:
-        p = os.path.join(FONTS, n)
-        if os.path.isfile(p):
-            return ImageFont.truetype(p, size)
-    return ImageFont.load_default()
+TARGETS = [
+    SP / "posters" / "preview.png",
+    SP / "posters" / "poster.png",
+    MOD / "preview.png",
+    MOD / "Contents" / "mods" / "MinidoracatNoticeBoardFor42" / "42" / "poster.png",
+]
 
 
-def fit(draw, text, max_w, size, *names):
-    f = font(size, *names)
-    while size > 12 and draw.textlength(text, font=f) > max_w:
-        size -= 2
-        f = font(size, *names)
-    return f
+def build(source_path):
+    with Image.open(source_path) as source:
+        art = source.convert("RGB")
+    if art.size != SOURCE_SIZE:
+        raise ValueError(f"source size {art.size}, expected {SOURCE_SIZE}")
+
+    foreground = ImageOps.contain(art, (SIZE, SIZE), Image.LANCZOS)
+    if foreground.size != FOREGROUND_SIZE:
+        raise ValueError(f"foreground size {foreground.size}, expected {FOREGROUND_SIZE}")
+
+    canvas = Image.new("RGB", (SIZE, SIZE), (0, 0, 0))
+    canvas.paste(foreground, ((SIZE - foreground.width) // 2, (SIZE - foreground.height) // 2))
+    return canvas
 
 
-def stroked(draw, xy, text, f, fill, stroke, w):
-    draw.text(xy, text, font=f, fill=fill, stroke_width=w, stroke_fill=stroke)
+def encode(image):
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG", optimize=True)
+    return buffer.getvalue()
 
 
-def tape(draw, cx, cy, w=64, h=26):
-    draw.rectangle([cx - w // 2, cy - h // 2, cx + w // 2, cy + h // 2], fill=TAPE)
+def validate(data):
+    with Image.open(io.BytesIO(data)) as image:
+        if image.format != "PNG" or image.mode != "RGB" or image.size != (SIZE, SIZE):
+            raise ValueError(f"output {image.format}/{image.mode}/{image.size}")
+        image.verify()
+    if len(data) > MAX_BYTES:
+        raise ValueError(f"output size {len(data)} > {MAX_BYTES}")
 
 
-def hazard_strip(draw, x0, y0, x1, y1, step=26):
-    draw.rectangle([x0, y0, x1, y1], fill=HAZ_Y)
-    for s in range(x0 - (y1 - y0), x1, step * 2):
-        draw.polygon([(s, y1), (s + step, y1), (s + step + (y1 - y0), y0), (s + (y1 - y0), y0)],
-                     fill=HAZ_K)
-    draw.rectangle([x0, y0, x1, y1], outline=BOARD_EDGE, width=3)
-
-
-def load_art(name="main_art.png"):
-    im = Image.open(os.path.join(SP, name)).convert("RGBA")
-    if im.size != (1024, 1024):
-        im = im.resize((1024, 1024), Image.LANCZOS)
-    return im
-
-
-def build_poster():
-    im = load_art()
-    d = ImageDraw.Draw(im)
-    bx0, by0, bx1, by1 = 28, 26, 660, 232
-    d.rectangle([bx0 + 6, by0 + 8, bx1 + 6, by1 + 8], fill=(0, 0, 0, 120))   # 投影
-    d.rectangle([bx0, by0, bx1, by1], fill=BOARD, outline=BOARD_EDGE, width=4)
-    hazard_strip(d, bx0, by0, bx1, by0 + 14)
-    tape(d, bx0 + 26, by0 + 10)
-    tape(d, bx1 - 26, by0 + 10)
-
-    f_brand = fit(d, BRAND, bx1 - bx0 - 60, 54, "segoeuib.ttf", "arialbd.ttf")
-    f_title = fit(d, TITLE, bx1 - bx0 - 56, 106, "impact.ttf", "arialbd.ttf")
-    stroked(d, (bx0 + 30, by0 + 30), BRAND, f_brand, PALE, INK, 3)
-    stroked(d, (bx0 + 28, by0 + 88), TITLE, f_title, GOLD, INK, 5)
-
-    f_sub = font(38, "segoeuib.ttf", "arialbd.ttf")
-    sw = d.textlength(SUBTITLE, font=f_sub)
-    d.rectangle([bx0, by1 + 10, bx0 + sw + 44, by1 + 66], fill=(52, 46, 34, 225),
-                outline=BOARD_EDGE, width=3)
-    stroked(d, (bx0 + 22, by1 + 16), SUBTITLE, f_sub, PALE, INK, 2)
-    return im
-
-
-def save(im):
-    small = im.resize((512, 512), Image.LANCZOS).convert("RGB")
-    out = os.path.join(SP, "posters")
-    os.makedirs(out, exist_ok=True)
-    for t in [os.path.join(out, "poster.png"),
-              os.path.join(out, "preview.png"),
-              os.path.join(MOD_42, "poster.png"),      # 遊戲內海報
-              os.path.join(MOD_ROOT, "preview.png")]:  # Workshop 預覽
-        os.makedirs(os.path.dirname(t), exist_ok=True)
-        small.save(t, "PNG")
-        print("寫出:", t)
+def main(argv):
+    if len(argv) != 2:
+        raise SystemExit("用法：python scripts/poster/finish_poster.py <source.png>")
+    source_path = Path(argv[1]).resolve()
+    data = encode(build(source_path))
+    validate(data)
+    for target in TARGETS:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        if target.read_bytes() != data:
+            raise IOError(f"write verification failed: {target}")
+        print("寫出:", target.relative_to(REPO).as_posix())
+    print(f"512x512 RGB PNG  {len(data):,} / {MAX_BYTES:,} bytes  四個輸出位元組一致")
 
 
 if __name__ == "__main__":
-    save(build_poster())
-    print("done")
+    main(sys.argv)

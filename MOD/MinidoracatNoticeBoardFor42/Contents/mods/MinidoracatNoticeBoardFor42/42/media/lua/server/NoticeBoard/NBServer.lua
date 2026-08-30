@@ -64,9 +64,48 @@ local WELCOME_FALLBACK = [[# Welcome to the Notice Board
 
 Edit this file to publish your own notice.
 
-- One file becomes one tab.
-- Put files in the server's Zomboid/Lua/NoticeBoard/<LANG>/ folder.
+- One file becomes one item in the notice list.
+- Put files in Zomboid/Lua/NoticeBoard/<LANG>/ or a declared category folder.
 ]]
+
+-- 範例包（admin 面板「重建範例」按鈕）：把 MOD 內建的範例公告**直接寫進 live tree**
+-- （NoticeBoard/ 根層與選定語系目錄），寫完立刻 refresh，符合該語系可見規則的玩家
+-- 不必等下一輪輪詢就能看到。
+--
+-- 覆寫範圍**只有下面那份固定 manifest 的 5 個相對路徑**（共用兩份 + 選定語系三份）：
+--   * 另一個語系的目錄一個位元組都不會被動到（manifest 只含選定語系）；
+--   * 服主自己放在受管路徑之外的公告與圖片原封不動（沒有任何刪除路徑）。
+-- categories.txt 與 README.txt 會被覆寫，這是使用者明確要求的代價：範例要能一鍵還原成
+-- 出貨版本，而分類宣告是範例公告能被掃描到的前提。UI 的兩個選項都會明說這一點。
+local EXAMPLE_PACK_DIR = "media" .. getFileSeparator() .. "NoticeBoardExamplePack"
+
+-- 生成選單只有這兩個語系（CH＝繁體中文、EN＝English）：範例文字是人手寫的，
+-- 只有這兩份資源存在。**精確比對、不走 Core.LANGS**——那份白名單有 29 個語系，
+-- 拿它驗會讓 client 送 JP 進來後在預讀階段才失敗（零寫入但白吃一次冷卻）。
+local EXAMPLE_PACK_LANGS = {
+    CH = true,
+    EN = true,
+}
+
+-- **固定 manifest**，不列舉磁碟也不列舉資源目錄。路徑一律以 "/" 書寫，落地前才換成
+-- 平台分隔符——log 要印的是這份穩定的相對路徑，不是含平台分隔符的絕對路徑。
+--
+-- 兩張表的順序就是**寫入順序**，而寫入順序本身是安全設計：選定語系的三份公告先落地，
+-- categories.txt 次之，README.txt 最後。中途失敗（磁碟滿／權限）時最不該先毀的就是
+-- categories.txt——它壞掉會讓已宣告分類底下的公告整批掃不到，比少一份範例嚴重得多。
+local EXAMPLE_PACK_LANG_FILES = {
+    "10_welcome.txt",
+    "10_news/20_markdown_showcase.txt",
+    "20_rules/30_server_rules.only.txt",
+}
+local EXAMPLE_PACK_COMMON_FILES = {
+    "categories.txt",
+    "README.txt",
+}
+
+-- ack 的 count 是 wire contract（client 端只接受這個精確值）。寫成算式而不是字面 5，
+-- 是為了讓「manifest 加一份檔卻忘了改 client 的期望值」在測試裡紅掉而不是靜默半殘。
+local EXAMPLE_PACK_FILE_COUNT = #EXAMPLE_PACK_LANG_FILES + #EXAMPLE_PACK_COMMON_FILES
 
 local function newState()
     return {
@@ -77,6 +116,7 @@ local function newState()
         lastPollMs = 0,
         lastMaintenanceMs = 0,
         sourceCaches = {},
+        sourceCategories = nil,
         languageCaches = {},
         -- 實際掃到檔案的語系（進 manifest，供面板語系選單列出）。
         availableLanguages = {},
@@ -99,6 +139,10 @@ local function newState()
         lastIssueSignature = nil,
         rejectLogAt = {},
         reloadCooldownAt = {},
+        -- 範例包生成的獨立冷卻桶（比照 reloadCooldownAt）；key = "examples|"..username。
+        -- 與 register/resync 共用同一張表的話，admin 剛進場的 register 會先吃掉冷卻，
+        -- 按鈕被靜默丟棄卻仍顯示「已送出」（假成功）。時長沿用 REQUEST_COOLDOWN_MS。
+        examplesCooldownAt = {},
         imageEntries = {},
         imageByHash = {},
         imageManifest = {},
@@ -308,7 +352,47 @@ local function writeTextFile(path, content)
     if not ok then
         return false, tostring(writeError)
     end
+
+    -- LuaFileWriter 底下是 PrintWriter，write/close 的 IOException 不會外拋；讀回比對才是
+    -- 唯一能分辨真的落地與 pcall 假成功的方法。readLine 會吃掉最後一個換行，故期望值同樣移除。
+    local reader = nil
+    local verifyOk, actual = pcall(function()
+        reader = getFileReader(path, false)
+        if not reader then
+            error("verify reader returned nil")
+        end
+        local lines = {}
+        while true do
+            local line = reader:readLine()
+            if line == nil then
+                break
+            end
+            lines[#lines + 1] = line
+        end
+        reader:close()
+        reader = nil
+        return table.concat(lines, "\n")
+    end)
+    closeReader(reader)
+    if not verifyOk then
+        return false, "verify read failed: " .. tostring(actual)
+    end
+    local expected = string.gsub(content, "\n$", "")
+    if actual ~= expected then
+        return false, "verify mismatch"
+    end
     return true, nil
+end
+
+-- 「這個路徑上確定沒有檔案」。**探測失敗一律回 false**：分不清「不存在」與「讀不到」時，
+-- 不寫才不會蓋掉服主已經放在那裡的內容。所有 ensure*（只在檔案不存在時建立）共用這一支。
+local function isFileAbsent(path)
+    local reader = nil
+    local probeOk = pcall(function()
+        reader = getFileReader(path, false)
+    end)
+    closeReader(reader)
+    return probeOk and reader == nil
 end
 
 local function writeBootstrapFile(language, content)
@@ -395,13 +479,7 @@ local IMAGES_README_ASSET = "media" .. getFileSeparator() .. "NoticeBoardImages"
 
 local function ensureImagesReadme()
     local path = IMAGE_DIR .. getFileSeparator() .. IMAGES_README_NAME
-    local reader = nil
-    local probeOk = pcall(function()
-        reader = getFileReader(path, false)
-    end)
-    closeReader(reader)
-    -- 探測失敗時什麼都不做：分不清「不存在」與「讀不到」時，不寫才不會蓋掉服主的筆記。
-    if not probeOk or reader ~= nil then
+    if not isFileAbsent(path) then
         return false
     end
 
@@ -418,6 +496,124 @@ local function ensureImagesReadme()
     end
     logLine("images readme created " .. IMAGES_README_NAME)
     return true
+end
+
+-- 分類宣告檔。**只在檔案不存在時**建立一份純註解的模板：模板本身不宣告任何分類
+-- （每一行都是 `#` 註解），所以「服主什麼都沒設」與升級前完全同形——側欄不會突然多出
+-- 分類，也沒有任何公告被搬走。已存在則絕不覆蓋（服主的分類設定就在裡面）。
+-- 內容是 .lua 裡的字面值，**必須維持純 ASCII**（非 ASCII 字面值會被 Kahlua 截成單一
+-- 位元組）；要寫中文標籤請直接編輯這個檔，getFileWriter 落地的是 UTF-8。
+local CATEGORIES_TEMPLATE = [[
+# Notice board categories. One declaration per line:
+#
+#     categoryKey|languageCode|displayLabel
+#
+#   categoryKey    Folder name under NoticeBoard/<LANG>/ .
+#                  ASCII letters, digits, "_" and "-" only.
+#                  A leading number controls the sidebar order.
+#   languageCode   One of the language folder codes: EN, CH, JP, ...
+#   displayLabel   Text shown in the sidebar. UTF-8 is fine here.
+#
+# Declare the same key once per language to translate its label.
+# Blank lines and lines starting with "#" are ignored, so this file
+# declares no categories until you add one.
+#
+# Example (remove the leading "#" to activate):
+#
+# 10_news|EN|News
+# 10_news|CH|News
+# 20_rules|EN|Rules
+# 20_rules|CH|Rules
+#
+# Then put notice files in NoticeBoard/EN/10_news/ , NoticeBoard/CH/10_news/ ...
+# Notices left directly in NoticeBoard/<LANG>/ stay uncategorised.
+]]
+
+local function ensureCategoriesFile()
+    local path = Reader.NOTICE_ROOT .. getFileSeparator() .. Reader.CATEGORY_FILE
+    if not isFileAbsent(path) then
+        return false
+    end
+
+    local written, writeError = writeTextFile(path, CATEGORIES_TEMPLATE)
+    if not written then
+        logLine("categories template write failed: " .. safeLogValue(writeError))
+        return false
+    end
+    logLine("categories template created " .. Reader.CATEGORY_FILE)
+    return true
+end
+
+-- manifest 的相對路徑（一律 "/"）換成平台分隔符。Windows 的 getFileSeparator() 是 "\"，
+-- 直接把 "EN/10_welcome.txt" 交給 getFileWriter 會建出名字裡含斜線的單一檔案。
+local function nativeRelativePath(relative)
+    local separator = getFileSeparator()
+    if separator == "/" then
+        return relative
+    end
+    return (string.gsub(relative, "/", separator))
+end
+
+-- 這一次要覆寫的 5 個受管相對路徑，**依寫入順序**（選定語系三份 -> categories.txt ->
+-- README.txt，理由見 EXAMPLE_PACK_LANG_FILES 上方）。language 由呼叫端以
+-- EXAMPLE_PACK_LANGS 精確驗過，所以直接串進路徑是安全的（不可能是 ".." 之類的值）。
+local function examplePackManifest(language)
+    local files = {}
+    local index
+    for index = 1, #EXAMPLE_PACK_LANG_FILES do
+        files[index] = language .. "/" .. EXAMPLE_PACK_LANG_FILES[index]
+    end
+    for index = 1, #EXAMPLE_PACK_COMMON_FILES do
+        files[#files + 1] = EXAMPLE_PACK_COMMON_FILES[index]
+    end
+    return files
+end
+
+-- 範例包落地。回傳失敗的相對路徑，或 nil 代表 5 份全部寫成功——**只有全成功一種成功**，
+-- 所以不必回檔數：那個數字恆為 EXAMPLE_PACK_FILE_COUNT，而中途失敗時「已寫幾份」只對
+-- log 有意義（下面那行自己就印了），ack 不帶它。
+--
+-- 兩階段是硬性要求：**先把這 5 份資源全部讀進記憶體，全到齊才動磁碟**。而且只預讀
+-- 選定語系那一份——另一個語系的資源缺失不該擋住這一次生成。資源缺一份就寫一半的話，
+-- 服主拿到的是自相矛盾的 live tree（categories.txt 宣告的分類沒有內容、README 講的檔案
+-- 不存在），比完全沒有更難排查。範例文字總量是 KB 等級，一次全讀沒有成本問題。
+--
+-- 覆寫是刻意的（含 live 的 categories.txt 與 README.txt）：這顆按鈕的用途就是「把範例
+-- 還原成出貨版本並立刻生效」。安全邊界是「只碰這 5 個固定相對路徑」——另一個語系的目錄、
+-- images/、以及服主自己新增的公告檔全部不在其中。
+local function writeExamplePack(language)
+    local files = examplePackManifest(language)
+    local contents = {}
+    local index
+    for index = 1, #files do
+        local relative = files[index]
+        local content = readModAsset(
+            EXAMPLE_PACK_DIR .. getFileSeparator() .. nativeRelativePath(relative))
+        if not content then
+            -- 相對路徑由 .lua 內的字面值與已驗過的語系代碼組成（純 ASCII），可原樣進 log。
+            logLine("example pack asset unavailable path=" .. relative
+                .. "; nothing written")
+            return relative
+        end
+        contents[index] = content
+    end
+
+    for index = 1, #files do
+        local relative = files[index]
+        local written, writeError = writeTextFile(
+            Reader.NOTICE_ROOT .. getFileSeparator() .. nativeRelativePath(relative),
+            contents[index])
+        if not written then
+            -- writeTextFile 會讀回比對，所以「PrintWriter 靜默吞掉 IOException」也走這條。
+            -- log 帶的是受管相對路徑（服主看得懂、可直接對照 NoticeBoard/ 底下的檔），
+            -- 不是含伺服器絕對路徑的原始錯誤——那份只留在 error 欄位裡且已截長。
+            logLine("example pack write failed path=" .. relative
+                .. " written=" .. tostring(index - 1)
+                .. " error=" .. safeLogValue(writeError, LOG_VALUE_LIMIT))
+            return relative
+        end
+    end
+    return nil
 end
 
 local function issueText(issue)
@@ -1055,9 +1251,18 @@ local function pumpImageEncode()
     return false
 end
 
+-- 分類 key 進 log 的顯示。空字串（語系根層＝未分類）寫成 "-"，否則 log 會出現
+-- 看起來像壞掉的 ">10_news"。
+local function categoryText(category)
+    if category == nil or category == "" then
+        return "-"
+    end
+    return safeLogValue(category, LOG_VALUE_LIMIT)
+end
+
 local function buildLanguageCaches()
     local state = NBServer.state
-    local scanned = Reader.scanAll(state.sourceCaches)
+    local scanned = Reader.scanAll(state.sourceCaches, state.sourceCategories)
     local caches = {}
     local issues = {}
     local index
@@ -1071,7 +1276,8 @@ local function buildLanguageCaches()
     local available = {}
     for index = 1, #languages do
         local language = languages[index]
-        local cache = Reader.composeLanguage(scanned.languages, language, state.defaultLanguage)
+        local cache = Reader.composeLanguage(scanned.languages, language,
+            state.defaultLanguage, scanned.categories)
         caches[language] = cache
         local source = rawget(scanned.languages, language)
         if source and #source.files > 0 then
@@ -1083,6 +1289,19 @@ local function buildLanguageCaches()
                 kind = "trimmed",
                 language = language,
                 id = cache.trimmed[trimIndex],
+            }
+        end
+        -- 這個語系把某份公告放進了與 DefaultLanguage 不同的分類。位置以底稿為準
+        -- （見 composeLanguage），但一定要讓服主看到：症狀是「翻譯版明明搬了資料夾卻沒動」，
+        -- 少了這一行完全無從察覺。
+        local conflictIndex
+        for conflictIndex = 1, #cache.categoryConflicts do
+            local conflict = cache.categoryConflicts[conflictIndex]
+            issues[#issues + 1] = {
+                kind = "category-conflict",
+                language = language,
+                id = conflict.id,
+                detail = categoryText(conflict.from) .. ">" .. categoryText(conflict.to),
             }
         end
     end
@@ -1099,6 +1318,7 @@ local function buildLanguageCaches()
 
     return {
         sources = scanned.languages,
+        sourceCategories = scanned.categories,
         caches = caches,
         issues = issues,
         languages = languages,
@@ -1140,6 +1360,9 @@ local function nextJobMessage(job)
             files = job.cache.manifestFiles,
             images = job.images,
             langs = job.languages,
+            -- 側欄的分類清單（{{k=..., t=...}}）。沒宣告分類時是空清單；
+            -- 舊版 client 忽略未知欄位，互通不受影響。
+            cats = job.cache.manifestCategories,
             -- 這份內容是哪個語系。舊版 client 忽略未知欄位，互通不受影響。
             lang = job.language,
             -- 這份內容對應到 client 的哪一次語系切換請求。client 靠序號（而非語系值）確認
@@ -1398,6 +1621,7 @@ local function refreshSnapshot(reason, forceAll)
     end
 
     state.sourceCaches = built.sources
+    state.sourceCategories = built.sourceCategories
     state.languageCaches = built.caches
     state.availableLanguages = built.available
     updateIssueLog(built.issues)
@@ -1523,11 +1747,16 @@ local function rebuildOnlinePlayers()
             state.jobs[IMAGE_JOB_PREFIX .. username] = nil
         end
     end
-    -- rejectLogAt 的 key 有多種形式（username、"reload|"..username、"enq|"..username），且被拒的
-    -- register 玩家從未進 registrations——必須以 rejectLogAt 本身為基準清理，否則此表隨歷史 username
-    -- 無界成長。清理以「本名或去掉任一已知前綴後的名字」任一在線即保留：PZ username 可含 `|`，
-    -- 單純去前綴會把本名就叫 "reload|xxx" 的玩家與 reload-reject key 混為一談。
-    local LOG_KEY_PREFIXES = { "reload|", "enq|" }
+    -- rejectLogAt 的 key 有多種形式（本名，或下面 LOG_KEY_PREFIXES 的任一前綴 + 本名），
+    -- 且被拒的 register 玩家從未進 registrations——必須以表本身為基準清理，否則此表隨歷史
+    -- username 無界成長。清理以
+    -- 「本名或去掉任一已知前綴後的名字」任一在線即保留：PZ username 可含 `|`，單純去前綴
+    -- 會把本名就叫 "reload|xxx" 的玩家與 reload-reject key 混為一談。新增一種前綴 key 就
+    -- 必須同時進這張表，否則那批 key 會在每次 rebuild 被當成「主人不在線」全部刪掉，
+    -- 該指令的 log 節流等於失效。
+    local LOG_KEY_PREFIXES = {
+        "reload|", "enq|", "examples|", "examples-send|", "examples-lang|",
+    }
     local function ownerOffline(key)
         if rawget(online, key) then
             return false
@@ -1544,16 +1773,25 @@ local function rebuildOnlinePlayers()
         return true
     end
 
-    local logKey
-    for logKey in pairs(state.rejectLogAt) do
-        if ownerOffline(logKey) then
-            state.rejectLogAt[logKey] = nil
+    -- 三張表的 key 同形（本名，或已知前綴 + 本名）、清理規則也同一條，且都會隨歷史 username
+    -- 無界成長，所以離線時一併清掉。**新增一個帶前綴的桶必須同時做兩件事**：前綴進
+    -- LOG_KEY_PREFIXES、桶自己進這裡多一個迴圈。漏前者會讓在線玩家的鍵每秒被誤判成
+    -- 「主人不在線」刪掉（該指令的 log 節流等於失效）；漏後者就是一張永不縮小的表。
+    -- imgCooldownAt 不在這裡：它的 key 只有本名，且必須保留 LOCAL_JOB_KEY（見下）。
+    local key
+    for key in pairs(state.rejectLogAt) do
+        if ownerOffline(key) then
+            state.rejectLogAt[key] = nil
         end
     end
-    local reloadKey
-    for reloadKey in pairs(state.reloadCooldownAt) do
-        if ownerOffline(reloadKey) then
-            state.reloadCooldownAt[reloadKey] = nil
+    for key in pairs(state.reloadCooldownAt) do
+        if ownerOffline(key) then
+            state.reloadCooldownAt[key] = nil
+        end
+    end
+    for key in pairs(state.examplesCooldownAt) do
+        if ownerOffline(key) then
+            state.examplesCooldownAt[key] = nil
         end
     end
     local imgKey
@@ -1940,6 +2178,115 @@ local function handleReload(player)
     writeReconcile(false, nil)
 end
 
+-- 範例包生成的 ack。**每一條路徑都要回一則**：reload 沒有 ack 是因為它的結果會以「公告更新」
+-- 的形式回到面板，而範例包寫的是伺服器磁碟，admin 在遊戲裡看不到任何變化——沒有 ack 就
+-- 分不清「寫好了」與「權限被拒／冷卻中／磁碟滿」。
+-- payload 只帶 enum kind 與成功時的檔數：伺服器的絕對路徑與原始 IO 錯誤留在 server log，
+-- 不外洩給 client（那是伺服器的檔案系統佈局）。
+local function sendExamplesResult(player, kind, count)
+    if not isServer() or not player then
+        return
+    end
+    -- count 為 nil 時該欄位就不存在（Lua 的 nil 值等於沒有這個 key），不需要另一條分支。
+    local payload = { kind = kind, count = count }
+    local ok, sendError = pcall(function()
+        sendServerCommand(player, NBServer.MODULE, "examplesResult", payload)
+    end)
+    if not ok then
+        -- 送信故障時惡意 client 仍能一直重送 forbidden/cooldown；錯誤 log 不節流會繞過
+        -- 請求端既有的 10 秒 log 桶，把 10MB 整檔截斷。用同一張 rejectLogAt、但獨立 key，
+        -- 避免 send failure 與權限拒絕互相吃掉診斷訊息。
+        local username = usernameOf(player)
+        local state = NBServer.state
+        local now = getTimestampMs()
+        local key = "examples-send|" .. username
+        local lastLog = rawget(state.rejectLogAt, key) or 0
+        if now - lastLog >= REQUEST_COOLDOWN_MS then
+            state.rejectLogAt[key] = now
+            logLine("examples result send failed username=" .. safeLogValue(username)
+                .. " kind=" .. kind
+                .. " error=" .. safeLogValue(sendError, LOG_VALUE_LIMIT))
+        end
+    end
+end
+
+-- examples：admin 面板的「重建範例」按鈕。權限與語系在 client 端都先驗過一次，
+-- 但**這裡才是權威**：args 走網路來，形狀與值都是信任邊界。
+local function handleExamples(player, args)
+    local state = NBServer.state
+    local username = usernameOf(player)
+    if not isAdmin(player) then
+        local now = getTimestampMs()
+        local key = "examples|" .. username
+        local lastLog = rawget(state.rejectLogAt, key) or 0
+        if now - lastLog >= REQUEST_COOLDOWN_MS then
+            state.rejectLogAt[key] = now
+            logLine("rejected examples username=" .. safeLogValue(username))
+        end
+        -- 誠實回報而不是靜默丟棄：非 admin 送這條指令只會來自改過的 client，
+        -- 而正常 admin 掉權限（服主當場撤掉）時也該看到「權限不足」而非按鈕壞掉。
+        -- **ack 刻意不節流**（只有上面那行 log 節流）：payload 是兩個欄位的定值，
+        -- 一個請求換一個等大的回覆，沒有放大係數；真正貴的是磁碟寫入，那條被
+        -- admin 驗證與 10 秒冷卻擋著。把 ack 也套上節流只會讓「權限剛被撤掉」的
+        -- admin 連按兩次時第二次靜默無聲，違反這顆按鈕唯一的回饋契約。
+        sendExamplesResult(player, "forbidden", nil)
+        return
+    end
+
+    -- 語系必須在**冷卻之前**驗。順序反過來的話，一個改過的 client 只要送一次非法 lang
+    -- 就能把這位 admin 的 10 秒冷卻吃掉，讓他接下來的合法請求被自己的無效請求擋住。
+    -- 非法值一律零寫入、零冷卻消耗，並回 failed（不另開一種 kind：admin 的正常 UI
+    -- 送不出非法值，這條只會來自改過的 client，多一種 kind 只是多一份要翻譯的死字串）。
+    local language = type(args) == "table" and rawget(args, "lang") or nil
+    if type(language) ~= "string" or rawget(EXAMPLE_PACK_LANGS, language) ~= true then
+        local langNow = getTimestampMs()
+        -- 獨立 log key（前綴已登記進 rebuildOnlinePlayers 的 LOG_KEY_PREFIXES）：
+        -- 與 "examples|" 共用會讓權限拒絕與非法語系互相吃掉診斷訊息。
+        local langKey = "examples-lang|" .. username
+        local lastLangLog = rawget(state.rejectLogAt, langKey) or 0
+        if langNow - lastLangLog >= REQUEST_COOLDOWN_MS then
+            state.rejectLogAt[langKey] = langNow
+            logLine("examples invalid lang username=" .. safeLogValue(username)
+                .. " lang=" .. safeLogValue(language, LOG_VALUE_LIMIT))
+        end
+        sendExamplesResult(player, "failed", nil)
+        return
+    end
+
+    local now = getTimestampMs()
+    local cooldownKey = "examples|" .. username
+    local lastAt = rawget(state.examplesCooldownAt, cooldownKey) or 0
+    if lastAt ~= 0 and now - lastAt < REQUEST_COOLDOWN_MS then
+        sendExamplesResult(player, "cooldown", nil)
+        return
+    end
+    state.examplesCooldownAt[cooldownKey] = now
+
+    logLine("examples requested username=" .. safeLogValue(username)
+        .. " lang=" .. language)
+    local failedPath = writeExamplePack(language)
+    if failedPath ~= nil then
+        sendExamplesResult(player, "failed", nil)
+        return
+    end
+
+    -- 寫完必須立刻 refresh：這顆按鈕的整個賣點就是「按一下玩家馬上看得到」。
+    -- forceAll=true 是必要的——公告內容可能與上一版逐位元組相同（重按同一個語系），
+    -- 而 languageCachesEqual 相等時 refreshSnapshot 不會重推，玩家端就不會更新。
+    -- **refresh 失敗不得回 success**：檔案確實寫進磁碟了，但玩家看到的仍是舊快照，
+    -- 而 admin 唯一的資訊來源就是這則 ack。log 帶已寫檔數，服主才知道磁碟已被改動。
+    if not refreshSnapshot("examples-" .. language, true) then
+        logLine("example pack refresh failed lang=" .. language
+            .. " files-written=" .. tostring(EXAMPLE_PACK_FILE_COUNT))
+        sendExamplesResult(player, "failed", nil)
+        return
+    end
+
+    logLine("examples written count=" .. tostring(EXAMPLE_PACK_FILE_COUNT)
+        .. " lang=" .. language)
+    sendExamplesResult(player, "success", EXAMPLE_PACK_FILE_COUNT)
+end
+
 -- imgreq：client 只要求「本機快取缺少的 hash」，並可帶一個**續傳起點**（args.from，
 -- 與 hashes 平行的陣列）只要缺的那幾塊。防 DoS 的形狀與 resync 一致——
 -- 獨立 per-player 冷卻桶（不與 register/resync 共用，避免進場的 register 吃掉冷卻造成靜默丟棄）、
@@ -2052,6 +2399,8 @@ function NBServer.onClientCommand(module, command, player, args)
         handleRegister(player, args)
     elseif command == "reload" then
         handleReload(player)
+    elseif command == "examples" then
+        handleExamples(player, args)
     elseif command == "resync" then
         handleResync(player, args)
     elseif command == "imgreq" then
@@ -2092,6 +2441,7 @@ function NBServer.onServerStarted()
     state.queue = {}
     state.rejectLogAt = {}
     state.reloadCooldownAt = {}
+    state.examplesCooldownAt = {}
     state.imgCooldownAt = {}
     state.lastReconcileSignature = nil
     state.availableLanguages = {}
@@ -2116,6 +2466,7 @@ function NBServer.onServerStarted()
         state.localLanguage = currentLocalLanguage()
     end
 
+    ensureCategoriesFile()
     bootstrapIfEmpty()
     ensureImagesReadme()
     refreshSnapshot("startup", true)
@@ -2173,6 +2524,9 @@ NBServer.processQueue = processQueue
 -- 開檔失敗不得丟 entry、移除後總量重算），這些光讀碼保證不了。
 NBServer.scanImages = scanImages
 NBServer.ensureImagesReadme = ensureImagesReadme
+-- 同上：模板「已存在則絕不覆蓋」與「探測失敗就不寫」是服主資料的唯一防線，
+-- 光讀碼保證不了，測試必須實跑這一份。
+NBServer.ensureCategoriesFile = ensureCategoriesFile
 -- 同上：唯有實跑一次完整編碼才能釘住 entry.pb（原地覆蓋比對的基準）確實來自
 -- 開檔時的 available()，而不是實際讀到的位元組數——兩者在 short-read 時會分岔。
 NBServer.pumpImageEncode = pumpImageEncode

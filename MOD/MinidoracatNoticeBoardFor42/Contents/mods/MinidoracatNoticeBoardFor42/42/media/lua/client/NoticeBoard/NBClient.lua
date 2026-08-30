@@ -18,6 +18,10 @@ NBClient.UNREAD_CHANGED_EVENT = "MinidoracatNB_UnreadChanged"
 -- 語系相關的失敗回報。沿用既有事件機制（不新增全域輪詢）：面板 Add 一個 handler 就能出 toast。
 -- payload 一律是 table，欄位見 NBClient.getLanguageStatus 上方的說明。
 NBClient.LANGUAGE_STATUS_EVENT = "MinidoracatNB_LanguageStatus"
+-- 範例包生成的結果回報。與語系狀態同一套機制（面板 Add 一個 handler 就能出 toast），
+-- 但**必須是獨立事件**：語系狀態事件的 payload 形狀（save-failed／switch-exhausted 等）
+-- 是面板已在解讀的 enum，混進來只會讓兩邊都得先猜這則是誰的。
+NBClient.EXAMPLES_STATUS_EVENT = "MinidoracatNB_ExamplesStatus"
 
 local LOG_NAME = "MinidoracatNoticeBoardFor42"
 local LOG_PREFIX = "[MinidoracatNoticeBoardFor42]"
@@ -47,6 +51,26 @@ local RESYNC_RESET_MS = 300000
 -- settings.ini 落地失敗後的重試間隔。磁碟滿／檔案被鎖是會恢復的，記憶體裡已經是新值，
 -- 只差把它寫回去；不重試就會變成「這場好好的、下次進場莫名回到舊語系」。
 local SETTINGS_RETRY_MS = 30000
+-- 範例包 ack 的合法 kind 白名單。server 是權威，但 payload 走網路來，形狀仍是信任邊界：
+-- 白名單外的值一律丟棄並寫一行 log，**不猜、不當成成功**（面板會據此出 toast，
+-- 讓「不認識的 kind」變成靜默成功比顯示錯誤訊息更糟）。
+local EXAMPLES_RESULT_KINDS = {
+    success = true,
+    failed = true,
+    cooldown = true,
+    forbidden = true,
+}
+-- 受管檔數是 wire contract（server 端 EXAMPLE_PACK_FILE_COUNT）。一次生成寫的是
+-- 共用兩份（categories.txt、README.txt）加選定語系三份，恰好 5 份；只有「5 份全成功」
+-- 才能回 success，其他數字代表不完整或版本不相容，不可拿來告訴 admin「範例已生成」。
+local EXAMPLES_EXPECTED_COUNT = 5
+-- 生成選單的語系白名單，與 server 的 EXAMPLE_PACK_LANGS 同一份契約。
+-- **不走 Core.LANGS**：那份有 29 個語系，而範例文字只有這兩份資源存在，
+-- 拿它驗會讓面板送得出 server 一定拒收的值（白吃一次來回）。
+local EXAMPLE_PACK_LANGS = {
+    CH = true,
+    EN = true,
+}
 
 local function newState()
     return {
@@ -76,8 +100,16 @@ local function newState()
         -- 一份剛好也是 EN 的舊快照會讓語系值比對誤判成「切換完成」，pending 被清掉、
         -- 重送計數歸零，之後 JP 快照到達也不會重新進入 pending -> 面板永久停在錯的語系。
         langSeq = 0,
+        -- 側欄收合偏好：nil = 玩家沒按過收合鈕，面板預設展開。
+        -- 與 languagePreference 同一次讀檔載入（見 ensureSettingsLoaded）。
+        sidebarPreference = nil,
         -- 落地失敗、等著重試的偏好值（nil = 沒有待寫入的）。
         settingsPending = nil,
+        -- 側欄偏好寫失敗時，維護輪補寫同一份 settings.ini；不需要另存一份值，
+        -- sidebarPreference 本身就是本場生效且最後要落地的權威值。
+        sidebarSettingsPending = false,
+        -- settings.ini 首次讀取失敗時保持 true；維護輪成功重讀前不得用 fallback 值截斷覆寫整檔。
+        settingsLoadPending = false,
         lastSettingsRetryMs = 0,
         registerRetryCount = 0,
         lastRegisterAttemptMs = 0,
@@ -94,6 +126,8 @@ local function newState()
         resyncExhaustedLogged = false,
         lastResyncAttemptMs = 0,
         lastCommandErrorLogMs = 0,
+        -- 範例包 ack 被丟棄的 log 節流（見 logExamplesDrop）。
+        lastExamplesDropLogMs = 0,
     }
 end
 
@@ -231,13 +265,13 @@ local function writeReadState()
     return true, nil
 end
 
--- settings.ini：一行一個 key=value，目前只有 lang。讀寫比照 ReadState（整段 pcall 包覆、
--- 失敗只寫 log 不拋出），玩家手改壞了不得讓面板進不去。
--- 第三個回傳值是**檔案裡的原始字串**（沒有 lang= 這行則為 nil）：正規化會把「沒檔案」、
--- 「值壞掉」、「寫到一半截斷」全部壓成同一個合法值 auto，呼叫端要能分辨才寫得出有用的 log。
-local function loadLanguagePreference()
+-- settings.ini：一行一個 key=value，目前是 lang（語系偏好）與 sidebar（側欄收合偏好）。
+-- 讀寫比照 ReadState（整段 pcall 包覆、失敗只寫 log 不拋出），玩家手改壞了不得讓面板進不去。
+-- 讀是**整檔一次**、寫是**整檔重寫**：一個 key 各配一支讀寫函式的話，寫 lang 會把 sidebar
+-- 那行洗掉——getFileWriter(path, true, false) 的第三個參數是 append，false 等於截斷重寫。
+local function loadSettings()
     local reader = nil
-    local value = nil
+    local values = {}
     local ok, readError = pcall(function()
         reader = getFileReader(SETTINGS_FILE, false)
         if not reader then
@@ -250,8 +284,8 @@ local function loadLanguagePreference()
                 break
             end
             local key, raw = string.match(line, "^%s*([%w_]+)%s*=%s*(.-)%s*$")
-            if key == "lang" then
-                value = raw
+            if key ~= nil then
+                values[key] = raw
             end
         end
 
@@ -261,12 +295,25 @@ local function loadLanguagePreference()
 
     closeReader(reader)
     if not ok then
-        return nil, tostring(readError), nil
+        return nil, tostring(readError)
     end
-    return Core.normalizeLanguagePreference(value), nil, value
+    return values, nil
 end
 
-local function writeLanguagePreference(preference)
+-- 側欄收合偏好只有三態：true／false／沒設過。玩家手改成別的字樣一律當沒設過，
+-- 讓面板回到「預設展開」，而不是被一個壞值鎖死在某一邊。
+local function normalizeSidebarPreference(raw)
+    if raw == "true" then
+        return true
+    end
+    if raw == "false" then
+        return false
+    end
+    return nil
+end
+
+-- 整檔重寫。preference 是語系代碼或 AUTO_LANGUAGE；sidebar 是 nil／true／false。
+local function writeSettings(preference, sidebar)
     local writer = nil
     local ok, writeError = pcall(function()
         writer = getFileWriter(SETTINGS_FILE, true, false)
@@ -274,6 +321,10 @@ local function writeLanguagePreference(preference)
             error("getFileWriter returned nil")
         end
         writer:write("lang=" .. preference .. "\n")
+        -- 沒設過就不寫這一行：「檔案裡有 sidebar=」本身就是「玩家按過收合鈕」的證據。
+        if sidebar ~= nil then
+            writer:write("sidebar=" .. tostring(sidebar) .. "\n")
+        end
         writer:close()
         writer = nil
     end)
@@ -287,15 +338,57 @@ local function writeLanguagePreference(preference)
     -- （LuaManager.java:12751-12769，write/close 直接委派給 PrintWriter），而 PrintWriter
     -- 把建構後的 IOException 記在內部 trouble 旗標裡、從不往外拋，wrapper 也沒有暴露
     -- checkError()。也就是說磁碟滿或檔案被鎖時我們會拿到一個「成功」的 pcall。
-    -- 引擎既然沒給可檢查的介面，唯一能確認的方式就是讀回來比對——這個檔只有一行，成本可接受。
-    local _, readError, raw = loadLanguagePreference()
+    -- 引擎既然沒給可檢查的介面，唯一能確認的方式就是讀回來比對——這個檔只有兩行，成本可接受。
+    local values, readError = loadSettings()
     if readError then
         return false, "verify read failed: " .. tostring(readError)
     end
-    if raw ~= preference then
-        return false, "verify mismatch: stored=" .. tostring(raw)
+    local storedLanguage = rawget(values, "lang")
+    if storedLanguage ~= preference then
+        return false, "verify mismatch: stored=" .. tostring(storedLanguage)
+    end
+    local storedSidebarRaw = rawget(values, "sidebar")
+    if normalizeSidebarPreference(storedSidebarRaw) ~= sidebar then
+        return false, "verify mismatch: sidebar=" .. tostring(storedSidebarRaw)
     end
     return true, nil
+end
+
+-- 首次呼叫讀檔；讀取失敗時不把 fallback auto 當成「已載入」，而是交給維護輪重試。
+-- force 只由維護輪使用，避免每個 getter／tick 都重新打一次失敗 IO。
+local function ensureSettingsLoaded(force)
+    local state = NBClient.state
+    if state.languagePreference ~= nil and not state.settingsLoadPending then
+        return true
+    end
+    if state.settingsLoadPending and not force then
+        return false
+    end
+
+    local values, readError = loadSettings()
+    if not values then
+        if not state.settingsLoadPending then
+            logLine("settings load failed: " .. safeLogValue(readError, 160))
+        end
+        state.settingsLoadPending = true
+        return false
+    end
+
+    local raw = rawget(values, "lang")
+    local preference = Core.normalizeLanguagePreference(raw)
+    if raw ~= nil and raw ~= Core.AUTO_LANGUAGE and preference == Core.AUTO_LANGUAGE then
+        logLine("settings lang not recognized value=" .. safeLogValue(raw, LOG_VALUE_LIMIT)
+            .. "; using auto")
+    end
+    state.settingsLoadPending = false
+    -- 讀檔失敗期間玩家可能已改偏好：pending 的記憶體值優先；未改的欄位才從磁碟補回。
+    if state.settingsPending == nil then
+        state.languagePreference = preference
+    end
+    if not state.sidebarSettingsPending then
+        state.sidebarPreference = normalizeSidebarPreference(rawget(values, "sidebar"))
+    end
+    return true
 end
 
 local function ensureReadStateLoaded()
@@ -360,8 +453,14 @@ end
 -- 只描述網路送出：玩家改了語系、這場生效、下次進場莫名回到舊值，全程沒有任何提示。
 local function persistLanguagePreference(preference)
     local state = NBClient.state
-    local written, writeError = writeLanguagePreference(preference)
+    local written = false
+    local writeError = "settings not loaded"
+    if not state.settingsLoadPending then
+        -- 側欄偏好一起帶進去：整檔重寫，漏帶就等於把玩家的收合狀態洗掉。
+        written, writeError = writeSettings(preference, state.sidebarPreference)
+    end
     if written then
+        state.sidebarSettingsPending = false
         if state.settingsPending ~= nil then
             state.settingsPending = nil
             triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
@@ -391,9 +490,27 @@ local function persistLanguagePreference(preference)
     return false
 end
 
+local clientLanguage
+local sendLanguageRegister
+
+local function armLanguageSwitch(language)
+    local state = NBClient.state
+    state.registerLanguage = language
+    state.languageSwitchPending = true
+    state.languageSwitchArmed = true
+    state.languageSwitchSends = 0
+    state.languageSwitchExhausted = false
+    if state.langSeq >= Core.MAX_LANGUAGE_SEQ then
+        state.langSeq = 1
+    else
+        state.langSeq = state.langSeq + 1
+    end
+end
+
 local function pumpSettingsRetry(now)
     local state = NBClient.state
-    if state.settingsPending == nil then
+    if state.settingsPending == nil and not state.sidebarSettingsPending
+        and not state.settingsLoadPending then
         return
     end
     if state.lastSettingsRetryMs ~= 0
@@ -401,7 +518,32 @@ local function pumpSettingsRetry(now)
         return
     end
     state.lastSettingsRetryMs = now
-    persistLanguagePreference(state.settingsPending)
+    if state.settingsLoadPending then
+        if not ensureSettingsLoaded(true) then
+            return
+        end
+        -- 首次失敗時可能已用 fallback 語系完成 register；讀回真正偏好後要立即補切換。
+        local recoveredLanguage = clientLanguage()
+        if state.registerLanguage ~= nil and recoveredLanguage ~= state.registerLanguage then
+            armLanguageSwitch(recoveredLanguage)
+            sendLanguageRegister(now)
+        end
+    end
+    if not state.sidebarSettingsPending and state.settingsPending == nil then
+        return
+    end
+    if state.settingsPending ~= nil then
+        persistLanguagePreference(state.settingsPending)
+        return
+    end
+    local written = writeSettings(state.languagePreference, state.sidebarPreference)
+    if written then
+        state.sidebarSettingsPending = false
+        logLine("settings sidebar write recovered")
+        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
+            kind = "sidebar-save-recovered",
+        })
+    end
 end
 
 local function cleanupReadState(sidHash, manifestIds)
@@ -548,7 +690,7 @@ local function applySnapshotSafely(snapshot)
 end
 
 -- 玩家在面板選的語系優先；auto（預設）才跟隨遊戲語系。
-local function clientLanguage()
+clientLanguage = function()
     local preference = NBClient.getLanguagePreference()
     if preference ~= Core.AUTO_LANGUAGE then
         return preference
@@ -591,7 +733,7 @@ end
 -- 送出目前的語系。回傳 "sent" / "cooldown" / "failed" 與冷卻剩餘秒數。
 -- MP 下「送出成功」不等於「server 採用」：server 的 register 冷卻擋下時內容不會被推，
 -- 所以 pending 一路留到 applySnapshot 收到該語系的快照才清，中途由 pumpLanguageSwitch 補送。
-local function sendLanguageRegister(now)
+sendLanguageRegister = function(now)
     local state = NBClient.state
     if not isClient() then
         -- SP：沒有網路層，走既有的本地命令管道通知同 VM 的 NBServer（與 imgreq 同一條路）。
@@ -845,25 +987,46 @@ function NBClient.markRead(fileId)
     return true
 end
 
--- 首次呼叫才讀檔（clientLanguage 在第一個 OnTick 就會問，比事件安裝還早）。
 function NBClient.getLanguagePreference()
-    local state = NBClient.state
-    if state.languagePreference == nil then
-        local preference, readError, raw = loadLanguagePreference()
-        if not preference then
-            logLine("settings load failed: " .. safeLogValue(readError, 160))
-            preference = Core.AUTO_LANGUAGE
-        elseif raw ~= nil
-            and raw ~= Core.AUTO_LANGUAGE
-            and preference == Core.AUTO_LANGUAGE then
-            -- 檔案裡確實有 lang=，但正規化後變成 auto：手改成小寫 jp、寫成 zh_TW、
-            -- 或上次寫到一半被截斷都會落在這裡。靜默丟棄會讓玩家以為自己改對了。
-            logLine("settings lang not recognized value=" .. safeLogValue(raw, LOG_VALUE_LIMIT)
-                .. "; using auto")
-        end
-        state.languagePreference = preference
+    ensureSettingsLoaded()
+    return NBClient.state.languagePreference or Core.AUTO_LANGUAGE
+end
+
+-- 側欄收合偏好。nil = 玩家沒按過收合鈕（面板預設展開），true/false = 玩家設過。
+function NBClient.getSidebarCollapsedPreference()
+    ensureSettingsLoaded()
+    return NBClient.state.sidebarPreference
+end
+
+-- 回傳是否確實寫進 settings.ini。失敗時本場仍套用記憶體值，並排入共用 settings 維護輪；
+-- LANGUAGE_STATUS_EVENT 讓面板如實提示「尚未保存」與之後的恢復。
+function NBClient.setSidebarCollapsedPreference(collapsed)
+    if type(collapsed) ~= "boolean" then
+        return false
     end
-    return state.languagePreference
+    local settingsReady = ensureSettingsLoaded()
+    local state = NBClient.state
+    local wasPending = state.sidebarSettingsPending
+    state.sidebarPreference = collapsed
+    local written = false
+    local writeError = "settings not loaded"
+    if settingsReady then
+        written, writeError = writeSettings(state.languagePreference, collapsed)
+    end
+    if written then
+        state.sidebarSettingsPending = false
+        return true
+    end
+    state.sidebarSettingsPending = true
+    if not wasPending then
+        local detail = safeLogValue(writeError, 160)
+        logLine("settings sidebar write failed error=" .. detail)
+        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
+            kind = "sidebar-save-failed",
+            detail = detail,
+        })
+    end
+    return false
 end
 
 -- 面板語系選單的入口。value 是 NBCore.AUTO_LANGUAGE 或 LANGS 白名單內的代碼，
@@ -876,14 +1039,15 @@ end
 function NBClient.setLanguagePreference(value)
     local state = NBClient.state
     local preference = Core.normalizeLanguagePreference(value)
+    local settingsReady = ensureSettingsLoaded()
+    local currentPreference = state.languagePreference or Core.AUTO_LANGUAGE
     local saved = true
-    if preference ~= NBClient.getLanguagePreference() then
-        -- 寫不進去不影響本場：記憶體裡的偏好照常生效，只是下次進場會回到上一個值。
+    if preference ~= currentPreference or not settingsReady then
+        -- 寫不進去不影響本場：記憶體裡的偏好照常生效，維護輪負責補寫。
         state.languagePreference = preference
         saved = persistLanguagePreference(preference)
     elseif state.settingsPending ~= nil then
         -- 值沒變但上次沒寫成功：玩家再點一次同一個語系＝手動重試落地。
-        -- 早退不可以把重試路徑一起吃掉，那會讓失敗變成完全無法自救。
         saved = persistLanguagePreference(preference)
     end
 
@@ -891,21 +1055,7 @@ function NBClient.setLanguagePreference(value)
     if language == state.registerLanguage and not state.languageSwitchPending then
         return "unchanged", 0, saved
     end
-
-    state.registerLanguage = language
-    state.languageSwitchPending = true
-    state.languageSwitchArmed = true
-    -- 玩家自己再點一次＝重新開始計次，讓上限用盡後仍有手動自救的路。
-    state.languageSwitchSends = 0
-    state.languageSwitchExhausted = false
-    -- 每次發出切換請求就推進序號（回繞見 NBCore.MAX_LANGUAGE_SEQ 的說明）。
-    -- 序號在**送出前**推進：送不出去（cooldown/failed）時 pumpLanguageSwitch 補送的是同一個序號，
-    -- 而先前那次切換的快照回來時序號一定對不上，不會被誤判成這一次的結果。
-    if state.langSeq >= Core.MAX_LANGUAGE_SEQ then
-        state.langSeq = 1
-    else
-        state.langSeq = state.langSeq + 1
-    end
+    armLanguageSwitch(language)
     local status, waitSeconds = sendLanguageRegister(getTimestampMs())
     return status, waitSeconds, saved
 end
@@ -930,7 +1080,7 @@ function NBClient.getLanguageStatus()
 end
 
 -- 換語系會讓每一份公告的 hash 都變（內容真的換了一種語言），若照常走「內容有更新」的
--- 提示，玩家會一次吃到 N 則 toast。面板據此把換語系後的第一份快照靜音，只重建頁籤。
+-- 提示，玩家會一次吃到 N 則 toast。面板據此把換語系後的第一份快照靜音，只重建文件樹。
 function NBClient.consumeLanguageSwitch()
     local state = NBClient.state
     if not state.languageSwitchSilence then
@@ -953,10 +1103,83 @@ function NBClient.getSnapshot()
     return Reader.getSnapshot()
 end
 
+-- admin 面板的「重建範例」按鈕。language 是選單選出來的語系代碼（"CH" 或 "EN"）：
+-- 它決定 server 要覆寫哪個語系目錄底下的三份公告，所以**必須是精確的白名單值**。
+-- 這裡驗一次不是為了防惡意（server 端才是權威），而是為了不讓面板的 bug 變成
+-- 「送出去了、admin 看到已送出、結果 server 靜默回 failed」那種難查的兩段式失敗。
+-- 回傳值只描述**送出**（true = 指令已交給網路層）：真正的結果由 server 的
+-- examplesResult 帶回，經 EXAMPLES_STATUS_EVENT 交給面板。
+-- SP 一律回 false：範例包只在權威端有意義，而 SP 的權威端就是玩家本人，沒有 player
+-- 物件也就沒有 ack 收件人；NBPanel:createChildren 同樣以 isClient() 隱藏這顆按鈕。
+function NBClient.requestExamplePack(language)
+    if not isClient() then
+        return false
+    end
+    if type(language) ~= "string" or rawget(EXAMPLE_PACK_LANGS, language) ~= true then
+        return false
+    end
+    return sendCommand("examples", { lang = language }, getTimestampMs())
+end
+
+-- 丟棄的 ack 也要留 log（否則 admin 回報「按了沒反應」時完全無跡可循），但**必須節流**：
+-- ack 是 server 主動送的，惡意 server 可以無限灌，而 writeLog 到 10MB 是整檔截斷、
+-- 會沖掉真正要排查的紀錄。沿用 maybeLogCommandError 的 10 秒窗，理由與它相同。
+local function logExamplesDrop(reason)
+    local state = NBClient.state
+    local now = getTimestampMs()
+    if state.lastExamplesDropLogMs ~= 0
+        and now - state.lastExamplesDropLogMs < RESYNC_INTERVAL_MS then
+        return
+    end
+    state.lastExamplesDropLogMs = now
+    logLine("examples result dropped " .. reason)
+end
+
+-- server 的範例包 ack。形狀壞掉一律丟棄：這條路徑的下游只有 toast，
+-- 把不認識的 payload 當成成功等於騙 admin「範例已生成」。
+local function receiveExamplesResult(args)
+    if type(args) ~= "table" then
+        logExamplesDrop("reason=not-a-table")
+        return
+    end
+    local kind = rawget(args, "kind")
+    if type(kind) ~= "string" or rawget(EXAMPLES_RESULT_KINDS, kind) ~= true then
+        logExamplesDrop("kind=" .. safeLogValue(kind, LOG_VALUE_LIMIT))
+        return
+    end
+
+    local count = nil
+    if kind == "success" then
+        count = rawget(args, "count")
+        if type(count) ~= "number" or count ~= EXAMPLES_EXPECTED_COUNT then
+            logExamplesDrop("reason=bad-count count="
+                .. safeLogValue(count, LOG_VALUE_LIMIT))
+            return
+        end
+    end
+
+    triggerClientEvent(NBClient.EXAMPLES_STATUS_EVENT, {
+        kind = kind,
+        count = count,
+    })
+end
+
 if not NBClient._eventsInstalled then
     LuaEventManager.AddEvent(NBClient.CONTENT_READY_EVENT)
     LuaEventManager.AddEvent(NBClient.UNREAD_CHANGED_EVENT)
     LuaEventManager.AddEvent(NBClient.LANGUAGE_STATUS_EVENT)
+    LuaEventManager.AddEvent(NBClient.EXAMPLES_STATUS_EVENT)
+
+    -- 範例包 ack 自己收，不走 NBReader.receive：那支是內容同步協定（manifest／chunk／
+    -- imgchunk）的分派器，把一個純 client 端的 UI 回報塞進去會讓 shared 模組認識
+    -- 一條它既不產生也不使用的命令。module 與 command 都在這裡過濾，
+    -- 其他 MOD 的 OnServerCommand 一律不進來。
+    Events.OnServerCommand.Add(function(module, command, args)
+        if module ~= Reader.MODULE or command ~= "examplesResult" then
+            return
+        end
+        receiveExamplesResult(args)
+    end)
 
     local loaded, readError = loadReadState()
     if not loaded then

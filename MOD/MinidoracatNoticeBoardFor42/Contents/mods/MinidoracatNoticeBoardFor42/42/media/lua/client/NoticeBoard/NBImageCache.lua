@@ -130,7 +130,7 @@ local function newState()
         budgetLogged = false,
         lru = newLruState(),
         -- 每有一張圖變成可用就 +1。面板拿它當「該重畫了嗎」的判斷，
-        -- 否則玩家會一直看到 [替代文字] 占位直到手動切頁籤。
+        -- 否則玩家會一直看到 [替代文字] 占位直到手動切換公告。
         readyVersion = 0,
     }
 end

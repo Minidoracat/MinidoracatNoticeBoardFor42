@@ -11,26 +11,27 @@
   2. BOM / CRLF          — 有 BOM 或 CRLF 的翻譯檔會被引擎「靜默忽略」
   3. 翻譯鍵集一致          — 缺鍵的語系會顯示原始 key
   4. 裸 % 檢查           — 42.20.1 起 formatted() 遇裸 % 崩潰；只允許 %1-%9 與 %%
-  5. Kahlua 禁用全域       — next/assert/xpcall 不存在（BaseLib 未註冊），呼叫→
+  5. 重建範例覆寫警告       — CH/EN 選單必須明示會覆寫 categories.txt；這是動手前唯一警告
+  6. Kahlua 禁用全域       — next/assert/xpcall 不存在（BaseLib 未註冊），呼叫→
                            「Object tried to call nil」。luac 與標準 Lua 測試都攔不住
                            （語法合法、標準 Lua 有這些函式），只能靜態掃描
-  6. table.sort 禁用      — Kahlua 的 sort 是遞迴 quicksort（coroutine 堆疊上限 3000），
+  7. table.sort 禁用      — Kahlua 的 sort 是遞迴 quicksort（coroutine 堆疊上限 3000），
                            已排序輸入退化 O(n) 深度、數百筆即溢位；一律用迭代 merge sort
-  7. MOD/ 樹雜物          — .omc/.claude/.gitnexus；Workshop 整包上傳不看 .gitignore
-  8. 佔位符殘留            — {{TOKEN}} 漏替換
-  9. Steam 描述位元組      — 各語言 ≤8000 UTF-8 bytes（中日文 3 bytes/字，容易低估）
- 10. 沙盒選項翻譯配對       — 每個 option 要有 Sandbox_<translation> 標題＋ _tooltip＋分頁名
- 11. CHANGELOG 洩漏掃描     — bullet 會被整段貼到公開的 Workshop 更新說明；掃基礎設施
+  8. MOD/ 樹雜物          — .omc/.claude/.gitnexus；Workshop 整包上傳不看 .gitignore
+  9. 佔位符殘留            — {{TOKEN}} 漏替換
+ 10. Steam 描述位元組      — 各語言 ≤8000 UTF-8 bytes（中日文 3 bytes/字，容易低估）
+ 11. 沙盒選項翻譯配對       — 每個 option 要有 Sandbox_<translation> 標題＋ _tooltip＋分頁名
+ 12. CHANGELOG 洩漏掃描     — bullet 會被整段貼到公開的 Workshop 更新說明；掃基礎設施
                            樣式（/home/ 路徑、IP、SteamID64、ssh、主機名）當最後防線。
                            攻擊配方與玩家識別資訊機器認不出來，靠撰寫規則（AGENTS.md）
- 12. Lua 單元測試          — scripts/test_mdparser.lua（MDParser 純模組）與
+ 13. Lua 單元測試          — scripts/test_mdparser.lua（MDParser 純模組）與
                            scripts/test_nbpanel.lua（載入原版 ISRichTextPanel + NBPanel
                            實跑預檢）。需要 PATH 有 lua；test_nbpanel 另需本機有 PZ
                            安裝，缺任一者列為 SKIP 而非 PASS
- 13. （已移除）UI 皮膚貼圖 — 貼圖與生成器已上移家族框架 MinidoracatUIFor42
+ 14. （已移除）UI 皮膚貼圖 — 貼圖與生成器已上移家族框架 MinidoracatUIFor42
                            （42/media/ui/MinidoracatUI/，該 repo verify_mod.py 第 12 項驗），
                            本 repo 不再攜帶 PNG；NBSkin 是框架 thin adapter，缺框架退直角
- 14. 提示音音檔           — 42/media/sound/MinidoracatNBNotify.wav 過
+ 15. 提示音音檔           — 42/media/sound/MinidoracatNBNotify.wav 過
                            scripts/prep_notify_sound.py 的 verify_notify_sound：未壓縮
                            16-bit PCM／聲道 1-2／取樣率白名單／長度 ≤5s／峰值在
                            0.05-0.60 之間。**刻意只驗規格不比對內容**——音效是服主可以
@@ -39,6 +40,10 @@
                            .wav，所以這是唯一會擋住「音檔不見／格式壞掉／長到變背景音樂／
                            大聲到炸耳」的閘門（自帶音效不受玩家音量選項影響，峰值上限
                            是硬需求）。原創備援音效由 scripts/gen_notify_sound.py 生成
+ 16. 封面資產             — Workshop preview 與遊戲 poster 必須是相同、可完整解碼的
+                           512×512 RGB PNG；preview ≤1,024,000 bytes
+ 17. Steam 介面預覽       — 三張指定 JPG 必須可完整解碼、維持 1920×1032 RGB，
+                           且每張 ≤2,000,000 bytes
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
 pz-mod-template（見 AGENTS.md）。
@@ -187,7 +192,7 @@ for m in MEDIA_DIRS:
     langs = sorted(d for d in os.listdir(troot) if os.path.isdir(os.path.join(troot, d)))
     tolerant = set(langs) <= {"CH", "CN"}   # 翻譯包偵測
     names = sorted({n for l in langs for n in os.listdir(os.path.join(troot, l)) if n.endswith(".json")})
-    mismatch, badpct, broken = [], [], []
+    mismatch, badpct, broken, example_warning = [], [], [], []
     for n in names:
         keysets = {}
         for l in langs:
@@ -205,6 +210,15 @@ for m in MEDIA_DIRS:
             for k, v in data.items():
                 if find_bare_pct(v, tolerant):
                     badpct.append(f"{l}/{n} 的 {k}")
+            if n == "IG_UI.json":
+                for warning_key in (
+                    "IGUI_MinidoracatNB_ExamplesLangCH",
+                    "IGUI_MinidoracatNB_ExamplesLangEN",
+                ):
+                    warning = data.get(warning_key)
+                    if not isinstance(warning, str) or "categories.txt" not in warning:
+                        example_warning.append(
+                            f"{l}/{n} 的 {warning_key} 未明示覆寫 categories.txt")
         if len(keysets) > 1:
             base = next(iter(keysets.values()))
             for l, ks in keysets.items():
@@ -217,6 +231,8 @@ for m in MEDIA_DIRS:
     fail("翻譯鍵集一致", mismatch) if mismatch else ok(f"翻譯鍵集一致（{'/'.join(langs)}）")
     pct_label = "翻譯值無裸 %（翻譯包模式：另接受 printf 指令）" if tolerant else "翻譯值無裸 %（僅 %1-%9 與 %%）"
     fail(pct_label, sorted(set(badpct))) if badpct else ok(pct_label)
+    fail("重建範例選單明示覆寫 categories.txt", example_warning) if example_warning \
+        else ok("重建範例選單明示覆寫 categories.txt")
 
 # ---- 5+6. Kahlua 禁用全域 / table.sort ----
 FORBIDDEN = ("next", "assert", "xpcall")
@@ -361,6 +377,113 @@ else:
     _snd_problems = _verify_sound(_snd_path)
     fail("提示音音檔（prep_notify_sound.verify_notify_sound）", _snd_problems) if _snd_problems \
         else ok(f"提示音音檔（{os.path.basename(_snd_path)} 過規格檢查）")
+
+# ---- 16. Workshop preview / 遊戲 poster ----
+# PZ 42.20.4 SteamWorkshopItem.validatePreviewImage:487-500：preview 必須是可讀 PNG、
+# 正方形 256/512，且 ≤1,024,000 bytes。這裡固定家族輸出為 512 RGB，要求 poster
+# 與 preview 位元組一致；一次性來源依使用者要求不留在 repo。
+try:
+    from PIL import Image as _CoverImage
+except ImportError as _cover_import_error:
+    skip("封面資產（preview/poster）", f"無法載入 Pillow（{_cover_import_error}）")
+else:
+    _cover_root = os.path.join(REPO, "MOD", "MinidoracatNoticeBoardFor42")
+    _cover_paths = {
+        "preview.png": (
+            os.path.join(_cover_root, "preview.png"), (512, 512)),
+        "poster.png": (
+            os.path.join(
+                _cover_root, "Contents", "mods", "MinidoracatNoticeBoardFor42",
+                "42", "poster.png"),
+            (512, 512)),
+    }
+    _cover_generator = os.path.join(REPO, "scripts", "poster", "finish_poster.py")
+    _cover_problems = []
+    _cover_assets = {}
+    for _label, (_path, _expected_size) in _cover_paths.items():
+        if not os.path.isfile(_path):
+            _cover_problems.append(f"{_label}: 缺檔")
+            continue
+        try:
+            with _CoverImage.open(_path) as _probe:
+                _format = _probe.format
+                _mode = _probe.mode
+                _size = _probe.size
+                _probe.verify()          # chunk／CRC／IEND 結構
+            with _CoverImage.open(_path) as _decoded:
+                _decoded.load()          # 強制解壓完整 IDAT
+            with open(_path, "rb") as _fh:
+                _data = _fh.read()
+        except (OSError, SyntaxError, ValueError) as _error:
+            _cover_problems.append(f"{_label}: PNG 解碼失敗（{_error}）")
+            continue
+        _cover_assets[_label] = {
+            "data": _data, "format": _format, "mode": _mode, "size": _size,
+        }
+        if _format != "PNG" or _mode != "RGB":
+            _cover_problems.append(
+                f"{_label}: format/mode={_format}/{_mode}，預期 PNG/RGB")
+        if _size != _expected_size:
+            _cover_problems.append(
+                f"{_label}: 尺寸 {_size[0]}x{_size[1]}，"
+                f"預期 {_expected_size[0]}x{_expected_size[1]}")
+
+    _preview_asset = _cover_assets.get("preview.png")
+    _poster_asset = _cover_assets.get("poster.png")
+    if _preview_asset and len(_preview_asset["data"]) > 1_024_000:
+        _cover_problems.append(
+            f"preview.png: {len(_preview_asset['data']):,} bytes，超過 1,024,000")
+    if not _preview_asset or not _poster_asset \
+            or _preview_asset["data"] != _poster_asset["data"]:
+        _cover_problems.append("preview.png 與 poster.png 位元組不一致")
+
+    if not os.path.isfile(_cover_generator):
+        _cover_problems.append("finish_poster.py: 缺少外部來源轉換工具")
+
+    fail("封面資產（preview/poster）", _cover_problems) if _cover_problems \
+        else ok(f"封面資產（512×512 RGB PNG，{len(_preview_asset['data']):,} bytes）")
+
+# ---- 17. Steam 詳情頁介面預覽 ----
+_steam_shot_names = {
+    "noticeboard-markdown-headings.jpg",
+    "noticeboard-markdown-inline-and-images.jpg",
+    "noticeboard-richtext-and-emoji-limitations.jpg",
+}
+_steam_shot_root = os.path.join(REPO, "docs", "screenshots", "steam")
+_steam_shot_problems = []
+if "_CoverImage" not in globals():
+    skip("Steam 介面預覽圖", "無法載入 Pillow")
+else:
+    _actual_steam_shots = {
+        name for name in os.listdir(_steam_shot_root)
+        if name.lower().endswith((".jpg", ".jpeg"))
+    } if os.path.isdir(_steam_shot_root) else set()
+    if _actual_steam_shots != _steam_shot_names:
+        _steam_shot_problems.append(
+            "JPG 集合不一致："
+            f"缺少={sorted(_steam_shot_names - _actual_steam_shots)}，"
+            f"多出={sorted(_actual_steam_shots - _steam_shot_names)}")
+    for _name in sorted(_steam_shot_names & _actual_steam_shots):
+        _path = os.path.join(_steam_shot_root, _name)
+        try:
+            with _CoverImage.open(_path) as _probe:
+                _format = _probe.format
+                _mode = _probe.mode
+                _size = _probe.size
+                _probe.verify()
+            with _CoverImage.open(_path) as _decoded:
+                _decoded.load()
+        except (OSError, SyntaxError, ValueError) as _error:
+            _steam_shot_problems.append(f"{_name}: JPEG 解碼失敗（{_error}）")
+            continue
+        if _format != "JPEG" or _mode != "RGB" or _size != (1920, 1032):
+            _steam_shot_problems.append(
+                f"{_name}: {_format}/{_mode}/{_size}，預期 JPEG/RGB/(1920, 1032)")
+        if os.path.getsize(_path) > 2_000_000:
+            _steam_shot_problems.append(
+                f"{_name}: {os.path.getsize(_path):,} bytes，超過 2,000,000")
+    fail("Steam 介面預覽圖", _steam_shot_problems) if _steam_shot_problems \
+        else ok("Steam 介面預覽圖（3 張 1920×1032 RGB JPG，皆 ≤2MB）")
 
 # ---- 總結 ----
 print()

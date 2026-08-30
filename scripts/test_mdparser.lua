@@ -1996,7 +1996,13 @@ local MOD_LUA = "MOD/MinidoracatNoticeBoardFor42/Contents/mods/"
     .. "MinidoracatNoticeBoardFor42/42/media/lua/"
 package.path = MOD_LUA .. "server/?.lua;" .. MOD_LUA .. "client/?.lua;" .. package.path
 
-local env = { isServer = true, isClient = true, nowMs = 1000000, gameLanguage = "EN" }
+local env = {
+    isServer = true,
+    isClient = true,
+    nowMs = 1000000,
+    gameLanguage = "EN",
+    serverCommandFails = false,
+}
 
 function isServer()
     return env.isServer
@@ -2140,8 +2146,16 @@ local function readRepoFile(relativePath)
     return content
 end
 
+-- 特定資源檔「讀不到」的開關。範例包的預讀階段必須在缺任一份時零寫入，
+-- 而 repo 裡那 8 份是真的存在的，只能從這一層模擬缺檔（不要去動 repo 檔案）。
+-- 掛在 env 上而不是另開一個 local：主 chunk 的 local 名額已經貼著 Lua 的 200 上限。
+env.missingModAssets = {}
+
 function getModFileReader(modId, path, createIfNull)
     if modId ~= "MinidoracatNoticeBoardFor42" then
+        return nil
+    end
+    if env.missingModAssets[path] then
         return nil
     end
     local content = readRepoFile(path)
@@ -2198,6 +2212,9 @@ end
 
 local sentCommands = {}
 function sendServerCommand(player, module, command, payload)
+    if env.serverCommandFails then
+        error("simulated sendServerCommand failure")
+    end
     sentCommands[#sentCommands + 1] = {
         player = player,
         module = module,
@@ -2252,8 +2269,14 @@ local MODULE = "MinidoracatNB"
 local serverState = NBServer.getState()
 local clientState = NBClient.state
 
-local function makePlayer(username)
-    return { getUsername = function() return username end }
+-- accessLevel 是選填：既有呼叫點一律不傳 -> "none"（非 admin），行為與從前完全相同。
+-- 這個方法**必須存在**：isAdmin 直接呼叫 player:getAccessLevel()，缺了就是「呼叫 nil」
+-- 當場拋錯，等於 admin 指令的測試連進得去都測不到。
+local function makePlayer(username, accessLevel)
+    return {
+        getUsername = function() return username end,
+        getAccessLevel = function() return accessLevel or "none" end,
+    }
 end
 
 local function makeCache(chunkCount)
@@ -2319,6 +2342,19 @@ function listFilesInZomboidLuaDirectory(directory)
     return {
         size = function() return #names end,
         get = function(_, index) return names[index + 1] end,
+    }
+end
+
+-- 在線玩家清單（Java ArrayList 形狀：size() ＋ 0-based get()，同上面的目錄列舉樁）。
+-- rebuildOnlinePlayers 每個維護輪都會呼叫它，而所有 per-player 桶（registrations、
+-- rejectLogAt、reload／examples 冷卻、imgCooldownAt）的清理全靠它的結果，
+-- 所以「誰在線」必須是測試控得住的輸入。
+env.onlinePlayers = {}
+function getOnlinePlayers()
+    local players = env.onlinePlayers
+    return {
+        size = function() return #players end,
+        get = function(_, index) return players[index + 1] end,
     }
 end
 
@@ -2745,6 +2781,7 @@ checkEqual(#statusEvents, 1, "重試成功必須發出恢復事件")
 checkEqual(statusEvents[1].kind, "save-recovered", "恢復事件種類錯誤")
 checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=CH\n", "落地內容錯誤")
 
+
 -- ---------------------------------------------------------------------------
 -- P8：「沒檔案」「值壞掉」必須分得出來（壞值要留一行 log，不可靜默丟棄）。
 -- ---------------------------------------------------------------------------
@@ -2786,6 +2823,74 @@ clientState.settingsPending = nil
 -- registerOnTick 送出首次 register 後才會裝上 maintenanceOnTick（維護輪）。
 fireEvent("OnTick")
 check(NBClient._maintenanceInstalled == true, "首次 register 之後應裝上維護輪")
+-- 側欄與語系共用同一份 settings.ini；側欄寫入失敗也必須由維護輪補寫，不能只改記憶體。
+clientState.sidebarPreference = nil
+clientState.sidebarSettingsPending = false
+clientState.lastSettingsRetryMs = 0
+fsWorking = false
+statusEvents = {}
+checkEqual(NBClient.setSidebarCollapsedPreference(true), false,
+    "側欄偏好寫入失敗必須回報 false")
+checkEqual(clientState.sidebarSettingsPending, true,
+    "側欄偏好寫入失敗必須排入 settings 維護輪")
+checkEqual(statusEvents[1].kind, "sidebar-save-failed",
+    "側欄偏好寫入失敗必須發出玩家可見狀態事件")
+fsWorking = true
+statusEvents = {}
+env.nowMs = env.nowMs + 31000
+fireEvent("OnTick")
+checkEqual(clientState.sidebarSettingsPending, false,
+    "維護輪補寫成功後必須清掉側欄 pending")
+checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=EN\nsidebar=true\n",
+    "側欄補寫必須保留語系並一起落地")
+checkEqual(statusEvents[1].kind, "sidebar-save-recovered",
+    "側欄補寫成功必須發出恢復事件")
+
+-- 只有 settings 首讀失敗、玩家沒有改任何值時，恢復只讀回，不得把同內容再截斷重寫。
+diskFiles["NoticeBoard/settings.ini"] = "lang=JP\n"
+clientState.languagePreference = nil
+clientState.settingsPending = nil
+clientState.sidebarSettingsPending = false
+clientState.settingsLoadPending = false
+clientState.lastSettingsRetryMs = 0
+clientState.registerLanguage = "EN"
+readerFails["NoticeBoard/settings.ini"] = true
+NBClient.getLanguagePreference()
+readerFails["NoticeBoard/settings.ini"] = nil
+env.nowMs = env.nowMs + 31000
+fireEvent("OnTick")
+checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=JP\n",
+    "settings 純讀取恢復且沒有 pending 時不得無條件重寫整檔")
+
+-- 首次讀取暫時失敗時，不得用 fallback auto + 側欄值截斷覆寫磁碟上的既有語系。
+diskFiles["NoticeBoard/settings.ini"] = "lang=JP\n"
+clientState.languagePreference = nil
+clientState.sidebarPreference = nil
+clientState.settingsPending = nil
+clientState.sidebarSettingsPending = false
+clientState.settingsLoadPending = false
+clientState.lastSettingsRetryMs = 0
+readerFails["NoticeBoard/settings.ini"] = true
+checkEqual(NBClient.getLanguagePreference(), "auto",
+    "settings 暫時讀不到時本場顯示可退 auto")
+check(clientState.settingsLoadPending and clientState.languagePreference == nil,
+    "讀取失敗不得把 fallback auto 當成已載入")
+statusEvents = {}
+checkEqual(NBClient.setSidebarCollapsedPreference(false), false,
+    "舊 settings 尚未成功讀回前，側欄操作不得截斷重寫整檔")
+checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=JP\n",
+    "側欄操作不得洗掉尚未讀回的既有語系偏好")
+readerFails["NoticeBoard/settings.ini"] = nil
+env.nowMs = env.nowMs + 31000
+fireEvent("OnTick")
+checkEqual(clientState.languagePreference, "JP",
+    "維護輪讀回成功後必須恢復磁碟上的既有語系")
+checkEqual(clientState.registerLanguage, "JP",
+    "讀回偏好與 fallback 註冊語系不同時必須立即補送切換")
+checkEqual(clientState.languageSwitchPending, true,
+    "設定恢復觸發的語系切換必須保持 pending 到相符快照回來")
+checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=JP\nsidebar=false\n",
+    "讀回後補寫側欄時必須 merge 既有語系")
 
 clientState.registerLanguage = "JP"
 clientState.languageSwitchPending = true
@@ -2956,6 +3061,1621 @@ checkEqual(serverState.langPending.alice, true,
 end)()
 
 -- ---------------------------------------------------------------------------
+-- 分類宣告檔（NoticeBoard/categories.txt）的解析。
+-- 這份檔案決定「要去掃哪些子目錄」與「側欄怎麼排、叫什麼名字」，而它是服主手寫的純文字：
+-- 壞掉的一行不得讓整份宣告失效，也不得把原始內容灌進 log（行長沒有上界）。
+-- 主 chunk 的區域變數逼近 Lua 的 200 上限，故整段用立即呼叫的函式包起來。
+-- ---------------------------------------------------------------------------
+;(function()
+    local CATEGORY_PATH = "NoticeBoard/categories.txt"
+
+    local function clearScanned()
+        local key
+        for key in pairs(scannedNames) do
+            scannedNames[key] = nil
+        end
+    end
+
+    local function hasIssue(issues, kind)
+        local index
+        for index = 1, #issues do
+            if issues[index].kind == kind then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function countIssues(issues, kind)
+        local count = 0
+        local index
+        for index = 1, #issues do
+            if issues[index].kind == kind then
+                count = count + 1
+            end
+        end
+        return count
+    end
+
+    diskFiles = {}
+    clearScanned()
+
+    -- 沒有宣告檔＝沒有分類，而且不是錯誤（絕大多數伺服器就是這個狀態）
+    local parsed = NBReader.scanCategories()
+    checkEqual(#parsed.keys, 0, "沒有宣告檔時不得產生任何分類")
+    checkEqual(#parsed.issues, 0, "沒有宣告檔不是錯誤，不得記 issue")
+
+    -- 只有註解與空行（＝啟動時建立的模板長相）：同樣宣告零個分類
+    diskFiles[CATEGORY_PATH] = "# comment\n#\n\n   \n"
+    parsed = NBReader.scanCategories()
+    checkEqual(#parsed.keys, 0, "純註解的宣告檔不得產生任何分類")
+    checkEqual(#parsed.issues, 0, "註解與空行不是錯誤，不得記 issue")
+
+    -- 暫時讀不到宣告檔時，輪詢必須沿用上一輪分類；bootstrap 則要停下來，不能誤判空目錄。
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n20_rules|EN|Rules"
+    local previousCategories = NBReader.scanCategories()
+    readerFails[CATEGORY_PATH] = true
+    parsed = NBReader.scanCategories(previousCategories)
+    checkEqual(table.concat(parsed.keys, ","), "10_news,20_rules",
+        "分類宣告暫時讀不到時必須沿用上一輪 key，不能讓分類公告整批消失")
+    check(parsed.readError ~= nil and hasIssue(parsed.issues, "category-read"),
+        "分類宣告讀檔失敗必須保留錯誤供 server log")
+    local anyFiles, categoryReadError = NBReader.hasAnyNoticeFiles()
+    check(anyFiles == nil and categoryReadError ~= nil,
+        "bootstrap 讀不到分類宣告時必須停止，不能誤建 welcome")
+    readerFails[CATEGORY_PATH] = nil
+
+    -- 順序由 key 的數字前綴決定（與公告檔名排序同一套規則），不是檔案裡的行序
+    diskFiles[CATEGORY_PATH] = table.concat({
+        "20_rules|EN|Rules",
+        "10_news|EN|News",
+        "10_news|CH|Xin Wen",
+        "5_top|EN|Top",
+    }, "\n")
+    parsed = NBReader.scanCategories()
+    checkEqual(table.concat(parsed.keys, ","), "5_top,10_news,20_rules",
+        "分類順序必須由 key 的數字前綴決定（側欄順序就是這個）")
+    checkEqual(#parsed.issues, 0, "同一個 key 多語標籤是正常用法，不得記 issue")
+
+
+    -- 壞行很多時 issue 也必須有上界，但後面的合法宣告仍要能成立。
+    local badLines = {}
+    for lineIndex = 1, 200 do
+        badLines[lineIndex] = "bad line"
+    end
+    badLines[#badLines + 1] = "10_valid|EN|Valid"
+    diskFiles[CATEGORY_PATH] = table.concat(badLines, "\n")
+    parsed = NBReader.scanCategories()
+    checkEqual(#parsed.issues, 129,
+        "分類 issue 最多 128 筆明細加 1 筆 category-issue-limit")
+    check(hasIssue(parsed.issues, "category-issue-limit"),
+        "超過 issue 上限時必須留下固定短訊息")
+    checkEqual(table.concat(parsed.keys, ","), "10_valid",
+        "issue 達上限後仍要繼續解析後面的合法宣告")
+
+    local validBeforeLimit = parsed
+    diskFiles[CATEGORY_PATH] = string.rep("x", NBReader.MAX_CATEGORY_FILE_UTF16 + 1)
+    parsed = NBReader.scanCategories(validBeforeLimit)
+    check(parsed.readError ~= nil and table.concat(parsed.keys, ",") == "10_valid",
+        "categories.txt 超過控制檔上限時必須當讀取失敗並沿用上一輪")
+
+    local tooManyLines = {}
+    for lineIndex = 1, NBReader.MAX_CATEGORY_LINES + 1 do
+        tooManyLines[lineIndex] = "# x"
+    end
+    diskFiles[CATEGORY_PATH] = table.concat(tooManyLines, "\n")
+    parsed = NBReader.scanCategories(validBeforeLimit)
+    check(parsed.readError ~= nil and table.concat(parsed.keys, ",") == "10_valid",
+        "categories.txt 超過行數上限時必須停止並沿用上一輪")
+    -- 壞掉的行：逐行拒絕，合法的那些仍必須成立
+    diskFiles[CATEGORY_PATH] = table.concat({
+        "10_news|EN|News",
+        "bad line without pipes",
+        "../escape|EN|Escape",
+        "20_rules|XX|Rules",
+        "30_empty|EN|",
+        "10_news|EN|Duplicate",
+        "40_pipe|EN|has|pipe",
+    }, "\n")
+    parsed = NBReader.scanCategories()
+    checkEqual(table.concat(parsed.keys, ","), "10_news",
+        "只有完全合法的宣告可以成為分類（壞掉的一行不得拖垮整份宣告）")
+    check(hasIssue(parsed.issues, "category-syntax"), "缺少分欄的行必須記 issue")
+    check(hasIssue(parsed.issues, "category-key"), "含路徑穿越字元的 key 必須記 issue")
+    check(hasIssue(parsed.issues, "category-lang"), "白名單外的語系代碼必須記 issue")
+    check(hasIssue(parsed.issues, "category-label"), "空標籤必須記 issue")
+    check(hasIssue(parsed.issues, "category-dup"), "同 key 同語系重複宣告必須記 issue")
+
+    -- issue 只能指出行號。宣告檔的行長沒有上界，把原始內容寫進 log 就是把 writeLog
+    -- 灌到 10MB 整檔截斷（ZLogger 是截斷而非輪替），會沖掉服主真正需要的排查紀錄。
+    local issueIndex
+    for issueIndex = 1, #parsed.issues do
+        local issue = parsed.issues[issueIndex]
+        check(string.match(tostring(issue.detail), "^line %d+$") ~= nil,
+            "分類 issue 的 detail 必須是行號")
+        check(not contains(tostring(issue.detail), "bad line"),
+            "分類 issue 不得把原始行內容寫進 log")
+        check(not contains(tostring(issue.id or ""), ".."),
+            "未通過驗證的 key 不得進 log（它還沒有長度與字元集上界）")
+    end
+
+    -- 分類數的結構性上界：不可跟著服主的檔案長（cats 進 manifest，海量條目會把單包
+    -- 撐過 1MB 觸發 BufferOverflow）
+    local manyLines = {}
+    local lineIndex
+    for lineIndex = 1, 40 do
+        manyLines[lineIndex] = tostring(lineIndex + 100) .. "_c|EN|C" .. tostring(lineIndex)
+    end
+    diskFiles[CATEGORY_PATH] = table.concat(manyLines, "\n")
+    parsed = NBReader.scanCategories(validBeforeLimit)
+    checkEqual(#parsed.keys, 32, "分類數必須夾在 32")
+    checkEqual(countIssues(parsed.issues, "category-limit"), 8,
+        "每一個被上界擠掉的分類都要留下 issue")
+    checkEqual(#parsed.scanKeys, 32, "設定持續有錯時 scanKeys 聯集也不得超過 32")
+    checkEqual(parsed.scanKeys[1], "101_c",
+        "scanKeys 達上限時本輪合法分類優先，上一輪只補剩餘名額")
+
+    diskFiles = {}
+    clearScanned()
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 分類目錄的掃描與組合：條目帶分類、id 仍是裸檔名、標籤 fallback、空分類不送、
+-- DefaultLanguage 是分類位置的權威、只改分類／標籤也必須推新 manifest。
+-- 走公開的 scanCategories + scanLanguage + composeLanguage + languageCachesEqual，
+-- 這條路徑決定「公告出現在側欄哪一格」以及「manifest 要不要重推」，弄錯都是靜默的。
+-- ---------------------------------------------------------------------------
+;(function()
+    local CATEGORY_PATH = "NoticeBoard/categories.txt"
+
+    local function clearScanned()
+        local key
+        for key in pairs(scannedNames) do
+            scannedNames[key] = nil
+        end
+    end
+
+    local function manifestOf(cache, id)
+        local index
+        for index = 1, #cache.manifestFiles do
+            if cache.manifestFiles[index].id == id then
+                return cache.manifestFiles[index]
+            end
+        end
+        return nil
+    end
+
+    local function countIssuesOf(issues, kind)
+        local count = 0
+        local index
+        for index = 1, #issues do
+            if issues[index].kind == kind then
+                count = count + 1
+            end
+        end
+        return count
+    end
+
+    local function categoryKeys(cache)
+        local keys = {}
+        local index
+        for index = 1, #cache.categories do
+            keys[index] = cache.categories[index].key
+        end
+        return table.concat(keys, ",")
+    end
+
+    -- 回歸鐵則：完全沒有分類宣告時，掃描與 manifest 必須與分類功能加入之前逐欄相同。
+    diskFiles = {}
+    clearScanned()
+    scannedNames["NoticeBoard/EN"] = { "10_a.txt" }
+    diskFiles["NoticeBoard/EN/10_a.txt"] = "# plain"
+    local plain = NBReader.composeLanguage(
+        { EN = NBReader.scanLanguage("EN") }, "EN", "EN")
+    checkEqual(#plain.categories, 0, "沒有分類宣告時分類清單必須是空的")
+    checkEqual(manifestOf(plain, "10_a.txt").c, nil,
+        "未分類不得送 c（沒宣告分類的伺服器線材必須完全不變）")
+    checkEqual(plain.files[1].category, "", "未分類的條目分類是空字串，不是 nil")
+    check(NBReader.languageCachesEqual(plain, plain),
+        "沒有分類時同一份快取仍必須判定相等")
+
+    -- 掃描：分類目錄的公告帶分類，根層的公告分類為空；id 一律是裸檔名
+    diskFiles = {}
+    clearScanned()
+    diskFiles[CATEGORY_PATH] = table.concat({
+        "10_news|EN|News",
+        "10_news|CH|Xin Wen",
+        "20_rules|EN|Rules",
+        "30_empty|EN|Empty",
+    }, "\n")
+    scannedNames["NoticeBoard/EN"] = { "05_root.txt" }
+    scannedNames["NoticeBoard/EN/10_news"] = { "10_a.txt" }
+    scannedNames["NoticeBoard/EN/20_rules"] = { "20_b.txt" }
+    diskFiles["NoticeBoard/EN/05_root.txt"] = "# root"
+    diskFiles["NoticeBoard/EN/10_news/10_a.txt"] = "# news a"
+    diskFiles["NoticeBoard/EN/20_rules/20_b.txt"] = "# rules b"
+
+    local categories = NBReader.scanCategories()
+    local scanEN = NBReader.scanLanguage("EN", nil, categories)
+    checkEqual(#scanEN.files, 3, "根層與各分類目錄的公告都必須掃到")
+    -- id 不含分類：已讀狀態、manifest、client 內容快取全部以它為鍵，
+    -- 把分類塞進 id 會讓服主搬一次資料夾就把全服的已讀與快取整批作廢。
+    checkEqual(scanEN.byId["10_a.txt"].id, "10_a.txt", "分類公告的 id 必須是裸檔名")
+    checkEqual(scanEN.byId["10_a.txt"].category, "10_news", "條目必須帶所屬分類")
+    checkEqual(scanEN.byId["05_root.txt"].category, "", "語系根層的公告分類為空字串")
+
+    local composedEN = NBReader.composeLanguage({ EN = scanEN }, "EN", "EN", categories)
+    checkEqual(categoryKeys(composedEN), "10_news,20_rules",
+        "只有實際有公告的分類才進 manifest（空分類不送，側欄不該有點開是空的分組）")
+    checkEqual(composedEN.categories[1].label, "News", "標籤取玩家語系那一份")
+    checkEqual(manifestOf(composedEN, "10_a.txt").c, "10_news", "分類必須進 manifest 的 c")
+    checkEqual(manifestOf(composedEN, "05_root.txt").c, nil, "未分類仍不得送 c")
+
+    -- 標籤 fallback：玩家語系 -> DefaultLanguage -> 檔案裡第一個出現的標籤
+    scannedNames["NoticeBoard/CH"] = {}
+    scannedNames["NoticeBoard/CH/10_news"] = {}
+    scannedNames["NoticeBoard/CH/20_rules"] = {}
+    local composedCH = NBReader.composeLanguage(
+        { EN = scanEN, CH = NBReader.scanLanguage("CH", nil, categories) },
+        "CH", "EN", categories)
+    checkEqual(composedCH.categories[1].label, "Xin Wen", "有玩家語系標籤就用玩家語系")
+    checkEqual(composedCH.categories[2].label, "Rules",
+        "沒有玩家語系標籤時退回 DefaultLanguage 的標籤")
+
+    diskFiles[CATEGORY_PATH] = "10_news|JP|Oshirase\n"
+    local jpOnly = NBReader.scanCategories()
+    local composedFallback = NBReader.composeLanguage(
+        { EN = NBReader.scanLanguage("EN", nil, jpOnly) }, "EN", "EN", jpOnly)
+    checkEqual(composedFallback.categories[1].label, "Oshirase",
+        "玩家語系與 DefaultLanguage 都沒有標籤時，退回檔案裡第一個標籤（不得變成空白）")
+
+    -- 同語系下裸檔名必須全域唯一：根層先贏，其後依 key 排序先贏，被擠掉的留 issue
+    diskFiles = {}
+    clearScanned()
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n20_rules|EN|Rules\n"
+    scannedNames["NoticeBoard/EN"] = { "10_dup.txt" }
+    scannedNames["NoticeBoard/EN/10_news"] = { "10_dup.txt" }
+    scannedNames["NoticeBoard/EN/20_rules"] = { "10_dup.txt" }
+    diskFiles["NoticeBoard/EN/10_dup.txt"] = "# root wins"
+    diskFiles["NoticeBoard/EN/10_news/10_dup.txt"] = "# news"
+    diskFiles["NoticeBoard/EN/20_rules/10_dup.txt"] = "# rules"
+    local dupCategories = NBReader.scanCategories()
+    local dupScan = NBReader.scanLanguage("EN", nil, dupCategories)
+    checkEqual(#dupScan.files, 1, "同語系跨分類撞名的裸檔名只能留一份")
+    checkEqual(dupScan.files[1].category, "", "根層先贏")
+    checkEqual(dupScan.files[1].title, "root wins", "留下的必須是根層那一份的內容")
+    checkEqual(countIssuesOf(dupScan.issues, "dup-id"), 2,
+        "每個被擠掉的重名都要留 issue（服主才知道要改檔名）")
+
+    scannedNames["NoticeBoard/EN"] = {}
+    dupScan = NBReader.scanLanguage("EN", nil, dupCategories)
+    checkEqual(dupScan.files[1].category, "10_news",
+        "沒有根層版本時，依 key 排序先到的分類先贏")
+    checkEqual(dupScan.files[1].title, "news", "先贏的那一份內容才進 manifest")
+
+    -- DefaultLanguage 是分類位置的權威：玩家語系只覆蓋內容，位置不跟著跑
+    diskFiles = {}
+    clearScanned()
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n20_rules|EN|Rules\n"
+    scannedNames["NoticeBoard/EN"] = {}
+    scannedNames["NoticeBoard/EN/10_news"] = { "10_a.txt" }
+    scannedNames["NoticeBoard/EN/20_rules"] = {}
+    scannedNames["NoticeBoard/CH"] = {}
+    scannedNames["NoticeBoard/CH/10_news"] = {}
+    scannedNames["NoticeBoard/CH/20_rules"] = { "10_a.txt" }
+    diskFiles["NoticeBoard/EN/10_news/10_a.txt"] = "# EN news"
+    diskFiles["NoticeBoard/CH/20_rules/10_a.txt"] = "# CH rules"
+    local authorityCategories = NBReader.scanCategories()
+    local scanned = {
+        EN = NBReader.scanLanguage("EN", nil, authorityCategories),
+        CH = NBReader.scanLanguage("CH", nil, authorityCategories),
+    }
+    local authority = NBReader.composeLanguage(scanned, "CH", "EN", authorityCategories)
+    checkEqual(authority.byId["10_a.txt"].category, "10_news",
+        "分類位置以 DefaultLanguage 為準（同一份公告不得在不同語系跳到不同分組）")
+    checkEqual(authority.byId["10_a.txt"].title, "CH rules",
+        "內容仍必須由玩家語系覆蓋")
+    checkEqual(categoryKeys(authority), "10_news", "只有底稿定的位置會進分類清單")
+    checkEqual(#authority.categoryConflicts, 1, "位置衝突必須回報給服主")
+    checkEqual(authority.categoryConflicts[1].from, "20_rules", "衝突要說明原本放在哪裡")
+    checkEqual(authority.categoryConflicts[1].to, "10_news", "衝突要說明最後採用哪裡")
+    checkEqual(scanned.CH.byId["10_a.txt"].category, "20_rules",
+        "compose 不得原地改掉掃描結果（改了下一輪就看不出分類變更）")
+
+    -- 只搬資料夾（內容一個位元組都沒動）：hash 不變、分類要變、且必須被判定成有變更
+    diskFiles = {}
+    clearScanned()
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n20_rules|EN|Rules\n"
+    scannedNames["NoticeBoard/EN"] = {}
+    scannedNames["NoticeBoard/EN/10_news"] = { "10_a.txt" }
+    scannedNames["NoticeBoard/EN/20_rules"] = {}
+    diskFiles["NoticeBoard/EN/10_news/10_a.txt"] = "# same content"
+    local moveCategories = NBReader.scanCategories()
+    local scanBefore = NBReader.scanLanguage("EN", nil, moveCategories)
+    local before = NBReader.composeLanguage({ EN = scanBefore }, "EN", "EN", moveCategories)
+    check(NBReader.languageCachesEqual(before, before), "同一份快取必須判定相等")
+
+    scannedNames["NoticeBoard/EN/10_news"] = {}
+    scannedNames["NoticeBoard/EN/20_rules"] = { "10_a.txt" }
+    diskFiles["NoticeBoard/EN/10_news/10_a.txt"] = nil
+    diskFiles["NoticeBoard/EN/20_rules/10_a.txt"] = "# same content"
+    local scanAfter = NBReader.scanLanguage("EN", scanBefore, moveCategories)
+    local after = NBReader.composeLanguage({ EN = scanAfter }, "EN", "EN", moveCategories)
+    checkEqual(after.byId["10_a.txt"].h, before.byId["10_a.txt"].h,
+        "只搬資料夾時內容 hash 不得改變（接收端才能復用內容、未讀狀態才不失效）")
+    checkEqual(after.byId["10_a.txt"].n, before.byId["10_a.txt"].n,
+        "分塊數不得改變（內容沒動就不該重新切塊）")
+    checkEqual(after.byId["10_a.txt"].category, "20_rules", "新分類必須生效")
+    checkEqual(categoryKeys(after), "20_rules", "分類清單必須跟著搬過去")
+    check(not NBReader.languageCachesEqual(before, after),
+        "只改分類也必須判定成有變更，否則 manifest 永遠不會重推、側欄停在舊分組")
+    checkEqual(before.byId["10_a.txt"].category, "10_news",
+        "上一輪快取的分類不得被就地覆寫（覆寫了比較就恆等於相等）")
+
+    -- 只改標籤（公告一個字都沒動）同樣必須推新 manifest
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n20_rules|EN|Renamed\n"
+    local relabelCategories = NBReader.scanCategories()
+    local relabelled = NBReader.composeLanguage(
+        { EN = NBReader.scanLanguage("EN", scanAfter, relabelCategories) },
+        "EN", "EN", relabelCategories)
+    checkEqual(relabelled.categories[1].label, "Renamed", "新標籤必須生效")
+    check(not NBReader.languageCachesEqual(after, relabelled),
+        "只改分類標籤也必須推新 manifest，否則側欄停在舊名字")
+
+    -- 可讀但含壞行時也不能把上一輪分類公告當成刪除：舊 key 繼續掃，但不進本輪 cats/c。
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n20_rules|XX|Rules\n"
+    local brokenCategories = NBReader.scanCategories(relabelCategories)
+    checkEqual(table.concat(brokenCategories.keys, ","), "10_news",
+        "本輪發布分類只包含合法宣告")
+    checkEqual(table.concat(brokenCategories.scanKeys, ","), "10_news,20_rules",
+        "設定有錯時掃描 key 必須聯集上一輪，保住分類公告")
+    local brokenScan = NBReader.scanLanguage("EN", scanAfter, brokenCategories)
+    local brokenCache = NBReader.composeLanguage(
+        { EN = brokenScan }, "EN", "EN", brokenCategories)
+    check(brokenCache.byId["10_a.txt"] ~= nil,
+        "分類唯一宣告暫時寫壞時公告仍必須留在 manifest")
+    checkEqual(manifestOf(brokenCache, "10_a.txt").c, nil,
+        "暫時沿用掃描的舊 key 不得送進 cats/c，公告應降級到根層")
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n"
+    local removedCategories = NBReader.scanCategories(brokenCategories)
+    local removedScan = NBReader.scanLanguage("EN", brokenScan, removedCategories)
+    checkEqual(#removedScan.files, 0,
+        "乾淨設定明確移除分類時才停止掃描該目錄")
+
+    -- bootstrap 的判斷必須看得到分類目錄：只把公告放在分類目錄的伺服器若被判成空的，
+    -- 啟動時就會被塞進兩份 10_welcome.txt。
+    diskFiles = {}
+    clearScanned()
+    diskFiles[CATEGORY_PATH] = "10_news|EN|News\n"
+    scannedNames["NoticeBoard/EN"] = {}
+    scannedNames["NoticeBoard/EN/10_news"] = { "10_a.txt" }
+    diskFiles["NoticeBoard/EN/10_news/10_a.txt"] = "# only in a category"
+    checkEqual((NBReader.hasAnyNoticeFiles()), true,
+        "只把公告放在分類目錄的伺服器不得被判成空的")
+    scannedNames["NoticeBoard/EN/10_news"] = {}
+    checkEqual((NBReader.hasAnyNoticeFiles()), false, "分類目錄也空了才算空")
+
+    diskFiles = {}
+    clearScanned()
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 分類宣告檔的模板：不存在才建立，已存在絕不覆蓋，探測失敗一律不寫。
+-- 模板是服主分類設定的唯一落地處，覆蓋掉就是把設定弄丟；而它是 .lua 內的字面值，
+-- 非 ASCII 會被 Kahlua 截成單一位元組而全毀（範例公告已為此付出過代價）。
+-- ---------------------------------------------------------------------------
+;(function()
+    local CATEGORY_PATH = "NoticeBoard/categories.txt"
+
+    diskFiles = {}
+    fsWorking = true
+    checkEqual(NBServer.ensureCategoriesFile(), true, "宣告檔不存在時必須建立模板")
+    local template = diskFiles[CATEGORY_PATH]
+    check(type(template) == "string" and template ~= "", "模板必須真的寫出內容")
+
+    local nonAscii = nil
+    local byteIndex
+    for byteIndex = 1, string.len(template) do
+        if string.byte(template, byteIndex) > 127 then
+            nonAscii = byteIndex
+        end
+    end
+    checkEqual(nonAscii, nil, "模板必須是純 ASCII（Kahlua 會把非 ASCII 字面值截壞）")
+
+    -- 模板本身宣告零個分類：升級後「服主什麼都沒設」必須與升級前完全同形
+    local parsed = NBReader.scanCategories()
+    checkEqual(#parsed.keys, 0, "模板不得宣告任何分類")
+    checkEqual(#parsed.issues, 0, "模板不得產生任何 issue（每一行都必須是註解或空行）")
+
+    diskFiles[CATEGORY_PATH] = "10_news|EN|Mine\n"
+    checkEqual(NBServer.ensureCategoriesFile(), false, "已存在時不得再建立")
+    checkEqual(diskFiles[CATEGORY_PATH], "10_news|EN|Mine\n",
+        "服主的分類設定絕不可被模板覆蓋")
+
+    diskFiles[CATEGORY_PATH] = nil
+    readerFails[CATEGORY_PATH] = true
+    checkEqual(NBServer.ensureCategoriesFile(), false, "探測失敗時不得寫檔")
+    checkEqual(diskFiles[CATEGORY_PATH], nil,
+        "分不清『不存在』與『讀不到』時不寫，才不會蓋掉服主的設定")
+    readerFails[CATEGORY_PATH] = nil
+
+    diskFiles[CATEGORY_PATH] = nil
+    fsWorking = false
+    checkEqual(NBServer.ensureCategoriesFile(), false,
+        "PrintWriter 靜默吞掉寫入錯誤時不得宣稱模板建立成功")
+    checkEqual(diskFiles[CATEGORY_PATH], nil,
+        "模板讀回驗證失敗時不得留下假成功狀態")
+    fsWorking = true
+
+    diskFiles = {}
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 範例重建（admin 面板「重建範例」按鈕 -> 語系選單 -> examples 指令 -> examplesResult ack）。
+-- 這條路徑**直接覆寫伺服器 live tree** 的 5 個受管相對路徑並立刻 refresh，
+-- 兩件事都只有實跑才驗得到。每一條斷言對應一個服主付得起代價的失誤：
+--   * 精確 5 檔可達：共用 categories.txt／README.txt + 選定語系的三份公告；
+--   * **另一個語系的目錄一個位元組都不能動**（負向斷言，這是新行為唯一的安全邊界）；
+--   * 受管路徑之外的公告與 images/ 一律不動（沒有任何刪除路徑）；
+--   * 寫入順序＝語系三份 -> categories.txt -> README.txt：中途失敗時最不該先毀的
+--     就是 categories.txt（它壞掉會讓已宣告分類底下的公告整批掃不到）；
+--   * 只預讀選定語系的資源，缺任一份就必須**零寫入**；另一語系資源缺失不得擋住這一次；
+--   * 非法 lang 必須零寫入、**零冷卻消耗**、log 節流、回 failed；
+--   * 寫完必須 refresh，且 refresh 失敗不得回 success（檔在磁碟上、玩家看到的仍是舊的）；
+--   * 權限／冷卻／失敗都要有 ack——沒有 ack，admin 分不出「按鈕壞了」與「磁碟滿了」。
+-- 那 5 個相對路徑與寫入順序在這裡寫死：它是 client toast 的 count、README 的清單與
+-- 服主文件共同依賴的契約，從被測模組讀一份出來比對等於什麼都沒驗。
+-- ---------------------------------------------------------------------------
+;(function()
+    local OUTPUT_ROOT = "NoticeBoard/"
+    local ASSET_ROOT = "media/NoticeBoardExamplePack/"
+    -- 選定語系的三份公告，**依寫入順序**
+    local LANG_FILES = {
+        "10_welcome.txt",
+        "10_news/20_markdown_showcase.txt",
+        "20_rules/30_server_rules.only.txt",
+    }
+    -- 共用兩份，同樣依寫入順序（categories.txt 先、README.txt 最後）
+    local COMMON_FILES = {
+        "categories.txt",
+        "README.txt",
+    }
+    local MANAGED_COUNT = #LANG_FILES + #COMMON_FILES
+    checkEqual(MANAGED_COUNT, 5,
+        "一次生成的受管檔數是契約（client 只接受 count=5、README 的清單也是 5 條）")
+
+    -- 這一次會被覆寫的相對路徑，依寫入順序。順序本身是斷言：下面用「第 N 個寫失敗」
+    -- 反推已落地／未落地的集合，順序錯了那幾條會紅。
+    local function managedRelatives(language)
+        local relatives = {}
+        local index
+        for index = 1, #LANG_FILES do
+            relatives[index] = language .. "/" .. LANG_FILES[index]
+        end
+        for index = 1, #COMMON_FILES do
+            relatives[#relatives + 1] = COMMON_FILES[index]
+        end
+        return relatives
+    end
+    local function managedPaths(language)
+        local relatives = managedRelatives(language)
+        local paths = {}
+        local index
+        for index = 1, #relatives do
+            paths[index] = OUTPUT_ROOT .. relatives[index]
+        end
+        return paths
+    end
+
+    -- 服主原有內容的哨兵。分兩類：
+    --   OWNED  = 受管路徑之外，**任何一次生成都不得改動**（含另一語系的三份公告）；
+    --   COMMON = 受管的共用檔，**必須被覆寫**（使用者明確要求的代價）。
+    local function ownedSentinels(selected)
+        local other = "EN"
+        if selected == "EN" then
+            other = "CH"
+        end
+        local owned = {
+            -- 選定語系目錄底下、受管路徑之外的公告：服主自己加的，不得被動到
+            [OUTPUT_ROOT .. selected .. "/99_my_own_notes.txt"] = "MY OWN NOTES",
+            [OUTPUT_ROOT .. selected .. "/10_news/90_owner_news.txt"] = "OWNER NEWS",
+            -- images/ 完全不在 manifest 裡
+            [OUTPUT_ROOT .. "images/00_README.txt"] = "LIVE IMAGES README",
+            [OUTPUT_ROOT .. "images/logo.png"] = "LIVE LOGO BYTES",
+            -- 伺服器識別碼與其他根層檔案同樣不在 manifest 裡
+            [OUTPUT_ROOT .. "serverid.txt"] = "0f9230990f9230990f9230990f923099",
+        }
+        -- 另一個語系的三份公告：與受管路徑同名、只差語系目錄，落地路徑漏帶語系時會被覆寫
+        local index
+        for index = 1, #LANG_FILES do
+            owned[OUTPUT_ROOT .. other .. "/" .. LANG_FILES[index]] =
+                "OWNER " .. other .. " " .. tostring(index)
+        end
+        return owned
+    end
+
+    local function seedDisk(selected)
+        diskFiles = {}
+        local owned = ownedSentinels(selected)
+        local path
+        for path in pairs(owned) do
+            diskFiles[path] = owned[path]
+        end
+        -- 受管的共用檔先放服主自己的版本，才驗得到「確實被覆寫」
+        diskFiles[OUTPUT_ROOT .. "categories.txt"] = "10_news|EN|Owner Label\n"
+        diskFiles[OUTPUT_ROOT .. "README.txt"] = "OWNER README"
+        return owned
+    end
+
+    local function checkOwnedUntouched(owned, label)
+        local path
+        for path in pairs(owned) do
+            checkEqual(diskFiles[path], owned[path],
+                label .. "：受管路徑之外的 " .. path .. " 不得被範例重建動到")
+        end
+    end
+
+    -- 送一次 examples 並取回唯一的那則 ack。回傳 payload（nil = 完全沒回）。
+    local function requestExamples(player, language)
+        sentCommands = {}
+        NBServer.onClientCommand(MODULE, "examples", player, { lang = language })
+        checkEqual(#sentCommands, 1, "examples 的每一條路徑都必須恰好回一則 ack")
+        local ack = sentCommands[1]
+        checkEqual(ack.module, MODULE, "ack 必須走本 MOD 的 module")
+        checkEqual(ack.command, "examplesResult", "ack 的命令名是契約")
+        checkEqual(ack.player, player, "ack 只送給發動的那位玩家")
+        return ack.payload
+    end
+
+    local function withoutTrailingNewline(text)
+        if type(text) == "string" and string.sub(text, -1) == "\n" then
+            return string.sub(text, 1, -2)
+        end
+        return text
+    end
+
+    local admin = makePlayer("adminA", "admin")
+    local otherAdmin = makePlayer("adminB", "Admin")
+    local plainPlayer = makePlayer("mallory")
+
+    local savedScanned = {}
+    local scanKey
+    for scanKey in pairs(scannedNames) do
+        savedScanned[scanKey] = scannedNames[scanKey]
+        scannedNames[scanKey] = nil
+    end
+
+    serverState.defaultLanguage = "EN"
+    serverState.sid = "0f9230990f9230990f9230990f923099"
+    serverState.registrations = {}
+    serverState.localLanguage = nil
+    serverState.jobs = {}
+    serverState.queued = {}
+    serverState.queue = {}
+    serverState.examplesCooldownAt = {}
+    serverState.rejectLogAt = {}
+    fsWorking = true
+    env.missingModAssets = {}
+
+    -- --- 1. CH 生成：只碰 CH3 + 共用兩份，EN 目錄完全不動 -----------------------
+    local owned = seedDisk("CH")
+    env.nowMs = env.nowMs + 60000
+    logLines = {}
+    local payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success", "admin 生成成功必須回 success")
+    checkEqual(payload.count, MANAGED_COUNT, "success 必須帶實際寫出的檔數（精確 5）")
+
+    local chRelatives = managedRelatives("CH")
+    local chPaths = managedPaths("CH")
+    local index
+    for index = 1, #chPaths do
+        local content = diskFiles[chPaths[index]]
+        check(type(content) == "string" and content ~= "",
+            "受管檔必須真的落地到 live tree：" .. chPaths[index])
+        checkEqual(string.find(content, "\r", 1, true), nil,
+            "落地內容不得含 CR（範例一律 LF）：" .. chRelatives[index])
+        checkEqual(string.sub(content, 1, 3) == "\239\187\191", false,
+            "落地內容不得帶 UTF-8 BOM：" .. chRelatives[index])
+        checkEqual(string.sub(content, -1), "\n",
+            "落地內容必須以換行結尾：" .. chRelatives[index])
+        -- 這裡只驗寫入沒有變形；資產來源的 hard break 由下方內容契約直接釘住。
+        checkEqual(content, readRepoFile(ASSET_ROOT .. chRelatives[index]),
+            "落地內容必須與 MOD 資源檔逐位元組相同：" .. chRelatives[index])
+    end
+    checkOwnedUntouched(owned, "CH 生成後")
+    -- 共用兩份必須真的被覆寫（服主的版本不得留下）
+    check(diskFiles[OUTPUT_ROOT .. "categories.txt"] ~= "10_news|EN|Owner Label\n",
+        "live categories.txt 必須被覆寫（範例公告要能被掃描到的前提）")
+    check(diskFiles[OUTPUT_ROOT .. "README.txt"] ~= "OWNER README",
+        "live README.txt 必須被覆寫")
+    check(logContains("examples requested username=adminA lang=CH"),
+        "生成請求必須留下帶 username 與語系的 log")
+    check(logContains("examples written count=5 lang=CH"),
+        "生成成功必須留下檔數與語系 log")
+
+    -- 精確 5 檔可達：除了受管路徑與哨兵，磁碟上不得多出任何東西
+    local expectedPaths = {}
+    for index = 1, #chPaths do
+        expectedPaths[chPaths[index]] = true
+    end
+    local ownedPath
+    for ownedPath in pairs(owned) do
+        expectedPaths[ownedPath] = true
+    end
+    local diskPath
+    for diskPath in pairs(diskFiles) do
+        check(rawget(expectedPaths, diskPath) == true,
+            "生成不得在受管 5 檔之外落下任何檔案：" .. diskPath)
+    end
+
+    -- 內容契約：README 必須列出通用的 5 條受管路徑（`<LANG>/` 那組），且警告 emoji 不可靠。
+    -- 這兩件事是「服主打開資料夾就懂」的唯一保證，資源檔改壞了要在這裡紅。
+    local readme = diskFiles[OUTPUT_ROOT .. "README.txt"]
+    local README_ENTRIES = {
+        "README.txt",
+        "categories.txt",
+        "<LANG>/10_welcome.txt",
+        "<LANG>/10_news/20_markdown_showcase.txt",
+        "<LANG>/20_rules/30_server_rules.only.txt",
+    }
+    checkEqual(#README_ENTRIES, MANAGED_COUNT,
+        "README 的通用清單條數必須等於一次生成的受管檔數")
+    for index = 1, #README_ENTRIES do
+        check(string.find(readme, README_ENTRIES[index], 1, true) ~= nil,
+            "README 必須列出受管路徑 " .. README_ENTRIES[index])
+    end
+    check(string.find(readme, "emoji", 1, true) ~= nil
+        or string.find(readme, "EMOJI", 1, true) ~= nil,
+        "README 必須提到 emoji（顯示不可靠是本 MOD 唯一講不清就會被誤用的限制）")
+    -- README 會覆寫 categories.txt 這件事必須寫在紙上（UI 的選單只講一次，服主之後只剩這份）
+    check(string.find(readme, "categories.txt", 1, true) ~= nil,
+        "README 必須提到 categories.txt 會被重建覆寫")
+
+    -- 資產內容本身也是出貨契約：兩個語系都必須展示完整語法、保留 hard break，
+    -- 並且真的能被 production MDParser 解析。落地內容與資產逐位元組相同只證明 copy
+    -- 沒變形，不能防資產來源本身被改壞。
+    local SHOWCASE_MARKERS = {
+        "\n## ", "\n### ", "\n#### ", "\n##### ", "\n###### ",
+        "\n- ", "\n* ", "\n+ ", "\n1. ", "\n5) ",
+        "\n   - ", "\n     - ", "\n       - ",
+        "\n> ", "\n>> ", "\n---\n",
+        "```", "~~~", "**", "***", "~~", "``",
+        "](", "<https://", "\\*", "![",
+        "media/ui/NoticeBoard/nb_sample.png =240x",
+        "<RGB:", "<INDENT:", "YAML", "emoji",
+    }
+    local showcaseLanguage
+    for _, showcaseLanguage in ipairs({ "CH", "EN" }) do
+        local relative = showcaseLanguage .. "/10_news/20_markdown_showcase.txt"
+        local showcase = readRepoFile(ASSET_ROOT .. relative)
+        check(type(showcase) == "string", "展示檔資產必須存在：" .. relative)
+        checkEqual(string.sub(showcase, 1, 2), "# ",
+            relative .. " 第一行必須是 H1（同時是側欄標題）")
+        local markerIndex
+        for markerIndex = 1, #SHOWCASE_MARKERS do
+            check(string.find(showcase, SHOWCASE_MARKERS[markerIndex], 1, true) ~= nil,
+                relative .. " 缺少支援語法／限制示範：" .. SHOWCASE_MARKERS[markerIndex])
+        end
+        check(string.find(showcase, "  \n", 1, true) ~= nil,
+            relative .. " 必須保留行尾兩空白的 hard break")
+        check(string.find(showcase, "\\\n", 1, true) ~= nil,
+            relative .. " 必須展示反斜線 hard break")
+        local parsedShowcase = MDParser.safeParse(showcase)
+        check(parsedShowcase.ok, relative .. " 必須能由 production MDParser 完整解析")
+
+        local imageCount = 0
+        local imageName
+        for imageName in string.gmatch(showcase, "images/([^%)%s`]+%.png)") do
+            imageCount = imageCount + 1
+            check(NBImage.isValidName(imageName),
+                relative .. " 教的同步圖片檔名必須合法：" .. imageName)
+        end
+        check(imageCount > 0, relative .. " 必須提供 images/<name>.png 範例")
+    end
+
+    -- --- 2. refresh 生效：語言快取與推送佇列必須反映剛剛落地的 live 公告 ---------
+    -- 沒有這一段，「按一下玩家馬上看得到」就只是註解裡的宣稱。scannedNames 就是作業系統
+    -- 的目錄列舉（寫檔之後才會列得到），所以在這裡先鋪好，再重跑一次生成驗 refresh 的結果。
+    scannedNames[OUTPUT_ROOT .. "CH"] = { "10_welcome.txt", "99_my_own_notes.txt" }
+    scannedNames[OUTPUT_ROOT .. "CH/10_news"] =
+        { "20_markdown_showcase.txt", "90_owner_news.txt" }
+    scannedNames[OUTPUT_ROOT .. "CH/20_rules"] = { "30_server_rules.only.txt" }
+    serverState.registrations = { viewer = "CH" }
+    serverState.jobs = {}
+    serverState.queued = {}
+    serverState.queue = {}
+    env.nowMs = env.nowMs + 60000
+    logLines = {}
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success", "refresh 成功時必須回 success")
+
+    local chSource = rawget(serverState.sourceCaches, "CH")
+    check(type(chSource) == "table", "生成後必須有 CH 的來源快取（refresh 沒跑就是 nil）")
+    local welcomeEntry = rawget(chSource.byId, "10_welcome.txt")
+    check(type(welcomeEntry) == "table",
+        "剛落地的 CH 歡迎公告必須進入語言快取（refresh 是這顆按鈕的整個賣點）")
+    checkEqual(welcomeEntry.content,
+        withoutTrailingNewline(readRepoFile(ASSET_ROOT .. "CH/10_welcome.txt")),
+        "快取裡的內容必須就是剛寫進 live tree 的那一份（不是上一輪的舊快照）")
+    local showcaseEntry = rawget(chSource.byId, "20_markdown_showcase.txt")
+    check(type(showcaseEntry) == "table", "分類目錄底下的範例公告也必須被掃到")
+    checkEqual(showcaseEntry.category, "10_news",
+        "範例公告必須落在 categories.txt 宣告的分類裡（分類宣告與內容是同一次寫出的）")
+    check(rawget(chSource.byId, "30_server_rules.only.txt") ~= nil,
+        ".only 檔名的範例公告必須被掃到")
+    -- 服主自己的公告同樣還在（生成沒有刪除路徑）
+    check(rawget(chSource.byId, "99_my_own_notes.txt") ~= nil,
+        "服主自己的公告必須與範例並存")
+    check(rawget(chSource.byId, "90_owner_news.txt") ~= nil,
+        "服主放在分類目錄裡的公告同樣必須並存")
+
+    local viewerJob = rawget(serverState.jobs, "viewer")
+    check(type(viewerJob) == "table",
+        "refresh 必須把已註冊玩家重新排進推送佇列，否則玩家端還是舊內容")
+    checkEqual(viewerJob.language, "CH", "重推的 job 必須是該玩家的語系")
+    check(rawget(viewerJob.cache.byId or {}, "10_welcome.txt") ~= nil
+        or (function()
+            local fileIndex
+            for fileIndex = 1, #viewerJob.cache.files do
+                if viewerJob.cache.files[fileIndex].id == "10_welcome.txt" then
+                    return true
+                end
+            end
+            return false
+        end)(),
+        "排進佇列的 job 必須帶上含新公告的快取")
+    local chAvailable = false
+    for index = 1, #serverState.availableLanguages do
+        if serverState.availableLanguages[index] == "CH" then
+            chAvailable = true
+        end
+    end
+    check(chAvailable, "CH 有內容之後必須出現在可用語系清單（面板選單靠它）")
+
+    -- categories.txt 範例必須宣告範例公告實際所在的兩個目錄 key，且 EN／CH 標籤齊全：
+    -- 少一個 key，那個目錄就不會被掃描，公告直接消失。這裡讀的是**剛剛落地的 live 檔**。
+    local exampleCategories = NBReader.scanCategories()
+    checkEqual(#exampleCategories.issues, 0, "落地的 categories.txt 不得產生任何 issue")
+    checkEqual(table.concat(exampleCategories.keys, ","), "10_news,20_rules",
+        "categories.txt 必須宣告範例公告實際所在的兩個 key（順序由數字前綴決定）")
+    local categoryKey
+    for categoryKey in pairs({ ["10_news"] = true, ["20_rules"] = true }) do
+        local labels = exampleCategories.labels[categoryKey]
+        check(type(labels) == "table", "分類 " .. categoryKey .. " 必須有標籤表")
+        check(type(labels.EN) == "string" and labels.EN ~= "",
+            "分類 " .. categoryKey .. " 必須有 EN 標籤")
+        check(type(labels.CH) == "string" and labels.CH ~= "",
+            "分類 " .. categoryKey .. " 必須有 CH 標籤")
+    end
+
+    serverState.registrations = {}
+    serverState.jobs = {}
+    serverState.queued = {}
+    serverState.queue = {}
+    for scanKey in pairs(scannedNames) do
+        scannedNames[scanKey] = nil
+    end
+
+    -- --- 3. EN 生成：只碰 EN3 + 共用兩份，CH 目錄完全不動 -----------------------
+    owned = seedDisk("EN")
+    env.nowMs = env.nowMs + 60000
+    logLines = {}
+    payload = requestExamples(admin, "EN")
+    checkEqual(payload.kind, "success", "EN 生成同樣必須成功")
+    checkEqual(payload.count, MANAGED_COUNT, "EN 生成的受管檔數同樣是 5")
+    local enRelatives = managedRelatives("EN")
+    local enPaths = managedPaths("EN")
+    for index = 1, #enPaths do
+        checkEqual(diskFiles[enPaths[index]],
+            readRepoFile(ASSET_ROOT .. enRelatives[index]),
+            "EN 受管檔必須落地且逐位元組相同：" .. enRelatives[index])
+    end
+    checkOwnedUntouched(owned, "EN 生成後")
+    check(logContains("examples written count=5 lang=EN"),
+        "EN 生成的 log 必須帶 lang=EN")
+
+    -- --- 4. 兩次生成後兩語系並存 -----------------------------------------------
+    -- 這是新行為的核心承諾：CH 與 EN 是兩次獨立的生成，後一次不得清掉前一次。
+    diskFiles = {}
+    env.nowMs = env.nowMs + 60000
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success", "前提檢查：CH 生成成功")
+    env.nowMs = env.nowMs + 60000
+    payload = requestExamples(admin, "EN")
+    checkEqual(payload.kind, "success", "前提檢查：緊接著的 EN 生成也要成功")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[OUTPUT_ROOT .. "CH/" .. LANG_FILES[index]],
+            readRepoFile(ASSET_ROOT .. "CH/" .. LANG_FILES[index]),
+            "EN 生成不得動到前一次寫出的 CH 公告：" .. LANG_FILES[index])
+        checkEqual(diskFiles[OUTPUT_ROOT .. "EN/" .. LANG_FILES[index]],
+            readRepoFile(ASSET_ROOT .. "EN/" .. LANG_FILES[index]),
+            "EN 公告必須同時存在：" .. LANG_FILES[index])
+    end
+
+    -- --- 5. 受管檔要覆寫（含共用兩份） ------------------------------------------
+    owned = seedDisk("CH")
+    diskFiles[OUTPUT_ROOT .. "CH/10_welcome.txt"] = "STALE CH WELCOME"
+    diskFiles[OUTPUT_ROOT .. "CH/20_rules/30_server_rules.only.txt"] = "STALE CH RULES"
+    env.nowMs = env.nowMs + 60000
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success", "重建必須照常成功")
+    check(diskFiles[OUTPUT_ROOT .. "CH/10_welcome.txt"] ~= "STALE CH WELCOME",
+        "受管檔必須被覆寫（按鈕的用途就是把範例還原成出貨版本）")
+    check(diskFiles[OUTPUT_ROOT .. "CH/20_rules/30_server_rules.only.txt"]
+        ~= "STALE CH RULES",
+        "每一個受管檔都要覆寫，不只第一個")
+    checkOwnedUntouched(owned, "重建後")
+
+    -- --- 6. 同一位 admin 的冷卻 -------------------------------------------------
+    diskFiles[OUTPUT_ROOT .. "CH/10_welcome.txt"] = "COOLDOWN SENTINEL"
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "cooldown", "冷卻中必須誠實回 cooldown，不得假成功")
+    checkEqual(payload.count, nil, "非成功的 ack 不得帶 count")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "CH/10_welcome.txt"], "COOLDOWN SENTINEL",
+        "被冷卻擋下時一個位元組都不得寫出")
+
+    -- 冷卻是 per-admin 的：另一位 admin 不該被別人的操作擋住
+    payload = requestExamples(otherAdmin, "EN")
+    checkEqual(payload.kind, "success", "冷卻桶必須是 per-admin，不得共用一份")
+
+    -- 冷卻到期後同一位 admin 可以再按
+    env.nowMs = env.nowMs + 10000
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success", "冷卻到期後必須放行")
+
+    -- --- 7. 非法 lang：零寫入、**零冷卻消耗**、log 節流、回 failed ---------------
+    -- 順序（先驗語系、後吃冷卻）是安全設計：反過來的話，一個改過的 client 送一次垃圾
+    -- lang 就能把這位 admin 的 10 秒冷卻吃掉，讓他自己的合法請求被自己擋住。
+    owned = seedDisk("CH")
+    logLines = {}
+    serverState.examplesCooldownAt = {}
+    env.nowMs = env.nowMs + 60000
+    local BAD_LANGS = {
+        "JP", "ch", "en", "", "CH ", " CH", "CH/EN", "..",
+        "../../CH", "EN/../CH", "auto", "ALL",
+    }
+    local badIndex
+    for badIndex = 1, #BAD_LANGS do
+        sentCommands = {}
+        NBServer.onClientCommand(MODULE, "examples", admin, { lang = BAD_LANGS[badIndex] })
+        checkEqual(#sentCommands, 1,
+            "非法 lang 同樣必須恰好回一則 ack：" .. BAD_LANGS[badIndex])
+        checkEqual(sentCommands[1].payload.kind, "failed",
+            "非法 lang 必須回 failed：" .. BAD_LANGS[badIndex])
+        checkEqual(sentCommands[1].payload.count, nil,
+            "非法 lang 的 ack 不得帶 count：" .. BAD_LANGS[badIndex])
+    end
+    -- 形狀壞掉（缺 lang／型別不對）走同一條
+    local BAD_SHAPES = { {}, { lang = 5 }, { lang = true }, { lang = { "CH" } }, nil }
+    local shapeIndex
+    for shapeIndex = 1, 5 do
+        sentCommands = {}
+        NBServer.onClientCommand(MODULE, "examples", admin, BAD_SHAPES[shapeIndex])
+        checkEqual(#sentCommands, 1, "壞掉的 args 形狀同樣必須回一則 ack")
+        checkEqual(sentCommands[1].payload.kind, "failed",
+            "壞掉的 args 形狀必須回 failed（不猜、不預設語系）")
+    end
+    checkOwnedUntouched(owned, "非法 lang 之後")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "categories.txt"], "10_news|EN|Owner Label\n",
+        "非法 lang 不得動到 live categories.txt")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "README.txt"], "OWNER README",
+        "非法 lang 不得動到 live README.txt")
+    local chAllPaths = managedPaths("CH")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[chAllPaths[index]], nil,
+            "非法 lang 不得寫出任何語系公告：" .. chAllPaths[index])
+    end
+    checkEqual(rawget(serverState.examplesCooldownAt, "examples|adminA"), nil,
+        "非法 lang 不得消耗冷卻額度（否則垃圾請求會擋住 admin 自己的合法請求）")
+    local invalidLangLogs = 0
+    local logIndex
+    for logIndex = 1, #logLines do
+        if string.find(logLines[logIndex],
+            "examples invalid lang username=adminA", 1, true) then
+            invalidLangLogs = invalidLangLogs + 1
+        end
+    end
+    checkEqual(invalidLangLogs, 1,
+        "同一位 admin 10 秒內灌 16 次非法 lang 只能寫一行 log（節流是唯一防線）")
+    check(rawget(serverState.rejectLogAt, "examples-lang|adminA") ~= nil,
+        "非法 lang 的節流必須用自己的 key，不與權限拒絕互相吃掉診斷訊息")
+
+    -- 非法 lang 沒吃掉冷卻，所以緊接著的合法請求必須通得過
+    env.nowMs = env.nowMs + 1000
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success",
+        "非法 lang 之後同一位 admin 的合法請求必須立刻可用")
+
+    -- --- 8. 非 admin：不寫任何檔、回 forbidden ----------------------------------
+    owned = seedDisk("CH")
+    logLines = {}
+    env.nowMs = env.nowMs + 60000
+    payload = requestExamples(plainPlayer, "CH")
+    checkEqual(payload.kind, "forbidden", "非 admin 必須收到 forbidden 而不是靜默丟棄")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[chAllPaths[index]], nil,
+            "非 admin 不得寫出任何受管公告：" .. chAllPaths[index])
+    end
+    checkOwnedUntouched(owned, "非 admin 被拒後")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "categories.txt"], "10_news|EN|Owner Label\n",
+        "非 admin 不得動到 live categories.txt")
+    check(logContains("rejected examples username=mallory"),
+        "被拒的請求必須留下 log")
+    -- 權限檢查必須排在語系檢查之前：非 admin 送非法 lang 也只該看到 forbidden
+    payload = requestExamples(plainPlayer, "JP")
+    checkEqual(payload.kind, "forbidden",
+        "非 admin 送非法 lang 仍必須是 forbidden（權限是第一道關）")
+
+    -- server→client 回覆本身拋錯也不得外漏或逐請求洗 log。forbidden ack 刻意不節流，
+    -- 所以 send failure 必須有自己的 10 秒 log 桶。
+    env.serverCommandFails = true
+    sentCommands = {}
+    local sendCallOk, sendCallError = pcall(function()
+        NBServer.onClientCommand(MODULE, "examples", plainPlayer, { lang = "CH" })
+        NBServer.onClientCommand(MODULE, "examples", plainPlayer, { lang = "CH" })
+    end)
+    env.serverCommandFails = false
+    check(sendCallOk, "examplesResult 送信失敗不得拋出 handler：" .. tostring(sendCallError))
+    checkEqual(#sentCommands, 0, "sendServerCommand 拋錯時不得留下假 ack")
+    local sendFailureLogCount = 0
+    local sendLogIndex
+    for sendLogIndex = 1, #logLines do
+        if string.find(logLines[sendLogIndex],
+            "examples result send failed username=mallory", 1, true) then
+            sendFailureLogCount = sendFailureLogCount + 1
+        end
+    end
+    checkEqual(sendFailureLogCount, 1,
+        "同一玩家 10 秒內連續送信失敗只能寫一行帶 username 的 log")
+
+    -- 維護輪不得把「仍在線」玩家的三張節流／冷卻表清掉；否則改過的 client 每秒送一次
+    -- 就會每秒洗一行 log。玩家離線後則必須回收，避免隨歷史 username 無界成長。
+    local savedStarted = serverState.started
+    local savedLastMaintenance = serverState.lastMaintenanceMs
+    local savedLastPoll = serverState.lastPollMs
+    serverState.examplesCooldownAt["examples|adminA"] = env.nowMs
+    serverState.rejectLogAt["examples-lang|adminA"] = env.nowMs
+    env.onlinePlayers = { plainPlayer, admin }
+    serverState.started = true
+    serverState.lastMaintenanceMs = env.nowMs - 1000
+    serverState.lastPollMs = env.nowMs
+    NBServer.onTickEvenPaused()
+    check(serverState.rejectLogAt["examples|mallory"] ~= nil,
+        "在線非 admin 的 examples reject 節流不得被維護輪清掉")
+    check(serverState.examplesCooldownAt["examples|adminA"] ~= nil,
+        "在線 admin 的 examples 冷卻不得被維護輪清掉")
+    check(serverState.rejectLogAt["examples-send|mallory"] ~= nil,
+        "在線玩家的 examplesResult 送信錯誤節流不得被維護輪清掉")
+    check(serverState.rejectLogAt["examples-lang|adminA"] ~= nil,
+        "在線 admin 的非法 lang 節流不得被維護輪清掉"
+            .. "（新前綴忘了進 LOG_KEY_PREFIXES 就會在這裡紅）")
+
+    requestExamples(plainPlayer, "CH")
+    local rejectedLogCount = 0
+    for logIndex = 1, #logLines do
+        if string.find(logLines[logIndex], "rejected examples username=mallory", 1, true) then
+            rejectedLogCount = rejectedLogCount + 1
+        end
+    end
+    checkEqual(rejectedLogCount, 1,
+        "同一在線玩家 10 秒內重送 forbidden 不得重寫 rejected examples log")
+
+    env.onlinePlayers = {}
+    env.nowMs = env.nowMs + 1000
+    serverState.lastPollMs = env.nowMs
+    NBServer.onTickEvenPaused()
+    checkEqual(serverState.rejectLogAt["examples|mallory"], nil,
+        "玩家離線後必須回收 examples reject 節流")
+    checkEqual(serverState.examplesCooldownAt["examples|adminA"], nil,
+        "玩家離線後必須回收 examples 冷卻")
+    checkEqual(serverState.rejectLogAt["examples-send|mallory"], nil,
+        "玩家離線後必須回收 examplesResult 送信錯誤節流")
+    checkEqual(serverState.rejectLogAt["examples-lang|adminA"], nil,
+        "玩家離線後必須回收非法 lang 節流（否則此表隨歷史 admin 無界成長）")
+    serverState.started = savedStarted
+    serverState.lastMaintenanceMs = savedLastMaintenance
+    serverState.lastPollMs = savedLastPoll
+
+    -- --- 9. 選定語系資源缺一份 -> 預讀階段零寫入 -------------------------------
+    owned = seedDisk("CH")
+    logLines = {}
+    serverState.examplesCooldownAt = {}
+    env.nowMs = env.nowMs + 60000
+    -- 最後一個受管檔缺檔：預讀若不是全有全無，前 4 檔早就落地了
+    env.missingModAssets[ASSET_ROOT .. "README.txt"] = true
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "failed", "資源缺檔必須回 failed")
+    for index = 1, #chAllPaths do
+        if chAllPaths[index] ~= OUTPUT_ROOT .. "categories.txt"
+            and chAllPaths[index] ~= OUTPUT_ROOT .. "README.txt" then
+            checkEqual(diskFiles[chAllPaths[index]], nil,
+                "預讀階段失敗時不得留下半套範例：" .. chAllPaths[index])
+        end
+    end
+    checkEqual(diskFiles[OUTPUT_ROOT .. "categories.txt"], "10_news|EN|Owner Label\n",
+        "預讀階段失敗時 live categories.txt 必須完好（這是「全到齊才動磁碟」的重點）")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "README.txt"], "OWNER README",
+        "預讀階段失敗時 live README.txt 必須完好")
+    checkOwnedUntouched(owned, "資源缺檔後")
+    check(logContains("example pack asset unavailable path=README.txt"),
+        "缺檔的 log 必須指出是哪一個受管相對路徑")
+    check(logContains("nothing written"), "缺檔的 log 必須說明完全沒有寫出")
+    env.missingModAssets = {}
+
+    -- 選定語系自己的資源缺檔同樣是零寫入（語系三份排在最前面，缺第一份就該完全不動）
+    owned = seedDisk("CH")
+    logLines = {}
+    env.nowMs = env.nowMs + 60000
+    env.missingModAssets[ASSET_ROOT .. "CH/10_news/20_markdown_showcase.txt"] = true
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "failed", "選定語系的資源缺檔必須回 failed")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[chAllPaths[index]], nil,
+            "選定語系資源缺檔時不得寫出任何公告：" .. chAllPaths[index])
+    end
+    check(logContains("example pack asset unavailable path=CH/10_news/20_markdown_showcase.txt"),
+        "缺檔的 log 必須帶語系前綴（服主才找得到是哪一份資源）")
+    env.missingModAssets = {}
+
+    -- --- 10. **未選語系**的資源缺失不得影響這一次生成 ---------------------------
+    -- 只預讀選定語系那三份，是「另一語系壞了不連坐」的唯一保證。
+    owned = seedDisk("CH")
+    env.nowMs = env.nowMs + 60000
+    local otherIndex
+    for otherIndex = 1, #LANG_FILES do
+        env.missingModAssets[ASSET_ROOT .. "EN/" .. LANG_FILES[otherIndex]] = true
+    end
+    payload = requestExamples(admin, "CH")
+    checkEqual(payload.kind, "success",
+        "EN 資源全缺時 CH 生成必須照常成功（不得預讀未選語系）")
+    checkEqual(payload.count, MANAGED_COUNT, "未選語系缺檔不得改變受管檔數")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[OUTPUT_ROOT .. "CH/" .. LANG_FILES[index]],
+            readRepoFile(ASSET_ROOT .. "CH/" .. LANG_FILES[index]),
+            "CH 公告必須照常落地：" .. LANG_FILES[index])
+    end
+    env.missingModAssets = {}
+
+    -- --- 11. 寫入順序：語系三份 -> categories.txt -> README.txt -----------------
+    -- 第一份就失敗時，categories.txt 與 README.txt 必須完全沒被碰過。這正是把共用檔
+    -- 排在後面的理由：中途失敗最不該先毀的是分類宣告。
+    owned = seedDisk("CH")
+    logLines = {}
+    env.nowMs = env.nowMs + 60000
+    readerFails[OUTPUT_ROOT .. "CH/10_welcome.txt"] = true
+    payload = requestExamples(admin, "CH")
+    readerFails[OUTPUT_ROOT .. "CH/10_welcome.txt"] = nil
+    checkEqual(payload.kind, "failed", "寫入失敗必須回 failed（絕不可假成功）")
+    checkEqual(payload.count, nil, "failed 的 ack 不得帶 count")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "categories.txt"], "10_news|EN|Owner Label\n",
+        "第一份公告就失敗時 live categories.txt 必須毫髮無傷（寫入順序的整個理由）")
+    checkEqual(diskFiles[OUTPUT_ROOT .. "README.txt"], "OWNER README",
+        "第一份公告就失敗時 live README.txt 必須毫髮無傷")
+    for index = 2, #LANG_FILES do
+        checkEqual(diskFiles[chAllPaths[index]], nil,
+            "第一個失敗之後必須停手，不再寫後續檔：" .. chAllPaths[index])
+    end
+    check(logContains("example pack write failed path=CH/10_welcome.txt"),
+        "寫入失敗的 log 必須指出確切的受管相對路徑")
+    check(logContains("written=0"), "第一份就失敗時 log 必須指出已寫成功 0 檔")
+
+    -- 寫到第四份（categories.txt）失敗：語系三份已落地、README 必須沒寫。
+    -- 這一條把順序釘死——順序若反過來（共用檔先寫），written 數與 README 的狀態都會不同。
+    owned = seedDisk("CH")
+    logLines = {}
+    env.nowMs = env.nowMs + 60000
+    readerFails[OUTPUT_ROOT .. "categories.txt"] = true
+    payload = requestExamples(admin, "CH")
+    readerFails[OUTPUT_ROOT .. "categories.txt"] = nil
+    checkEqual(payload.kind, "failed", "共用檔寫入失敗同樣必須回 failed")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[chAllPaths[index]],
+            readRepoFile(ASSET_ROOT .. "CH/" .. LANG_FILES[index]),
+            "語系三份排在 categories.txt 之前，失敗時它們必須已經落地：" .. LANG_FILES[index])
+    end
+    checkEqual(diskFiles[OUTPUT_ROOT .. "README.txt"], "OWNER README",
+        "categories.txt 失敗之後必須停手，README.txt 不得被寫")
+    check(logContains("example pack write failed path=categories.txt"),
+        "共用檔失敗的 log 必須指出相對路徑")
+    check(logContains("written=3"),
+        "written 數必須是 3（語系三份先寫，順序錯了這裡就會紅）")
+
+    -- --- 12. PrintWriter 靜默吞掉 IOException -> 回 failed ---------------------
+    owned = seedDisk("CH")
+    env.nowMs = env.nowMs + 60000
+    fsWorking = false
+    payload = requestExamples(admin, "CH")
+    fsWorking = true
+    checkEqual(payload.kind, "failed",
+        "PrintWriter 靜默失敗時不得宣稱範例已生成（writeTextFile 的讀回驗證是唯一防線）")
+    for index = 1, #LANG_FILES do
+        checkEqual(diskFiles[chAllPaths[index]], nil, "靜默失敗時不得留下任何受管公告")
+    end
+    checkEqual(diskFiles[OUTPUT_ROOT .. "categories.txt"], "10_news|EN|Owner Label\n",
+        "靜默失敗時 live categories.txt 必須完好")
+    checkOwnedUntouched(owned, "靜默寫入失敗後")
+
+    -- --- 13. refresh 失敗 -> 回 failed 並留下帶語系與檔數的 log ----------------
+    -- 檔案確實寫進磁碟了，但玩家看到的仍是舊快照。ack 是 admin 唯一的資訊來源，
+    -- 這條路徑回 success 就是騙他「玩家已經看到了」。
+    owned = seedDisk("CH")
+    logLines = {}
+    env.nowMs = env.nowMs + 60000
+    local savedScanAll = NBReader.scanAll
+    NBReader.scanAll = function()
+        error("simulated scan failure")
+    end
+    payload = requestExamples(admin, "CH")
+    NBReader.scanAll = savedScanAll
+    checkEqual(payload.kind, "failed", "refresh 失敗時不得回 success")
+    checkEqual(payload.count, nil, "refresh 失敗的 ack 不得帶 count")
+    for index = 1, #chAllPaths do
+        check(type(diskFiles[chAllPaths[index]]) == "string",
+            "refresh 失敗不會回收已寫出的檔（log 必須讓服主知道磁碟已被改動）："
+                .. chAllPaths[index])
+    end
+    check(logContains("example pack refresh failed lang=CH files-written=5"),
+        "refresh 失敗必須留下帶語系與已寫檔數的 log")
+    check(logContains("examples written count=5 lang=CH") == false,
+        "refresh 失敗時不得留下「已寫入」的成功 log")
+
+    for scanKey in pairs(savedScanned) do
+        scannedNames[scanKey] = savedScanned[scanKey]
+    end
+    diskFiles = {}
+    sentCommands = {}
+    serverState.examplesCooldownAt = {}
+    serverState.rejectLogAt = {}
+    serverState.registrations = {}
+    serverState.jobs = {}
+    serverState.queued = {}
+    serverState.queue = {}
+end)()
+
+-- ---------------------------------------------------------------------------
+-- client 端的範例重建請求與 ack。兩個方向都是信任邊界：
+--   * 送出方向：語系必須是精確的 CH／EN，其餘一律不送（面板的 bug 不該變成
+--     「已送出」toast 加 server 端靜默 failed 那種兩段式失敗）；
+--   * 收回方向：enum 外的 kind、壞掉的 count、別的 module／command 一律不得變成
+--     面板 toast（把不認識的回覆當成成功，等於騙 admin「範例已重建」）。
+-- ---------------------------------------------------------------------------
+;(function()
+    local received = {}
+    Events[NBClient.EXAMPLES_STATUS_EVENT].Add(function(payload)
+        received[#received + 1] = payload
+    end)
+
+    local function serverSays(module, command, args)
+        received = {}
+        fireEvent("OnServerCommand", module, command, args)
+        return received
+    end
+
+    -- 送出：MP 走 sendClientCommand，且必須把選定語系帶進 args
+    env.isClient = true
+    local SELECTABLE = { "CH", "EN" }
+    local selectIndex
+    for selectIndex = 1, #SELECTABLE do
+        local language = SELECTABLE[selectIndex]
+        clientCommands = {}
+        checkEqual(NBClient.requestExamplePack(language), true,
+            "MP 下送出成功必須回 true：" .. language)
+        checkEqual(#clientCommands, 1, "requestExamplePack 必須送出恰好一則指令")
+        checkEqual(clientCommands[1].module, MODULE, "請求必須走本 MOD 的 module")
+        checkEqual(clientCommands[1].command, "examples", "請求的命令名是契約")
+        checkEqual(clientCommands[1].args.lang, language,
+            "選定語系必須原樣進 args.lang（server 靠它決定覆寫哪個語系目錄）")
+    end
+
+    -- 非法語系：**一則指令都不得送出**。client 端這一關不是為了防惡意（server 才是
+    -- 權威），而是不讓面板的 bug 變成「admin 看到已送出、server 靜默回 failed」。
+    local BAD_LANGS = { "JP", "ch", "en", "", "CH ", "auto", "ALL", "../CH" }
+    local langIndex
+    for langIndex = 1, #BAD_LANGS do
+        clientCommands = {}
+        checkEqual(NBClient.requestExamplePack(BAD_LANGS[langIndex]), false,
+            "非法語系不得宣稱已送出：" .. BAD_LANGS[langIndex])
+        checkEqual(#clientCommands, 0,
+            "非法語系不得送出任何指令：" .. BAD_LANGS[langIndex])
+    end
+    local BAD_TYPES = { 5, true, {}, nil }
+    local typeIndex
+    for typeIndex = 1, 4 do
+        clientCommands = {}
+        checkEqual(NBClient.requestExamplePack(BAD_TYPES[typeIndex]), false,
+            "非字串語系不得宣稱已送出")
+        checkEqual(#clientCommands, 0, "非字串語系不得送出任何指令")
+    end
+
+    -- SP：權威端就是玩家本人，沒有 ack 的收件人，一律不送
+    env.isClient = false
+    clientCommands = {}
+    checkEqual(NBClient.requestExamplePack("CH"), false, "SP 下不得宣稱請求已送出")
+    checkEqual(#clientCommands, 0, "SP 下不得送出任何指令")
+    env.isClient = true
+
+    -- 四種合法 kind 都要送到面板
+    local ack = serverSays(MODULE, "examplesResult", { kind = "success", count = 5 })
+    checkEqual(#ack, 1, "success 必須發出一則狀態事件")
+    checkEqual(ack[1].kind, "success", "kind 必須原樣帶到面板")
+    checkEqual(ack[1].count, 5, "success 必須帶 count")
+
+    local kindIndex
+    local PLAIN_KINDS = { "failed", "cooldown", "forbidden" }
+    for kindIndex = 1, #PLAIN_KINDS do
+        ack = serverSays(MODULE, "examplesResult", { kind = PLAIN_KINDS[kindIndex] })
+        checkEqual(#ack, 1, PLAIN_KINDS[kindIndex] .. " 必須發出狀態事件")
+        checkEqual(ack[1].kind, PLAIN_KINDS[kindIndex],
+            PLAIN_KINDS[kindIndex] .. " 的 kind 必須原樣帶到面板")
+        checkEqual(ack[1].count, nil, PLAIN_KINDS[kindIndex] .. " 不得帶 count")
+    end
+
+    -- 別人的 module／別的命令一律不進來
+    checkEqual(#serverSays("SomeOtherMod", "examplesResult", { kind = "success", count = 5 }),
+        0, "其他 MOD 的同名命令不得被當成自己的 ack")
+    checkEqual(#serverSays(MODULE, "manifest", { kind = "success", count = 5 }),
+        0, "其他命令的 payload 不得被當成範例包 ack")
+
+    -- 形狀壞掉一律丟棄
+    checkEqual(#serverSays(MODULE, "examplesResult", nil), 0, "非 table 的 payload 必須丟棄")
+    checkEqual(#serverSays(MODULE, "examplesResult", "success"), 0,
+        "字串 payload 必須丟棄")
+    checkEqual(#serverSays(MODULE, "examplesResult", {}), 0, "缺 kind 必須丟棄")
+    checkEqual(#serverSays(MODULE, "examplesResult", { kind = "SUCCESS", count = 5 }), 0,
+        "kind 是大小寫敏感的 enum，不得模糊比對")
+    checkEqual(#serverSays(MODULE, "examplesResult", { kind = "partial", count = 4 }), 0,
+        "enum 外的 kind 必須丟棄（不猜、不當成成功）")
+    checkEqual(#serverSays(MODULE, "examplesResult", { kind = { "success" } }), 0,
+        "table 型別的 kind 必須丟棄")
+
+    -- success 代表這一次的 5 份受管檔全部落地；任何其他 count 都是不完整或版本不相容
+    -- （8 是舊版一次寫兩語系共 8 檔的數字，升級後必須被拒），不得把它顯示成成功。
+    local BAD_COUNTS = { 0, -1, 1, 3, 4, 6, 8, 1.5, "5" }
+    checkEqual(#serverSays(MODULE, "examplesResult", { kind = "success" }), 0,
+        "success 少了 count 必須丟棄（顯示不出檔數就不是可信的成功）")
+    local badIndex
+    for badIndex = 1, #BAD_COUNTS do
+        checkEqual(#serverSays(MODULE, "examplesResult",
+            { kind = "success", count = BAD_COUNTS[badIndex] }), 0,
+            "不是固定受管檔數的 count 必須丟棄：" .. tostring(BAD_COUNTS[badIndex]))
+    end
+
+    clientCommands = {}
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 維護輪對 per-player 桶的清理，以 examples 的兩張表為主。
+--
+-- 這一段存在的理由是一個真的踩過的錯：新增一種帶前綴的 rejectLogAt key
+-- （"examples|"..username）時忘了把前綴加進 rebuildOnlinePlayers 的 LOG_KEY_PREFIXES。
+-- 後果不是「少清一張表」而是**反過來**——ownerOffline 認不出那個前綴，於是主人明明在線
+-- 也被判成離線，key 每個維護輪（1 秒）都被刪掉一次，被拒 log 的 10 秒節流等於失效：
+-- 一個改過的 client 灌 examples 就能每秒灌一行 log，而 writeLog 到 10MB 是整檔截斷，
+-- 會沖掉服主真正要查的紀錄。
+--
+-- 驅動走**公開的** onTickEvenPaused（不為測試另開一個 seam）；其餘子系統先調成惰性：
+-- lastPollMs 設成當下 -> 不觸發輪詢重掃，佇列與圖片狀態清空 -> 泵與投遞都是 no-op。
+-- ---------------------------------------------------------------------------
+;(function()
+    local savedStarted = serverState.started
+    local savedOnline = env.onlinePlayers
+    local mallory = makePlayer("mallory")
+    local admin = makePlayer("adminA", "admin")
+
+    local function countLog(fragment)
+        local total = 0
+        local index
+        for index = 1, #logLines do
+            if string.find(logLines[index], fragment, 1, true) then
+                total = total + 1
+            end
+        end
+        return total
+    end
+
+    -- 一個維護輪。onTickEvenPaused 的維護分支條件是「距上次維護 >= 1 秒」。
+    local function maintenanceTick()
+        serverState.started = true
+        serverState.lastMaintenanceMs = 0
+        serverState.lastPollMs = env.nowMs
+        serverState.queue = {}
+        serverState.queued = {}
+        serverState.jobs = {}
+        serverState.imageQueue = {}
+        serverState.imageJob = nil
+        serverState.imageDirty = false
+        NBServer.onTickEvenPaused()
+    end
+
+    -- --- 1. 被拒 log 的節流必須撐得過維護輪 -----------------------------------
+    resetServer()
+    serverState.examplesCooldownAt = {}
+    env.onlinePlayers = { mallory }
+    diskFiles = {}
+    logLines = {}
+    sentCommands = {}
+
+    NBServer.onClientCommand(MODULE, "examples", mallory, { lang = "CH" })
+    checkEqual(countLog("rejected examples"), 1, "第一次被拒必須留下一行 log")
+    maintenanceTick()
+    NBServer.onClientCommand(MODULE, "examples", mallory, { lang = "CH" })
+    checkEqual(countLog("rejected examples"), 1,
+        "10 秒內的第二次被拒不得再寫 log（維護輪不可把節流狀態清掉）")
+    -- 節流的是 log，不是 ack：每一次點擊都必須拿到回覆
+    local forbiddenAcks = 0
+    local ackIndex
+    for ackIndex = 1, #sentCommands do
+        if sentCommands[ackIndex].command == "examplesResult"
+            and sentCommands[ackIndex].payload.kind == "forbidden" then
+            forbiddenAcks = forbiddenAcks + 1
+        end
+    end
+    checkEqual(forbiddenAcks, 2, "log 節流不得順帶吃掉 ack（每次點擊都要有回覆）")
+
+    -- --- 2. "examples|" key 的保留／清除 --------------------------------------
+    check(rawget(serverState.rejectLogAt, "examples|mallory") ~= nil,
+        "主人在線時 examples| 的 reject key 必須留著（這正是修好前被誤刪的那一種）")
+
+    -- 對照組：**沒有**登記進 LOG_KEY_PREFIXES 的前綴，主人在線也會被刪掉。
+    -- 這條證明上一行不是恆真——它就是 examples| 修好前的處境，日後再加一種前綴 key
+    -- 而忘了登記，症狀會一模一樣。
+    serverState.rejectLogAt["imgreq|mallory"] = env.nowMs
+    maintenanceTick()
+    checkEqual(rawget(serverState.rejectLogAt, "imgreq|mallory"), nil,
+        "未登記的前綴 key 即使主人在線也會被清掉（前綴表是唯一的白名單）")
+    check(rawget(serverState.rejectLogAt, "examples|mallory") ~= nil,
+        "同一輪裡已登記的 examples| key 必須毫髮無傷")
+
+    env.onlinePlayers = {}
+    maintenanceTick()
+    checkEqual(rawget(serverState.rejectLogAt, "examples|mallory"), nil,
+        "主人離線後必須清掉（否則此表隨歷史 username 無界成長）")
+
+    -- --- 3. examplesCooldownAt 同樣要被清 -------------------------------------
+    resetServer()
+    serverState.examplesCooldownAt = {}
+    env.onlinePlayers = { admin }
+    diskFiles = {}
+    logLines = {}
+    sentCommands = {}
+    env.nowMs = env.nowMs + 60000
+
+    NBServer.onClientCommand(MODULE, "examples", admin, { lang = "CH" })
+    checkEqual(sentCommands[#sentCommands].payload.kind, "success",
+        "前提檢查：admin 的請求必須成功（冷卻桶才會有東西可清）")
+    check(rawget(serverState.examplesCooldownAt, "examples|adminA") ~= nil,
+        "成功生成必須記下冷卻時戳")
+
+    maintenanceTick()
+    check(rawget(serverState.examplesCooldownAt, "examples|adminA") ~= nil,
+        "admin 還在線時冷卻不得被維護輪清掉（否則 10 秒冷卻等於不存在）")
+
+    env.onlinePlayers = {}
+    maintenanceTick()
+    checkEqual(rawget(serverState.examplesCooldownAt, "examples|adminA"), nil,
+        "admin 離線後冷卻桶必須清掉（否則此表隨歷史 admin 無界成長）")
+
+    diskFiles = {}
+    logLines = {}
+    sentCommands = {}
+    serverState.examplesCooldownAt = {}
+    serverState.started = savedStarted
+    env.onlinePlayers = savedOnline
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 接收端的分類信任邊界。cats／c 都是 server 說了算的值，而分類只是分組用的裝飾：
+-- 上界必須與產生端對稱（海量條目會把 manifest 單包撐過 1MB 觸發 BufferOverflow），
+-- 但形狀壞掉**只能降級**，絕不可拒收整份 manifest —— 那會讓全服的公告消失。
+-- 一併釘住舊版 server 相容（沒有 cats／c）與「同 id/hash 移分類要復用已收到的內容」。
+-- ---------------------------------------------------------------------------
+;(function()
+    local savedOnSnapshot = NBReader.onSnapshot
+    NBReader.onSnapshot = nil
+
+    local function receiveCats(version, cats)
+        NBReader.resetReceiver()
+        NBReader.receive(MODULE, "manifest",
+            { v = version, sid = "sCat", files = {}, lang = "EN", cats = cats })
+        return NBReader.getSnapshot()
+    end
+
+    local accepted = receiveCats(1, {
+        { k = "10_news", t = "News" },
+        { k = "20_rules", t = "Rules" },
+    })
+    checkEqual(#accepted.categories, 2, "合法的 cats 必須進快照")
+    checkEqual(accepted.categories[1].key, "10_news", "線材的 k 必須正規化成 key")
+    checkEqual(accepted.categories[1].label, "News", "線材的 t 必須正規化成 label")
+
+    local many = {}
+    local catIndex
+    for catIndex = 1, 33 do
+        many[catIndex] = { k = "c" .. tostring(catIndex), t = "L" }
+    end
+    local degraded = receiveCats(2, many)
+    check(degraded ~= nil, "分類壞掉不得拖垮公告（快照仍必須發布）")
+    checkEqual(#degraded.categories, 0, "超過 32 的 cats 必須整份丟棄")
+
+    checkEqual(#receiveCats(3, { { k = "../escape", t = "Escape" } }).categories, 0,
+        "分類鍵含路徑穿越字元必須整份拒絕（key 會被當成目錄名用）")
+    checkEqual(#receiveCats(4, { { k = "10_news", t = string.rep("x", 81) } }).categories, 0,
+        "標籤超過 80 必須整份拒絕")
+    checkEqual(#receiveCats(5, { { k = "10_news", t = "a\nb" } }).categories, 0,
+        "標籤含控制字元必須整份拒絕")
+    checkEqual(#receiveCats(6, {
+        { k = "10_news", t = "A" },
+        { k = "10_news", t = "B" },
+    }).categories, 0, "重複的分類鍵必須整份拒絕")
+    checkEqual(#receiveCats(7, "not a table").categories, 0, "cats 不是表必須整份丟棄")
+    checkEqual(#receiveCats(8, { { k = "10_news", t = 5 } }).categories, 0,
+        "標籤不是字串必須整份拒絕")
+    checkEqual(#receiveCats(9, { "not a table" }).categories, 0,
+        "cats 條目不是表必須整份拒絕")
+    checkEqual(#receiveCats(10, { { k = "10_news", t = "News" } }).categories, 1,
+        "壞掉的 cats 之後，合法的 cats 仍必須收下")
+
+    local content = "# hello"
+    local hash = NBCore.djb2Hex(content)
+
+    -- 檔案層的 c：壞掉只降級成未分類，兩份公告都必須照樣發布
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 20, sid = "sMix", lang = "EN",
+        cats = { { k = "10_news", t = "News" } },
+        files = {
+            { id = "10_a.md", title = "A", n = 1, h = hash, c = "10_news" },
+            { id = "20_b.md", title = "B", n = 1, h = hash, c = "../escape" },
+        },
+    })
+    NBReader.receive(MODULE, "chunk", { v = 20, id = "10_a.md", i = 1, part = content })
+    NBReader.receive(MODULE, "chunk", { v = 20, id = "20_b.md", i = 1, part = content })
+    local mixed = NBReader.getSnapshot()
+    check(mixed ~= nil, "一個壞掉的分類欄位不得讓整份公告消失")
+    checkEqual(#mixed.files, 2, "兩份公告都必須發布")
+    checkEqual(mixed.files[1].category, "10_news", "合法的 c 必須保留")
+    checkEqual(mixed.files[2].category, "", "不合法的 c 必須降級成未分類")
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 21, sid = "sUnknown", lang = "EN",
+        cats = { { k = "10_news", t = "News" } },
+        files = {
+            { id = "10_a.md", title = "A", n = 1, h = hash, c = "99_unknown" },
+        },
+    })
+    NBReader.receive(MODULE, "chunk", { v = 21, id = "10_a.md", i = 1, part = content })
+    local unknown = NBReader.getSnapshot()
+    checkEqual(unknown.files[1].category, "",
+        "c 不在 cats 權威清單內時必須降級成未分類，不能繞過分類數上限")
+
+    -- 舊版 server：沒有 cats、也沒有 c。UI 可以無條件取用這兩個欄位。
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 30, sid = "sOld", lang = "EN",
+        files = { { id = "10_a.md", title = "A", n = 1, h = hash } },
+    })
+    NBReader.receive(MODULE, "chunk", { v = 30, id = "10_a.md", i = 1, part = content })
+    local old = NBReader.getSnapshot()
+    checkEqual(old.files[1].category, "", "舊版 manifest 沒送 c -> 未分類（不是 nil）")
+    checkEqual(#old.categories, 0, "舊版 manifest 沒送 cats -> 空清單（不是 nil）")
+
+    -- 移分類但內容沒動：相同 id/hash 必須直接復用已收到的內容。
+    -- 「沒收到任何新分塊就已經發布快照」就是復用的證據；hash 沒變，
+    -- 以 id/hash 為鍵的未讀狀態也不會被重置。
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 40, sid = "sMove", lang = "EN",
+        files = { { id = "10_a.md", title = "A", n = 1, h = hash } },
+    })
+    NBReader.receive(MODULE, "chunk", { v = 40, id = "10_a.md", i = 1, part = content })
+    checkEqual(NBReader.getSnapshot().files[1].content, content, "第一版內容必須收齊")
+
+    NBReader.receive(MODULE, "manifest", {
+        v = 41, sid = "sMove", lang = "EN",
+        cats = { { k = "10_news", t = "News" } },
+        files = { { id = "10_a.md", title = "A", n = 1, h = hash, c = "10_news" } },
+    })
+    local moved = NBReader.getSnapshot()
+    checkEqual(moved.v, 41, "只換分類的 manifest 必須立刻發布快照（不必等任何分塊）")
+    checkEqual(moved.files[1].content, content, "內容必須復用，不得重抓")
+    checkEqual(moved.files[1].h, hash, "hash 不得改變（未讀狀態的鍵才不會失效）")
+    checkEqual(moved.files[1].category, "10_news", "新分類必須生效")
+    checkEqual(#moved.categories, 1, "新的分類清單必須進快照")
+
+    local pendingCount = 0
+    local _, pendingEntry
+    for _, pendingEntry in pairs(NBReader.getReceiverState().pending) do
+        pendingCount = pendingCount + 1
+    end
+    checkEqual(pendingCount, 0, "不得有任何檔案退回等待分塊的狀態")
+
+    NBReader.resetReceiver()
+    NBReader.onSnapshot = savedOnSnapshot
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 公告 receiver 的總量契約：manifest 先擋不可能的總 chunks，實收再以 UTF-8 bytes
+-- 同時計入已完成內容與所有交錯 pending parts；同 index 覆寫必須先扣舊值。
+-- ---------------------------------------------------------------------------
+;(function()
+    local function descriptor(id, chunks, hash)
+        return { id = id, title = id, n = chunks, h = hash or "00000000" }
+    end
+
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 50, sid = "sBudget", lang = "EN",
+        files = {
+            descriptor("a", 36), descriptor("b", 36), descriptor("c", 36),
+        },
+    })
+    local receiver = NBReader.getReceiverState()
+    check(receiver.needsResync and receiver.manifest == nil,
+        "sum(n) 超過 honest producer 上界時 manifest 必須在配置 parts 前拒絕")
+
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 51, sid = "sBudget", lang = "EN",
+        files = { descriptor("one", 35) },
+    })
+    NBReader.receive(MODULE, "chunk", { v = 51, id = "one", i = 1, part = "a" })
+    NBReader.receive(MODULE, "chunk",
+        { v = 51, id = "one", i = 1, part = string.rep("b", 6000) })
+    receiver = NBReader.getReceiverState()
+    checkEqual(receiver.pending.one.received, 1,
+        "同一 index 重送不得重複增加 received")
+    checkEqual(receiver.pending.one.bytes, 6000,
+        "同一 index 覆寫必須先扣舊 part bytes")
+    checkEqual(receiver.receivedBytes, 6000,
+        "receiver-wide bytes 必須同步反映覆寫後的值")
+    local chunkIndex
+    for chunkIndex = 2, 34 do
+        NBReader.receive(MODULE, "chunk",
+            { v = 51, id = "one", i = chunkIndex, part = string.rep("b", 6000) })
+    end
+    NBReader.receive(MODULE, "chunk",
+        { v = 51, id = "one", i = 35, part = string.rep("b", 6000) })
+    receiver = NBReader.getReceiverState()
+    check(receiver.needsResync and receiver.pending.one.received == 34,
+        "單檔實收超過 200KB 時必須拒絕超額 chunk 且不落地")
+    checkEqual(receiver.receivedBytes, 204000,
+        "被拒絕的超額 chunk 不得計入 receiver-wide bytes")
+
+    local part = string.rep("c", 6000)
+    local full = string.rep(part, 30)
+    local fullHash = NBCore.djb2Hex(full)
+    NBReader.resetReceiver()
+    NBReader.receive(MODULE, "manifest", {
+        v = 52, sid = "sBudget", lang = "EN",
+        files = {
+            descriptor("first", 30, fullHash),
+            descriptor("second", 30, fullHash),
+            descriptor("third", 30, fullHash),
+        },
+    })
+    local ids = { "first", "second" }
+    local idIndex
+    for idIndex = 1, #ids do
+        for chunkIndex = 1, 30 do
+            NBReader.receive(MODULE, "chunk",
+                { v = 52, id = ids[idIndex], i = chunkIndex, part = part })
+        end
+    end
+    for chunkIndex = 1, 27 do
+        NBReader.receive(MODULE, "chunk",
+            { v = 52, id = "third", i = chunkIndex, part = part })
+    end
+    NBReader.receive(MODULE, "chunk",
+        { v = 52, id = "third", i = 28, part = part })
+    receiver = NBReader.getReceiverState()
+    check(receiver.needsResync and receiver.pending.third.received == 27,
+        "整份實收超過 512KB 時必須拒絕超額 chunk，包含已完成檔案")
+    checkEqual(receiver.receivedBytes, 522000,
+        "整份 byte budget 必須精確計入已完成內容與 pending parts")
+    NBReader.resetReceiver()
+end)()
+
+-- ---------------------------------------------------------------------------
 -- 語系切換的獨立冷卻桶（LANGUAGE_COOLDOWN_MS=3s）與「同一份請求不重排」。
 -- 這一段釘住的是 client/server 兩端的**對稱性**：
 --   * 換語系不吃 register/resync 那個 10 秒桶（進場註冊後馬上換語系不該被擋）；
@@ -3091,7 +4811,8 @@ fsWorking = true
 env.nowMs = env.nowMs + 31000
 fireEvent("OnTick")
 checkEqual(clientState.settingsPending, nil, "SP 的維護輪必須自己把偏好補寫進 settings.ini")
-checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=JP\n", "SP 補寫的內容錯誤")
+checkEqual(diskFiles["NoticeBoard/settings.ini"], "lang=JP\nsidebar=false\n",
+    "SP 補寫語系時必須保留側欄偏好")
 env.isClient = true
 
 -- ---------------------------------------------------------------------------
@@ -4579,6 +6300,7 @@ end)()
         or "../MinidoracatUIFor42/MOD/MinidoracatUIFor42/Contents/mods/MinidoracatUIFor42/42/media/lua/client/MinidoracatUI/V1.lua"
     local probe = io.open(muiV1, "rb")
     if not probe then
+        env.skinSectionSkipped = true
         -- 用 realPrint：此區間 print 已被 :2202 攔進 logLines，一般 print 到不了
         -- stdout，閘門（verify_mod.py 掃各行 SKIP 前綴）會看不見而誤判 PASS
         realPrint("SKIP NBSkin section: framework V1.lua not found at " .. muiV1
@@ -4645,5 +6367,10 @@ end)()
 end)()
 
 print = realPrint
+if not env.skinSectionSkipped then
+    assert(assertionCount == 2533,
+        "斷言條數不符：預期 2533、實際 " .. tostring(assertionCount)
+            .. "（有測試被刪掉或跳過？）")
+end
 
 print("Step 1 tests passed: " .. tostring(assertionCount) .. " assertions")
