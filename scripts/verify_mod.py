@@ -42,7 +42,7 @@
                            是硬需求）。原創備援音效由 scripts/gen_notify_sound.py 生成
  16. 封面資產             — Workshop preview 與遊戲 poster 必須是相同、可完整解碼的
                            512×512 RGB PNG；preview ≤1,024,000 bytes
- 17. Steam 介面預覽       — 三張指定 JPG 必須可完整解碼、維持 1920×1032 RGB，
+ 17. Steam 介面預覽       — 固定清單的 JPG 必須可完整解碼、維持 1920×1032 RGB，
                            且每張 ≤2,000,000 bytes
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
@@ -445,9 +445,12 @@ else:
 
 # ---- 17. Steam 詳情頁介面預覽 ----
 _steam_shot_names = {
-    "noticeboard-markdown-headings.jpg",
-    "noticeboard-markdown-inline-and-images.jpg",
-    "noticeboard-richtext-and-emoji-limitations.jpg",
+    os.path.join("zh", "01-markdown-headings.jpg"),
+    os.path.join("zh", "02-markdown-inline-and-images.jpg"),
+    os.path.join("zh", "03-richtext-and-emoji-limitations.jpg"),
+    os.path.join("en", "01-panel-document-tree.jpg"),
+    os.path.join("en", "02-language-menu.jpg"),
+    os.path.join("en", "03-server-language-folders.jpg"),
 }
 _steam_shot_root = os.path.join(REPO, "docs", "screenshots", "steam")
 _steam_shot_problems = []
@@ -455,9 +458,11 @@ if "_CoverImage" not in globals():
     skip("Steam 介面預覽圖", "無法載入 Pillow")
 else:
     _actual_steam_shots = {
-        name for name in os.listdir(_steam_shot_root)
+        os.path.relpath(os.path.join(directory, name), _steam_shot_root)
+        for directory, _, names in os.walk(_steam_shot_root)   # 缺目錄→空集合
+        for name in names
         if name.lower().endswith((".jpg", ".jpeg"))
-    } if os.path.isdir(_steam_shot_root) else set()
+    }
     if _actual_steam_shots != _steam_shot_names:
         _steam_shot_problems.append(
             "JPG 集合不一致："
@@ -483,7 +488,7 @@ else:
             _steam_shot_problems.append(
                 f"{_name}: {os.path.getsize(_path):,} bytes，超過 2,000,000")
     fail("Steam 介面預覽圖", _steam_shot_problems) if _steam_shot_problems \
-        else ok("Steam 介面預覽圖（3 張 1920×1032 RGB JPG，皆 ≤2MB）")
+        else ok(f"Steam 介面預覽圖（{len(_steam_shot_names)} 張 1920×1032 RGB JPG，皆 ≤2MB）")
 
 # ---- 總結 ----
 print()
