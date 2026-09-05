@@ -11,5 +11,11 @@
         "tchinese": "STEAM_DESCRIPTION.md",
         "schinese": "STEAM_DESCRIPTION.md",
         "japanese": "STEAM_DESCRIPTION_JP.md"
+    },
+    "titles": {
+        "english": "Minidoracat Notice Board for B42",
+        "tchinese": "[B42] Minidoracat 公告板 Notice Board",
+        "schinese": "[B42] Minidoracat 公告板 Notice Board",
+        "japanese": "[B42] Minidoracat 掲示板 Notice Board"
     }
 }
