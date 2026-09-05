@@ -515,6 +515,9 @@ def main():
         if mode == "all" and not cfg["preview_gif"]:
             print("[SKIP] 未設定 GIF 封面（preview_gif 為 null），本次不更新封面")
             want.discard("preview")
+        if mode == "all" and not os.path.isdir(repo_path(SCREENSHOT_DIR)):
+            print(f"[SKIP] 沒有 {SCREENSHOT_DIR}/，本次不同步預覽圖")
+            want.discard("screenshots")
         content = notes = gif = None
         texts, titles = {}, {}
         shots, shot_ops = [], []
