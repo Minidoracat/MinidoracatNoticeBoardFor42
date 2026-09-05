@@ -43,7 +43,7 @@
  16. 封面資產             — Workshop preview 與遊戲 poster 必須是相同、可完整解碼的
                            512×512 RGB PNG；preview ≤1,024,000 bytes
  17. Steam 介面預覽       — 固定清單的 JPG 必須可完整解碼、維持 1920×1032 RGB，
-                           且每張 ≤2,000,000 bytes
+                          且每張 ≤280,000 bytes（Steamworks AddItemPreviewFile 實測上限 274KB～314KB 之間）
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
 pz-mod-template（見 AGENTS.md）。
@@ -448,9 +448,11 @@ _steam_shot_names = {
     os.path.join("zh", "01-markdown-headings.jpg"),
     os.path.join("zh", "02-markdown-inline-and-images.jpg"),
     os.path.join("zh", "03-richtext-and-emoji-limitations.jpg"),
+    os.path.join("zh", "04-sandbox-options-zh.jpg"),
     os.path.join("en", "01-panel-document-tree.jpg"),
     os.path.join("en", "02-language-menu.jpg"),
     os.path.join("en", "03-server-language-folders.jpg"),
+    os.path.join("en", "04-sandbox-options.jpg"),
 }
 _steam_shot_root = os.path.join(REPO, "docs", "screenshots", "steam")
 _steam_shot_problems = []
@@ -484,11 +486,11 @@ else:
         if _format != "JPEG" or _mode != "RGB" or _size != (1920, 1032):
             _steam_shot_problems.append(
                 f"{_name}: {_format}/{_mode}/{_size}，預期 JPEG/RGB/(1920, 1032)")
-        if os.path.getsize(_path) > 2_000_000:
+        if os.path.getsize(_path) > 280_000:
             _steam_shot_problems.append(
-                f"{_name}: {os.path.getsize(_path):,} bytes，超過 2,000,000")
+                f"{_name}: {os.path.getsize(_path):,} bytes，超過 280,000（publish_workshop.py --mode screenshots 會被 Steam 拒絕）")
     fail("Steam 介面預覽圖", _steam_shot_problems) if _steam_shot_problems \
-        else ok(f"Steam 介面預覽圖（{len(_steam_shot_names)} 張 1920×1032 RGB JPG，皆 ≤2MB）")
+        else ok(f"Steam 介面預覽圖（{len(_steam_shot_names)} 張 1920×1032 RGB JPG，皆 ≤280KB）")
 
 # ---- 總結 ----
 print()

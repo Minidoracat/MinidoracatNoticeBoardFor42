@@ -11,16 +11,16 @@ Project Zomboid Build 42 MOD。
 | | |
 |---|---|
 | ![Markdown 標題與段落](docs/screenshots/zh/01-markdown-headings.png) | ![行內語法與公告圖片](docs/screenshots/zh/02-markdown-inline-and-images.png) |
-| ![PZ RichText 標記與 emoji 限制](docs/screenshots/zh/03-richtext-and-emoji-limitations.png) | |
+| ![PZ RichText 標記與 emoji 限制](docs/screenshots/zh/03-richtext-and-emoji-limitations.png) | ![沙盒選項](docs/screenshots/zh/04-sandbox-options-zh.png) |
 
 ### English
 
 | | |
 |---|---|
 | ![Notice board document tree and admin tools](docs/screenshots/en/01-panel-document-tree.png) | ![Language menu populated from server content](docs/screenshots/en/02-language-menu.png) |
-| ![Server NoticeBoard language folders](docs/screenshots/en/03-server-language-folders.png) | |
+| ![Server NoticeBoard language folders](docs/screenshots/en/03-server-language-folders.png) | ![Sandbox options](docs/screenshots/en/04-sandbox-options.png) |
 
-Steam Workshop 用 JPG（≤2MB）在 `docs/screenshots/steam/{zh,en}/`，編號與上表一致。
+Steam Workshop 用 JPG（≤280KB，Steamworks 預覽圖上傳上限）在 `docs/screenshots/steam/{zh,en}/`，編號與上表一致；`publish_workshop.py --mode screenshots` 會依英文→中文、檔名順序同步到作品頁。
 
 ## 功能
 
