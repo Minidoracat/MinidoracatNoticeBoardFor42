@@ -131,6 +131,9 @@ _G.getCore = function()
         getGoodHighlitedColor = function() return colorStub(0.1, 0.9, 0.1) end,
         getBadHighlitedColor = function() return colorStub(0.9, 0.1, 0.1) end,
         getKey = function() return 1 end,
+        -- 原版 ISLayoutManager 每個函式開頭都問 game mode（Tutorial 一律早退，
+        -- 連 ini 都不讀）：回 Sandbox 才驗得到真正的讀寫路徑。
+        getGameMode = function() return "Sandbox" end,
         getScreenWidth = function() return SCREEN_WIDTH end,
         getScreenHeight = function() return SCREEN_HEIGHT end,
         getOptionDoVideoEffects = function() return false end,
@@ -254,7 +257,6 @@ function Base:setCapture(v) self.captured = v end
 function Base:bringToTop() end
 function Base:addToUIManager() end
 function Base:removeFromUIManager() end
-_G.ISLayoutManager = { RegisterWindow = function() end }
 _G.ISPanel = Base
 _G.ISBaseObject = Base
 -- ISScrollingListBox 與 ISRichTextPanel 同樣**載原版**（不移植、不重寫）：文件樹側欄的
@@ -359,7 +361,6 @@ function ISContextMenu.get(playerIndex, x, y)
     CONTEXT_MENUS.list[#CONTEXT_MENUS.list + 1] = menu
     return menu
 end
-_G.ISLayoutManager = { RegisterWindow = function() end }
 _G.Events = setmetatable({}, { __index = function(events, key)
     -- handlers 只給測試用：「面板把哪個函式掛到哪個事件上」是按鈕按下去之後有沒有人接的
     -- 唯一契約，Add 什麼都不記就驗不到漏註冊（事件本身在 harness 裡不會真的觸發）。
@@ -379,6 +380,43 @@ _G.Events = setmetatable({}, { __index = function(events, key)
     rawset(events, key, event)
     return event
 end })
+
+-- ISLayoutManager 走**原版**，不 stub RegisterWindow：舊版把 RestoreLayout/SaveLayout
+-- 掛在框架實例上，而原版呼叫的是 funcs.X(target, name, layout)
+-- （ISLayoutManager.lua:99-113）——掛錯位置的回呼永遠不會被呼叫，浮鈕位置每次開遊戲
+-- 都跳回預設；stub 掉 RegisterWindow 的測試對這種錯是全綠的。
+-- layout.ini 用一顆記憶體字串頂替 getFileReader/getFileWriter：序列化格式本身也一起
+-- 驗到（往返真的經過文字），而且絕不碰玩家真正的設定檔。
+local LAYOUT_INI = { text = "" }
+_G.getFileReader = function(name)
+    if name ~= "layout.ini" then
+        return nil
+    end
+    local text = LAYOUT_INI.text
+    if text ~= "" and text:sub(-1) ~= "\n" then
+        text = text .. "\n"
+    end
+    return {
+        readLine = string.gmatch(text, "(.-)\r?\n"),
+        close = function() end,
+    }
+end
+_G.getFileWriter = function(name, _, append)
+    if name ~= "layout.ini" then
+        return nil
+    end
+    if not append then
+        LAYOUT_INI.text = ""
+    end
+    return {
+        write = function(_, text) LAYOUT_INI.text = LAYOUT_INI.text .. text end,
+        close = function() end,
+    }
+end
+_G.luautils = { stringStarts = function(text, prefix)
+    return string.sub(text, 1, string.len(prefix)) == prefix
+end }
+dofile(VANILLA_LUA .. "/client/ISUI/ISLayoutManager.lua")
 _G.getText = function(key) return "[" .. tostring(key) .. "]" end
 _G.getTimestampMs = function() return 0 end
 _G.getSpecificPlayer = function() return nil end
@@ -1188,7 +1226,10 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     dofile(MUI_DIR .. "Widgets/Toast.lua")
     check(MinidoracatUI.v1.CAPABILITIES.floatButton == true
         and MinidoracatUI.v1.CAPABILITIES.toast == true, "框架 widget 能力已翻 true")
-    dofile(MEDIA_LUA .. "client/NoticeBoard/NBFloatButton.lua")
+    -- 浮鈕候選原始碼可用 NB_FLOAT_LUA 覆寫（家族跨 repo 對照時指到暫存候選檔）；
+    -- 沒有 override 就走本 repo 的 production。
+    dofile(os.getenv("NB_FLOAT_LUA")
+        or (MEDIA_LUA .. "client/NoticeBoard/NBFloatButton.lua"))
     dofile(MEDIA_LUA .. "client/NoticeBoard/NBToast.lua")
 
     _G.NinePatchTexture = makeNinePatchStub({ calls = {} })
@@ -1198,8 +1239,16 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     local savedGetPlayer = _G.getSpecificPlayer
     _G.getSpecificPlayer = function() return {} end
     patches = {}
+    -- 建立前先在記憶體 layout.ini 放一筆本解析度的紀錄（含舊版寫過的 visible 欄）：
+    -- 原版 RegisterWindow 當下就會 TryRestore → funcs.RestoreLayout(target, ...)，
+    -- 所以「位置有沒有真的被套用」是建立完就看得到的結果。
+    LAYOUT_INI.text = "[1920x1080]\nMinidoracatNBFloatButton x=640 y=480 visible=false\n"
+    ISLayoutManager.layouts = nil
+    ISLayoutManager.windows = {}
     local button = NBFloatButton.ensureInstance()
     check(button ~= nil, "wrapper 經框架 FloatButton 建立浮鈕")
+    check(button:getX() == 640 and button:getY() == 480,
+        "建立當下就套用 layout.ini 裡本解析度的位置（回呼掛錯位置就會留在預設槽位）")
     button.unread = true
     button:setPosition(10, 20)
     local buttonScaled = {}
@@ -1227,13 +1276,94 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     NBPanel.toggle = savedToggle
     checkEqual(toggles, 1, "浮鈕點擊綁 NBPanel.toggle")
 
-    -- ISLayoutManager 整合：RestoreLayout 走框架 setPosition（超界存檔夾回）
-    button:RestoreLayout("x", { x = "99999", y = "-5" })
-    check(button:getX() == 1920 - 40 and button:getY() == 0,
-        "RestoreLayout 超界位置夾回螢幕（layout.ini 殘留壞值防護）")
-    local layout = {}
-    button:SaveLayout("x", layout)
-    check(layout.x == button:getX() and layout.visible == "true", "SaveLayout 寫回目前位置")
+    -- ---------------------------------------------------------------------
+    -- 位置持久化：原版 ISLayoutManager ＋ 記憶體 layout.ini，整條序列化往返都跑到。
+    -- ---------------------------------------------------------------------
+    -- 真的拖一次（框架 setCapture 五件套）：放開那一刻就得落地，不能等遊戲存檔——
+    -- 拖完直接 ESC 離開的玩家最多，等 OnPostSave 等於白拖。
+    local savedMouseX, savedMouseY = _G.getMouseX, _G.getMouseY
+    local mouseX, mouseY = 500, 600
+    _G.getMouseX = function() return mouseX end
+    _G.getMouseY = function() return mouseY end
+    button:setPosition(300, 400)
+    button:onMouseDown(0, 0)
+    mouseX, mouseY = 560, 640
+    button:onMouseMove(60, 40)
+    button:onMouseUp(0, 0)
+    _G.getMouseX, _G.getMouseY = savedMouseX, savedMouseY
+    check(button:getX() == 360 and button:getY() == 440,
+        "前提：拖曳確實把浮鈕移到 (360,440)")
+    -- 原版 WriteIni 用 pairs 走欄位，欄序不是規格；比對欄本身，不比對順序。
+    check(contains(LAYOUT_INI.text, "MinidoracatNBFloatButton")
+        and contains(LAYOUT_INI.text, "x=360") and contains(LAYOUT_INI.text, "y=440"),
+        "拖曳放開就把落點寫進 layout.ini（不等 OnPostSave 存檔時機）")
+    check(not contains(LAYOUT_INI.text, "visible="),
+        "保存只寫座標：舊版留下的 visible 欄要清掉（原版會拿它強開／強關浮鈕）")
+
+    -- 下一次開遊戲：重新 ReadIni 再 TryRestore，位置要從那串文字回得來
+    button:setPosition(0, 0)
+    ISLayoutManager.layouts = nil
+    ISLayoutManager.TryRestore("MinidoracatNBFloatButton")
+    check(button:getX() == 360 and button:getY() == 440,
+        "重讀 layout.ini 之後還原到拖曳落點（序列化往返）")
+
+    -- 可見性不屬於 layout。本 harness 的 Base:setVisible 是 no-op，所以只給浮鈕實例
+    -- 單獨接一份真的，才驗得到「還原不碰可見性」。
+    button.visible = true
+    button.setVisible = function(self, value) self.visible = value end
+    button.getIsVisible = function(self) return self.visible end
+    button:setVisible(false)
+    ISLayoutManager.layouts = nil
+    ISLayoutManager.TryRestore("MinidoracatNBFloatButton")
+    check(button:getIsVisible() == false,
+        "還原只套座標：玩家藏起來的浮鈕不得被 layout 開回來")
+    button:setVisible(true)
+
+    -- layout.ini 是玩家改得到的純文字，壞值不得把浮鈕推到摸不到的地方。
+    -- inf 特別危險：與 inf 的大小比較永遠不成立，會整條躲過每幀夾限。
+    local BAD_COORDS = {
+        { text = "x=99999 y=-5", x = 1920 - 40, y = 0, why = "超界數值夾回螢幕內" },
+        { text = "x=1e999 y=1e999", x = 360, y = 440, why = "inf 直接拒絕（躲得過夾限）" },
+        { text = "x=abc y=10", x = 360, y = 440, why = "非數值直接拒絕，維持現有位置" },
+    }
+    for _, case in ipairs(BAD_COORDS) do
+        button:setPosition(360, 440)
+        LAYOUT_INI.text = "[1920x1080]\nMinidoracatNBFloatButton " .. case.text .. "\n"
+        ISLayoutManager.layouts = nil
+        ISLayoutManager.TryRestore("MinidoracatNBFloatButton")
+        check(button:getX() == case.x and button:getY() == case.y,
+            "layout.ini 壞值：" .. case.why)
+    end
+
+    -- 解析度變更：原版只在 RegisterWindow 那一次 TryRestore，常駐浮鈕得自己重套當前
+    -- profile（Core.java:2242-2262 已先更新尺寸才發事件，所以這裡讀到的是新尺寸）。
+    local savedScreenW, savedScreenH = SCREEN_WIDTH, SCREEN_HEIGHT
+    LAYOUT_INI.text = "[1920x1080]\nMinidoracatNBFloatButton x=300 y=400\n"
+        .. "[1280x720]\nMinidoracatNBFloatButton x=100 y=110\n"
+    ISLayoutManager.layouts = nil
+    SCREEN_WIDTH, SCREEN_HEIGHT = 1280, 720
+    NBFloatButton.onResolutionChange()
+    check(button:getX() == 100 and button:getY() == 110,
+        "換解析度：套用新解析度自己的紀錄，不是沿用舊解析度的座標")
+
+    SCREEN_WIDTH, SCREEN_HEIGHT = 1024, 768
+    NBFloatButton.onResolutionChange()
+    check(button:getX() == 1024 - 40 - 16 and button:getY() == 768 / 2 - 20,
+        "換到沒有紀錄的解析度：回本 MOD 的預設槽位（右緣 16px、垂直居中）")
+
+    button:setVisible(false)
+    SCREEN_WIDTH, SCREEN_HEIGHT = 1920, 1080
+    NBFloatButton.onResolutionChange()
+    check(button:getIsVisible() == false and button:getX() == 300 and button:getY() == 400,
+        "解析度事件只動座標：隱藏中的浮鈕維持隱藏")
+    button:setVisible(true)
+    SCREEN_WIDTH, SCREEN_HEIGHT = savedScreenW, savedScreenH
+
+    -- ensureInstance 是重生／未讀事件的共同入口，不得把玩家拖好的位置重設回預設
+    button:setPosition(555, 222)
+    check(NBFloatButton.ensureInstance() == button
+        and button:getX() == 555 and button:getY() == 222,
+        "重複 ensureInstance 不新建浮鈕，也不把拖曳位置重設回預設槽位")
     _G.getSpecificPlayer = savedGetPlayer
 
     -- Toast：wrapper 轉發（標題＋色票），動畫落點與換皮前逐位相同
@@ -2506,7 +2636,7 @@ end)()
 
 -- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
 -- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 438
+local EXPECTED_ASSERTIONS = 449
 assert(assertionCount == EXPECTED_ASSERTIONS,
     "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
         .. "（有測試被刪掉或跳過？）")

@@ -4,9 +4,12 @@
 -- 已上移框架 `MinidoracatUI/Widgets/FloatButton.lua`。本檔只剩本 MOD 業務：
 --   1. 內容繪製：置中喇叭圖標＋未讀紅點（徽章刻意「掛」在右上弧，UI_DESIGN §2）
 --   2. 點擊 = NBPanel.toggle()
---   3. 位置持久化 = ISLayoutManager（layout.ini；RestoreLayout/SaveLayout
---      掛在框架實例上——DefaultRestoreWindow 呼叫的是實例方法）
---   4. 未讀事件（MinidoracatNB_UnreadChanged）→ setUnread
+--   3. 位置持久化 = ISLayoutManager（layout.ini）：回呼掛在 **NBFloatButton 表**上，
+--      因為原版呼叫的是 `funcs.RestoreLayout(target, name, layout)`
+--      （`ISLayoutManager.lua:99-113`）——掛在實例上永遠不會被呼叫。
+--      拖曳放開即存（onMoved），不等遊戲存檔時機
+--   4. 解析度變更：重套當前解析度的紀錄（原版只在 RegisterWindow 時 TryRestore）
+--   5. 未讀事件（MinidoracatNB_UnreadChanged）→ setUnread
 --
 -- 【退回】框架 FloatButton 能力缺席時不建浮鈕（degraded：無浮動入口，
 -- 面板仍可由重新載入鈕／其他入口開啟）；不自帶降級實作。
@@ -44,6 +47,11 @@ local LAYOUT_NAME = "MinidoracatNBFloatButton"
 local ICON_PATH = "media/ui/NoticeBoard/nb_megaphone.png"
 local ICON_SIZE = 24
 
+-- 預設槽位：右緣往內 16px、垂直居中。建立時與「解析度沒有紀錄」時共用同一份公式，
+-- 否則換螢幕後浮鈕會落在跟第一次開遊戲不一樣的地方。
+local function defaultX() return getCore():getScreenWidth() - BUTTON_SIZE - RIGHT_MARGIN end
+local function defaultY() return getCore():getScreenHeight() / 2 - BUTTON_SIZE / 2 end
+
 local function frameworkFloatButton()
     local ui = MinidoracatUI and MinidoracatUI.v1
     if ui and ui.API_MAJOR == 1 and ui.CAPABILITIES and ui.CAPABILITIES.floatButton == true then
@@ -71,6 +79,31 @@ local function drawContent(btn)
     end
 end
 
+-- 位置來自可編輯的 layout.ini；拒絕非有限值，普通負值仍交框架夾回。
+local function coord(value)
+    local number = tonumber(value)
+    if number and number == number and number ~= math.huge and number ~= -math.huge then
+        return number
+    end
+    return nil
+end
+
+-- ISLayoutManager 回呼（原版：`funcs.RestoreLayout(target, name, layout)`）。
+-- 只管座標：可見性是本 MOD 自己的政策（ensureInstance／未讀事件），layout 不得插手，
+-- 否則玩家藏起來的浮鈕會在還原時被強開回來。
+function NBFloatButton.RestoreLayout(button, name, layout)
+    local x, y = coord(layout.x), coord(layout.y)
+    if x and y then
+        button:setPosition(x, y) -- 框架 setPosition 內建 clamp（存檔位置超界夾回）
+    end
+end
+
+function NBFloatButton.SaveLayout(button, name, layout)
+    layout.x = button:getX()
+    layout.y = button:getY()
+    layout.visible = nil -- 不再持久化可見性
+end
+
 function NBFloatButton.setUnread(unread)
     local btn = NBFloatButton.instance
     if btn then
@@ -92,8 +125,8 @@ function NBFloatButton.ensureInstance()
 
     local button = FW.new({
         size = BUTTON_SIZE,
-        x = getCore():getScreenWidth() - BUTTON_SIZE - RIGHT_MARGIN,
-        y = getCore():getScreenHeight() / 2 - BUTTON_SIZE / 2,
+        x = defaultX(),
+        y = defaultY(),
         colors = {
             surface = COLORS.BG_PANEL,
             hover = COLORS.TAB_HOVER_FILL,
@@ -101,8 +134,8 @@ function NBFloatButton.ensureInstance()
         },
         drawContent = drawContent,
         onClick = function() NBPanel.toggle() end,
-        -- 位置持久化走 ISLayoutManager（下方 Restore/SaveLayout），
-        -- onMoved 不另存——SaveLayout 在遊戲存檔時機由引擎呼叫
+        -- 只保存版面，不廣播會觸發其他 listener 的存檔事件。
+        onMoved = ISLayoutManager.OnPostSave,
     })
     button.unread = #Client.getUnreadIds() > 0
 
@@ -112,30 +145,24 @@ function NBFloatButton.ensureInstance()
     local ok, tex = pcall(getTexture, ICON_PATH)
     button.icon = (ok and tex) or nil
 
-    -- ISLayoutManager 整合：DefaultRestoreWindow/DefaultSaveWindow 呼叫
-    -- window:RestoreLayout/SaveLayout（實例方法）——掛在框架實例上
-    function button:RestoreLayout(name, layout)
-        local x = tonumber(layout.x)
-        local y = tonumber(layout.y)
-        if x and y then
-            self:setPosition(x, y) -- 框架 setPosition 內建 clamp（存檔位置超界夾回）
-        end
-        self:setVisible(true)
-    end
-    function button:SaveLayout(name, layout)
-        layout.x = self:getX()
-        layout.y = self:getY()
-        layout.visible = "true"
-    end
-
     NBFloatButton.instance = button
-    ISLayoutManager.RegisterWindow(LAYOUT_NAME, NBFloatButton, button)
+    ISLayoutManager.RegisterWindow(LAYOUT_NAME, NBFloatButton, button) -- 內含 TryRestore
     button:setVisible(true)
     return button
 end
 
 function NBFloatButton.onGameStart()
     NBFloatButton.ensureInstance()
+end
+
+-- Core.java:2242-2262 先更新尺寸才發事件；未建立時不建，還原不改可見性或寫檔。
+function NBFloatButton.onResolutionChange()
+    local button = NBFloatButton.instance
+    if not button then
+        return
+    end
+    button:setPosition(defaultX(), defaultY()) -- 新解析度沒有紀錄時的落點
+    ISLayoutManager.TryRestore(LAYOUT_NAME)
 end
 
 function NBFloatButton.onUnreadChanged(unreadIds)
@@ -147,6 +174,10 @@ end
 
 if not NBFloatButton._eventsInstalled then
     Events.OnGameStart.Add(NBFloatButton.onGameStart)
+    Events.OnCreatePlayer.Add(function(playerNum)
+        if playerNum == 0 then NBFloatButton.ensureInstance() end
+    end)
+    Events.OnResolutionChange.Add(NBFloatButton.onResolutionChange)
     Events[Client.UNREAD_CHANGED_EVENT].Add(NBFloatButton.onUnreadChanged)
     NBFloatButton._eventsInstalled = true
 end
