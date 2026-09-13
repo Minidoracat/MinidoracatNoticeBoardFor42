@@ -4,6 +4,7 @@ require "ISUI/ISButton"
 require "ISUI/ISContextMenu"
 require "ISUI/ISLayoutManager"
 require "ISUI/ISScrollingListBox"
+require "RadioCom/ISUIRadio/ISSliderPanel"
 
 if not NBCore then
     require "NoticeBoard/NBCore"
@@ -159,6 +160,14 @@ local POPUP_NEVER = 3
 -- getUIEmitter():setVolume 套用 0..1 的倍率（細節見該函式的註解）。
 -- 沙盒 NotifySound 則是服主端的總開關，與玩家設定是 AND 關係。
 local NOTIFY_SOUND = "MinidoracatNBNotify"
+local VOICE_SOUNDS = {
+    CH = "MinidoracatNBVoiceCH",
+    CN = "MinidoracatNBVoiceCH",
+    EN = "MinidoracatNBVoiceEN",
+    JP = "MinidoracatNBVoiceJP",
+}
+local VOICE_CHOICES = { "chime", "auto", "CH", "EN", "JP" }
+local previewEmitter, previewReference
 local LAYOUT_NAME = "MinidoracatNBPanel"
 
 local OFFICIAL_URL_ROOTS = {
@@ -634,6 +643,54 @@ local function hasAdminAccess()
         and string.lower(accessLevel) == "admin"
 end
 
+-- Native drag/step/joypad behavior; the family framework only paints the slider.
+local NBVolumeSlider = ISSliderPanel:derive("NBVolumeSlider")
+
+function NBVolumeSlider:new(x, y, height, target)
+    local label = getText("IGUI_MinidoracatNB_Volume")
+    local labelWidth = getTextManager():MeasureStringX(UIFont.NewSmall, label) + 12
+    local valueWidth = getTextManager():MeasureStringX(UIFont.NewSmall, "100%") + 12
+    local o = ISSliderPanel.new(self, x, y, labelWidth + 120 + valueWidth, height,
+        target, NBPanel.onVolumeChanged)
+    o.label, o.labelWidth, o.valueWidth = label, labelWidth, valueWidth
+    o.doButtons = false
+    o:setValues(0, 100, 5, 10, true)
+    o:setCurrentValue(Options.volumePercent(), true)
+    return o
+end
+
+function NBVolumeSlider:paginate()
+    ISSliderPanel.paginate(self)
+    self.sliderBarDim.x = self.labelWidth
+    self.sliderBarDim.w = self.width - self.labelWidth - self.valueWidth
+end
+
+function NBVolumeSlider:render()
+    if self.parent and self.parent.isCollapsed then return end
+    if not self.dragInside then
+        self:setCurrentValue(Options.volumePercent(), true)
+    end
+    local bar = self.sliderBarDim
+    if not Skin.slider(self, bar.x, 0, bar.w, self.height, self.currentValue / 100) then
+        ISSliderPanel.render(self)
+    end
+    local textY = math.floor((self.height - getTextManager():getFontHeight(UIFont.NewSmall)) / 2)
+    local color = COLORS.TITLE_TEXT
+    self:drawText(self.label, 0, textY, color.r, color.g, color.b, color.a, UIFont.NewSmall)
+    self:drawText(string.format("%d%%", self.currentValue), bar.x + bar.w + 10, textY,
+        color.r, color.g, color.b, color.a, UIFont.NewSmall)
+end
+
+function NBVolumeSlider:onMouseUp(x, y)
+    local dragged = self.dragInside
+    ISSliderPanel.onMouseUp(self, x, y)
+    if dragged then self.target:onVolumeCommitted(self) end
+end
+
+function NBVolumeSlider:onMouseUpOutside(x, y)
+    self:onMouseUp(x, y)
+end
+
 function NBPanel:initialise()
     ISCollapsableWindowJoypad.initialise(self)
 end
@@ -713,6 +770,15 @@ function NBPanel:createChildren()
     -- 語系選擇放在「重設大小」左邊（addToolbarButton 由右往左排，故後加的在左邊）
     self.langButton = addToolbarButton(
         "IGUI_MinidoracatNB_Language", "language", NBPanel.onLanguageButton)
+    self.volumeSlider = NBVolumeSlider:new(0, self.toolbarY + 1, self.toolbarHeight - 2, self)
+    self.volumeSlider:initialise()
+    self.volumeSlider:paginate()
+    self.volumeSlider:setX(rightEdge - self.volumeSlider:getWidth())
+    self.volumeSlider:setAnchorsTBLR(true, false, false, true)
+    self:addChild(self.volumeSlider)
+    rightEdge = self.volumeSlider:getX() - TOOLBAR_BUTTON_GAP
+    self.voiceButton = addToolbarButton(
+        "IGUI_MinidoracatNB_VoiceLanguage", "language", NBPanel.onVoiceLanguageButton)
     -- 左組獨立在工具列最左，與右側的語系／尺寸／admin 操作分組；由左往右排，故後加的在右邊。
     local leftEdge = TOOLBAR_BUTTON_GAP
     local function addLeftToolbarButton(labelKey, iconName, callback)
@@ -742,7 +808,7 @@ function NBPanel:createChildren()
     -- 工具列的真實最小寬：左組 + 兩組間距 + 右組 + 左右 margin。
     -- icon／翻譯／字型大小都已量完，不能再用固定 420，否則 admin 的四顆按鈕會互相覆蓋。
     -- 左組的右緣要取**最右那顆**（目前是全部收合），日後增減左組按鈕要跟著改。
-    local rightGroupWidth = self.width - TOOLBAR_BUTTON_GAP - self.langButton:getX()
+    local rightGroupWidth = self.width - TOOLBAR_BUTTON_GAP - self.voiceButton:getX()
     local toolbarMinimumWidth = self.collapseAllButton:getX()
         + self.collapseAllButton:getWidth()
         + TOOLBAR_BUTTON_GAP + rightGroupWidth + TOOLBAR_BUTTON_GAP
@@ -960,6 +1026,47 @@ function NBPanel:onLanguageSelected(code)
     end
 end
 
+function NBPanel:onVoiceLanguageButton(button)
+    local menu = ISContextMenu.get(0,
+        button:getAbsoluteX(), button:getAbsoluteY() + button:getHeight())
+    if not menu then
+        return
+    end
+    local current = Client.getVoiceLanguagePreference()
+    local index
+    for index = 1, #VOICE_CHOICES do
+        local code = VOICE_CHOICES[index]
+        local option = menu:addOption(getText("IGUI_MinidoracatNB_Voice_" .. code),
+            self, NBPanel.onVoiceLanguageSelected, code)
+        menu:setOptionChecked(option, current == code)
+    end
+end
+
+function NBPanel:onVoiceLanguageSelected(code)
+    if Client.setVoiceLanguagePreference(code) then
+        NBToast.show(getText("IGUI_MinidoracatNB_VoiceSelected",
+            getText("IGUI_MinidoracatNB_Voice_" .. Client.getVoiceLanguagePreference())))
+    end
+    NBPanel.previewVoice()
+end
+
+function NBPanel:onVolumeChanged(value, slider)
+    if slider.dragInside then NBPanel.stopVoicePreview() end
+    if value == Options.volumePercent() then return end
+    local saved = Options.setVolumePercent(value, not slider.dragInside)
+    if not slider.dragInside then
+        if not saved then NBToast.show(getText("IGUI_MinidoracatNB_VolumeSaveFailed")) end
+        NBPanel.previewVoice()
+    end
+end
+
+function NBPanel:onVolumeCommitted(slider)
+    if not Options.setVolumePercent(slider:getCurrentValue(), true) then
+        NBToast.show(getText("IGUI_MinidoracatNB_VolumeSaveFailed"))
+    end
+    NBPanel.previewVoice()
+end
+
 -- settings.ini 的非同步狀態：語系／側欄落地失敗與補寫成功，以及切換送出額度用盡。
 -- NBClient 對同一次失敗只發一次事件，所以這裡直接出 toast 不會洗版。
 local function onLanguageStatus(payload)
@@ -975,6 +1082,10 @@ local function onLanguageStatus(payload)
         NBToast.show(getText("IGUI_MinidoracatNB_SidebarSaveFailed"))
     elseif kind == "sidebar-save-recovered" then
         NBToast.show(getText("IGUI_MinidoracatNB_SidebarSaveRecovered"))
+    elseif kind == "voice-save-failed" then
+        NBToast.show(getText("IGUI_MinidoracatNB_VoiceSaveFailed"))
+    elseif kind == "voice-save-recovered" then
+        NBToast.show(getText("IGUI_MinidoracatNB_VoiceSaveRecovered"))
     elseif kind == "switch-exhausted" then
         NBToast.show(getText("IGUI_MinidoracatNB_LanguageSwitchExhausted"))
     end
@@ -1977,6 +2088,25 @@ function NBPanel:setSnapshot(snapshot, preferredId)
     self:revealFile(targetId, self:getIsVisible())
 end
 
+function NBPanel:finishVolumeInteraction()
+    if self.volumeSlider and self.volumeSlider.dragInside then
+        ISSliderPanel.onMouseUp(self.volumeSlider, 0, 0)
+        if not Options.setVolumePercent(self.volumeSlider:getCurrentValue(), true) then
+            NBToast.show(getText("IGUI_MinidoracatNB_VolumeSaveFailed"))
+        end
+    end
+    NBPanel.stopVoicePreview()
+end
+
+-- Toggle UI changes Java visibility directly, bypassing the Lua setVisible.
+-- Hidden enabled UI still updates (UIElement.java:1661-1686).
+function NBPanel:update()
+    ISCollapsableWindowJoypad.update(self)
+    if not self:getIsVisible() or self.isCollapsed then
+        self:finishVolumeInteraction()
+    end
+end
+
 function NBPanel:setVisible(visible)
     ISCollapsableWindowJoypad.setVisible(self, visible)
     if visible then
@@ -1988,6 +2118,8 @@ function NBPanel:setVisible(visible)
             self.contentState = NBPanel.session.timedOut and "timeout" or "syncing"
             self.richText:setVisible(false)
         end
+    else
+        self:finishVolumeInteraction()
     end
 end
 
@@ -2128,25 +2260,62 @@ end
 -- 同一個聲場、純本地），**刻意不用** character:getEmitter():playSound()——那個在 client 端
 -- 會 INetworkPacket.send(PlaySound) 或 PlayWorldSound（:389-400），把個人通知廣播給其他玩家。
 -- 只有音量 < 1 才呼叫：滿音量本來就是預設值，少一次 Java 呼叫。
-local function playNoticeSound()
+-- Stop only this panel's sample, never other UI sounds. BaseSoundEmitter.java:19;
+-- FMODSoundEmitter.java:119-136 stops queued/playing refs without network traffic.
+function NBPanel.stopVoicePreview()
+    if not previewEmitter or not previewReference then return end
+    local ok, stopError = pcall(function()
+        previewEmitter:stopSoundLocal(previewReference)
+    end)
+    previewEmitter, previewReference = nil, nil
+    if not ok then
+        print("[MinidoracatNoticeBoardFor42] preview stop failed: " .. tostring(stopError))
+    end
+end
+
+local function playNoticeSound(preview)
+    NBPanel.stopVoicePreview()
     if not notifySoundEnabled() then
-        return
+        return false
     end
     local volume = Options.soundVolume()
     if volume <= 0 then
-        return
+        return false
     end
     -- pcall：音效不是功能，任何一個環節出錯都不該讓「有新公告」這件事跟著失敗。
-    local ok, soundError = pcall(function()
+    local ok, played = pcall(function()
         local manager = getSoundManager()
-        local reference = manager:playUISound(NOTIFY_SOUND)
-        if volume < 1 and reference ~= nil and reference ~= 0 then
-            manager:getUIEmitter():setVolume(reference, volume)
+        local code = Client.getVoiceLanguagePreference()
+        if code == "auto" then
+            code = Translator.getLanguage():name()
+            if VOICE_SOUNDS[code] == nil then
+                code = "EN"
+            end
         end
+        local reference = manager:playUISound(VOICE_SOUNDS[code] or NOTIFY_SOUND)
+        if reference == nil or reference == 0 then return false end
+        local emitter = manager:getUIEmitter()
+        if volume < 1 then emitter:setVolume(reference, volume) end
+        if preview then previewEmitter, previewReference = emitter, reference end
+        return true
     end)
     if not ok then
-        print("[MinidoracatNoticeBoardFor42] notice sound failed: " .. tostring(soundError))
+        print("[MinidoracatNoticeBoardFor42] notice sound failed: " .. tostring(played))
     end
+    return ok and played == true
+end
+
+function NBPanel.previewVoice()
+    if not notifySoundEnabled() or Options.soundVolume() <= 0 then
+        NBPanel.stopVoicePreview()
+        NBToast.show(getText("IGUI_MinidoracatNB_PreviewMuted"))
+        return false
+    end
+    if not playNoticeSound(true) then
+        NBToast.show(getText("IGUI_MinidoracatNB_PreviewFailed"))
+        return false
+    end
+    return true
 end
 
 local function firstUnreadId(snapshot)

@@ -609,6 +609,24 @@ NoticeBoard/<語系>/20_rules/30_server_rules.only.txt
 
 ## 玩家自己的音效設定
 
+面板工具列的「語音」按鈕可直接切換通知聲音，不需要修改音檔：
+
+- **原提示音（預設）**：沿用上節的 `MinidoracatNBNotify.wav`。
+- **中文／English／日本語**：播放各自的公告語音；繁體與簡體中文共用中文聲音。
+- **自動**：跟隨遊戲語系，非中／英／日語系使用英文；不跟隨面板的公告文字語系。
+
+選擇存在 `Zomboid/Lua/NoticeBoard/settings.ini` 的 `voice` 欄位（全域偏好，不分伺服器），
+選擇時立即播放該語音試聽，之後通知沿用同一選擇；不重載公告、不改已讀狀態。寫入失敗時本場仍生效，畫面會提示並在背景重試。
+三語資產為 `42/media/sound/MinidoracatNBVoiceCH.wav`、`MinidoracatNBVoiceEN.wav`、
+`MinidoracatNBVoiceJP.wav`；重新生成的參數在 `scripts/voice_lines.json`，
+處理流程見 `scripts/prep_notify_sound.py` 檔頭。更換這些資產同樣需要重啟遊戲。
+
+「語音」旁的**音量滑桿**顯示 0–100%（步進 5），和下方「選項 → MODS」共用同一音量：
+拖曳時只更新本場音量並停止舊試聽，放開滑桿（含游標已移出滑桿）後保存並以新音量試聽；
+重複選擇語音會停止上一段再播放；關閉面板或用遊戲快捷鍵隱藏介面，也會停止試聽並結束拖曳。
+音量為 0、個人提示音關閉或伺服器停用提示音時不播放，畫面會說明目前靜音；
+保存失敗會提示重新操作滑桿再試，不會宣稱已存檔。
+
 玩家在遊戲的**選項 → MODS** 分頁會看到本 MOD 的兩個設定（走 PZ 原生的 `PZAPI.ModOptions`，
 值存在 `Zomboid/Lua/ModOptions.ini`）：
 

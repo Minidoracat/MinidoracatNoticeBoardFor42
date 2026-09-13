@@ -1,0 +1,25 @@
+[
+  {
+    "id": "notice_zh",
+    "sound": "MinidoracatNBVoiceCH",
+    "text": "[excited, delighted, energetic] 有新公告啦！快来看看！",
+    "voice": "7f93e9374aba440482d349d3254dd6fe",
+    "backend": "drama-3-preview"
+  },
+  {
+    "id": "notice_en",
+    "sound": "MinidoracatNBVoiceEN",
+    "text": "[excited, delighted, energetic] New announcement! Come check it out!",
+    "voice": "7f93e9374aba440482d349d3254dd6fe",
+    "backend": "drama-3-preview"
+  },
+  {
+    "id": "notice_ja",
+    "sound": "MinidoracatNBVoiceJP",
+    "text": "[excited, delighted, energetic] 新しいお知らせだよ！見てみて！",
+    "voice": "d1a1a920956c40c0bac4ef6a92c92a20",
+    "backend": "drama-3-preview",
+    "temperature": 0.7,
+    "top_p": 0.7
+  }
+]

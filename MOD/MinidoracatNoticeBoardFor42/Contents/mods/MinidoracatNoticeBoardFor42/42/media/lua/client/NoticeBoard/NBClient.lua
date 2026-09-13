@@ -71,6 +71,17 @@ local EXAMPLE_PACK_LANGS = {
     CH = true,
     EN = true,
 }
+-- 語音語系的資產白名單。與公告語系**完全獨立**：玩家可能看中文公告但想聽英文語音，
+-- 所以這一欄不參與 register、不碰網路，也不看公告語系偏好。
+-- 只有這三份語音存在；資產對應（含 CN 併到 CH、auto 跟隨遊戲語系）由面板那張表負責，
+-- 這裡只管「偏好值本身合不合法」。
+local VOICE_LANGS = {
+    CH = true,
+    EN = true,
+    JP = true,
+}
+-- 沒設過（或手改壞了）一律回到原本的提示音，不動既有玩家的體驗。
+local VOICE_DEFAULT = "chime"
 
 local function newState()
     return {
@@ -108,6 +119,10 @@ local function newState()
         -- 側欄偏好寫失敗時，維護輪補寫同一份 settings.ini；不需要另存一份值，
         -- sidebarPreference 本身就是本場生效且最後要落地的權威值。
         sidebarSettingsPending = false,
+        -- 語音語系偏好：nil = 玩家沒選過（＝chime 提示音）。與 sidebar 同一份 settings.ini、
+        -- 同一支 writer；它只決定播哪段音檔，不參與 register、不碰網路。
+        voicePreference = nil,
+        voiceSettingsPending = false,
         -- settings.ini 首次讀取失敗時保持 true；維護輪成功重讀前不得用 fallback 值截斷覆寫整檔。
         settingsLoadPending = false,
         lastSettingsRetryMs = 0,
@@ -312,8 +327,27 @@ local function normalizeSidebarPreference(raw)
     return nil
 end
 
--- 整檔重寫。preference 是語系代碼或 AUTO_LANGUAGE；sidebar 是 nil／true／false。
-local function writeSettings(preference, sidebar)
+-- 語音偏好的三態化，比照 normalizeSidebarPreference：白名單外（含 nil、大小寫不符、
+-- 玩家手改）一律回 nil＝沒設過，由 getVoiceLanguagePreference 退回 chime。
+-- 回傳值會直接參與音檔檔名組合，所以**只能放行白名單內的字面值**。
+local function normalizeVoicePreference(raw)
+    if raw == VOICE_DEFAULT or raw == Core.AUTO_LANGUAGE then
+        return raw
+    end
+    if type(raw) == "string" and rawget(VOICE_LANGS, raw) == true then
+        return raw
+    end
+    return nil
+end
+
+-- 整檔重寫，寫出的永遠是記憶體裡的**全部**欄位。刻意不收參數：lang／sidebar／voice
+-- 各有自己的寫入入口，若讓呼叫端逐一傳參，任何一支漏帶一欄就等於把玩家那一欄洗掉
+-- （getFileWriter(path, true, false) 的第三個參數是 append，false 等於截斷重寫）。
+local function writeSettings()
+    local state = NBClient.state
+    local preference = state.languagePreference or Core.AUTO_LANGUAGE
+    local sidebar = state.sidebarPreference
+    local voice = state.voicePreference
     local writer = nil
     local ok, writeError = pcall(function()
         writer = getFileWriter(SETTINGS_FILE, true, false)
@@ -324,6 +358,10 @@ local function writeSettings(preference, sidebar)
         -- 沒設過就不寫這一行：「檔案裡有 sidebar=」本身就是「玩家按過收合鈕」的證據。
         if sidebar ~= nil then
             writer:write("sidebar=" .. tostring(sidebar) .. "\n")
+        end
+        -- voice 同理：沒選過就不寫，預設提示音不該長得像玩家挑過的設定。
+        if voice ~= nil then
+            writer:write("voice=" .. voice .. "\n")
         end
         writer:close()
         writer = nil
@@ -338,7 +376,7 @@ local function writeSettings(preference, sidebar)
     -- （LuaManager.java:12751-12769，write/close 直接委派給 PrintWriter），而 PrintWriter
     -- 把建構後的 IOException 記在內部 trouble 旗標裡、從不往外拋，wrapper 也沒有暴露
     -- checkError()。也就是說磁碟滿或檔案被鎖時我們會拿到一個「成功」的 pcall。
-    -- 引擎既然沒給可檢查的介面，唯一能確認的方式就是讀回來比對——這個檔只有兩行，成本可接受。
+    -- 引擎既然沒給可檢查的介面，唯一能確認的方式就是讀回來比對——這個檔只有幾行，成本可接受。
     local values, readError = loadSettings()
     if readError then
         return false, "verify read failed: " .. tostring(readError)
@@ -350,6 +388,10 @@ local function writeSettings(preference, sidebar)
     local storedSidebarRaw = rawget(values, "sidebar")
     if normalizeSidebarPreference(storedSidebarRaw) ~= sidebar then
         return false, "verify mismatch: sidebar=" .. tostring(storedSidebarRaw)
+    end
+    local storedVoiceRaw = rawget(values, "voice")
+    if normalizeVoicePreference(storedVoiceRaw) ~= voice then
+        return false, "verify mismatch: voice=" .. tostring(storedVoiceRaw)
     end
     return true, nil
 end
@@ -387,6 +429,9 @@ local function ensureSettingsLoaded(force)
     end
     if not state.sidebarSettingsPending then
         state.sidebarPreference = normalizeSidebarPreference(rawget(values, "sidebar"))
+    end
+    if not state.voiceSettingsPending then
+        state.voicePreference = normalizeVoicePreference(rawget(values, "voice"))
     end
     return true
 end
@@ -449,6 +494,34 @@ local function triggerClientEvent(eventName, argument)
     end
 end
 
+-- 一次寫入就把三個欄位一起落地，所以任何一次成功都要清掉**全部**待寫旗標並補發各自的
+-- 恢復通知：漏發的那一欄，面板會永遠停在「尚未保存」。
+local function notifySettingsSaved()
+    local state = NBClient.state
+    if state.settingsPending ~= nil then
+        state.settingsPending = nil
+        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
+            kind = "save-recovered",
+            preference = state.languagePreference or Core.AUTO_LANGUAGE,
+        })
+    end
+    if state.sidebarSettingsPending then
+        state.sidebarSettingsPending = false
+        logLine("settings sidebar write recovered")
+        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
+            kind = "sidebar-save-recovered",
+        })
+    end
+    if state.voiceSettingsPending then
+        state.voiceSettingsPending = false
+        logLine("settings voice write recovered")
+        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
+            kind = "voice-save-recovered",
+            voice = state.voicePreference or VOICE_DEFAULT,
+        })
+    end
+end
+
 -- 落地一次，並把結果變成「面板看得到的狀態」。舊版失敗只寫一行 log 就算了，回傳值
 -- 只描述網路送出：玩家改了語系、這場生效、下次進場莫名回到舊值，全程沒有任何提示。
 local function persistLanguagePreference(preference)
@@ -456,18 +529,10 @@ local function persistLanguagePreference(preference)
     local written = false
     local writeError = "settings not loaded"
     if not state.settingsLoadPending then
-        -- 側欄偏好一起帶進去：整檔重寫，漏帶就等於把玩家的收合狀態洗掉。
-        written, writeError = writeSettings(preference, state.sidebarPreference)
+        written, writeError = writeSettings()
     end
     if written then
-        state.sidebarSettingsPending = false
-        if state.settingsPending ~= nil then
-            state.settingsPending = nil
-            triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
-                kind = "save-recovered",
-                preference = preference,
-            })
-        end
+        notifySettingsSaved()
         return true
     end
 
@@ -510,7 +575,7 @@ end
 local function pumpSettingsRetry(now)
     local state = NBClient.state
     if state.settingsPending == nil and not state.sidebarSettingsPending
-        and not state.settingsLoadPending then
+        and not state.voiceSettingsPending and not state.settingsLoadPending then
         return
     end
     if state.lastSettingsRetryMs ~= 0
@@ -529,20 +594,17 @@ local function pumpSettingsRetry(now)
             sendLanguageRegister(now)
         end
     end
-    if not state.sidebarSettingsPending and state.settingsPending == nil then
+    if state.settingsPending == nil and not state.sidebarSettingsPending
+        and not state.voiceSettingsPending then
         return
     end
     if state.settingsPending ~= nil then
+        -- 語系待寫入時走同一支：它寫的也是整檔，順手把 sidebar／voice 一起補上。
         persistLanguagePreference(state.settingsPending)
         return
     end
-    local written = writeSettings(state.languagePreference, state.sidebarPreference)
-    if written then
-        state.sidebarSettingsPending = false
-        logLine("settings sidebar write recovered")
-        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
-            kind = "sidebar-save-recovered",
-        })
+    if writeSettings() then
+        notifySettingsSaved()
     end
 end
 
@@ -1011,10 +1073,10 @@ function NBClient.setSidebarCollapsedPreference(collapsed)
     local written = false
     local writeError = "settings not loaded"
     if settingsReady then
-        written, writeError = writeSettings(state.languagePreference, collapsed)
+        written, writeError = writeSettings()
     end
     if written then
-        state.sidebarSettingsPending = false
+        notifySettingsSaved()
         return true
     end
     state.sidebarSettingsPending = true
@@ -1023,6 +1085,47 @@ function NBClient.setSidebarCollapsedPreference(collapsed)
         logLine("settings sidebar write failed error=" .. detail)
         triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
             kind = "sidebar-save-failed",
+            detail = detail,
+        })
+    end
+    return false
+end
+
+-- 語音語系偏好。與公告語系是兩件事：這一欄只決定播哪一段語音，不進 register、
+-- 不觸發任何網路請求，也不影響公告文字。
+-- 回傳值必定是 VOICE_DEFAULT／Core.AUTO_LANGUAGE／VOICE_LANGS 之一（沒選過＝預設提示音）。
+function NBClient.getVoiceLanguagePreference()
+    ensureSettingsLoaded()
+    return NBClient.state.voicePreference or VOICE_DEFAULT
+end
+
+-- 回傳是否確實寫進 settings.ini。失敗時本場仍套用記憶體值，並排入共用 settings 維護輪；
+-- LANGUAGE_STATUS_EVENT 的 voice-save-failed／voice-save-recovered 讓面板如實提示。
+-- 白名單外的值一律收斂成預設提示音：這個值會被面板拿去組音檔名，放行原字串等於
+-- 讓一個壞掉的 ini 決定要載入哪個檔案。
+function NBClient.setVoiceLanguagePreference(value)
+    local preference = normalizeVoicePreference(value) or VOICE_DEFAULT
+    local settingsReady = ensureSettingsLoaded()
+    local state = NBClient.state
+    local wasPending = state.voiceSettingsPending
+    state.voicePreference = preference
+    local written = false
+    local writeError = "settings not loaded"
+    if settingsReady then
+        written, writeError = writeSettings()
+    end
+    if written then
+        notifySettingsSaved()
+        return true
+    end
+    state.voiceSettingsPending = true
+    if not wasPending then
+        local detail = safeLogValue(writeError, 160)
+        logLine("settings voice write failed voice=" .. safeLogValue(preference, LOG_VALUE_LIMIT)
+            .. " error=" .. detail)
+        triggerClientEvent(NBClient.LANGUAGE_STATUS_EVENT, {
+            kind = "voice-save-failed",
+            voice = preference,
             detail = detail,
         })
     end

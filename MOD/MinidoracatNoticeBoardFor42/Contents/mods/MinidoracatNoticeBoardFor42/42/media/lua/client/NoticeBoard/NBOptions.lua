@@ -61,15 +61,16 @@ NBOptions._options = registered
 -- 按下 Apply 走的是 options:apply() + save()（MainOptions.lua:3760-3766），改的是同一份
 -- option.value，所以先 load 過不會蓋掉之後的修改。
 local loadAttempted = false
+local loadSucceeded = false
 
-local function ensureLoaded()
-    if loadAttempted then
-        return
+local function ensureLoaded(retry)
+    if loadAttempted and not retry then
+        return loadSucceeded
     end
     loadAttempted = true
     if type(PZAPI) ~= "table" or type(PZAPI.ModOptions) ~= "table"
         or type(PZAPI.ModOptions.load) ~= "function" then
-        return
+        return false
     end
     local ok, loadError = pcall(function()
         PZAPI.ModOptions:load()
@@ -77,6 +78,8 @@ local function ensureLoaded()
     if not ok then
         print("[MinidoracatNoticeBoardFor42] mod options load failed: " .. tostring(loadError))
     end
+    loadSucceeded = ok
+    return ok
 end
 
 local function optionValue(id, fallback)
@@ -99,15 +102,10 @@ local function optionValue(id, fallback)
     return value
 end
 
--- 提示音的最終音量（0..1）。0 = 不要播。
--- 勾選框與滑桿是兩個獨立語意：關掉勾選＝完全不響（保留音量設定值），
--- 音量拉到 0 也是不響——兩者都要看，不能只看其中一個。
-function NBOptions.soundVolume()
-    if optionValue(NBOptions.SOUND_ENABLED, true) ~= true then
-        return 0
-    end
+-- Slider display stays independent of the notification mute switch.
+function NBOptions.volumePercent()
     local volume = tonumber(optionValue(NBOptions.SOUND_VOLUME, DEFAULT_VOLUME))
-    if volume == nil then
+    if volume == nil or volume ~= volume then
         volume = DEFAULT_VOLUME
     end
     if volume <= 0 then
@@ -116,7 +114,56 @@ function NBOptions.soundVolume()
     if volume > 100 then
         volume = 100
     end
-    return volume / 100
+    return volume
+end
+
+-- Dragging updates the existing option; release saves once. The native setter also
+-- updates an already-created MODS slider (PZAPI/ModOptions.lua:216-220).
+function NBOptions.setVolumePercent(value, persist)
+    if type(value) ~= "number" or value ~= value then
+        return false
+    end
+    if not ensureLoaded(not loadSucceeded) then
+        return false
+    end
+    value = math.max(0, math.min(100, math.floor(value + 0.5)))
+    local reader
+    local ok, saveError = pcall(function()
+        local option = NBOptions._options:getOption(NBOptions.SOUND_VOLUME)
+        option:setValue(value)
+        if not persist then
+            return
+        end
+        PZAPI.ModOptions:save()
+        -- PrintWriter can swallow I/O errors; verify only our row without
+        -- reloading every mod's live options or creating a second settings file.
+        reader = getFileReader("ModOptions.ini", false)
+        if not reader then error("volume settings readback unavailable") end
+        local stored
+        local pattern = "^slider|" .. OPTIONS_ID .. "|" .. NBOptions.SOUND_VOLUME .. "|(.*)$"
+        while true do
+            local line = reader:readLine()
+            if line == nil then break end
+            local raw = string.match(line, pattern)
+            if raw then stored = tonumber(raw) end
+        end
+        reader:close()
+        reader = nil
+        if stored ~= value then error("volume settings readback mismatch") end
+    end)
+    if reader then pcall(function() reader:close() end) end
+    if not ok then
+        print("[MinidoracatNoticeBoardFor42] volume save failed: " .. tostring(saveError))
+    end
+    return ok
+end
+
+-- Notification and preview share both mute switches and the same 0..1 gain.
+function NBOptions.soundVolume()
+    if optionValue(NBOptions.SOUND_ENABLED, true) ~= true then
+        return 0
+    end
+    return NBOptions.volumePercent() / 100
 end
 
 return NBOptions

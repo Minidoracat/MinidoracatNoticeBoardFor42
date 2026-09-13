@@ -19,6 +19,15 @@
     python scripts/prep_notify_sound.py --src ... --peak 0.25 --no-mono
 輸入支援 16-bit PCM 的 .wav（Python 標準庫只解得了未壓縮 WAV；mp3／ogg 請先自行轉檔）。
 
+語音提示音（MinidoracatNBVoiceCH／EN／JP）也走這支腳本；內容用 fish-audio-tts skill 重生，
+台詞與聲音參數留在 scripts/voice_lines.json（CH/CN 共用 CH，JP 另一個聲音）：
+    python ~/.claude/skills/fish-audio-tts/scripts/fish_tts.py batch \
+        --manifest scripts/voice_lines.json --out-dir temp/voice/regenerated --trim --verify
+    python scripts/prep_notify_sound.py --src temp/voice/regenerated/notice_zh.wav \
+        --out MOD/MinidoracatNoticeBoardFor42/Contents/mods/MinidoracatNoticeBoardFor42/42/media/sound/MinidoracatNBVoiceCH.wav \
+        --no-trim --fade-out 0.02
+    # en→EN、ja→JP；保留 TTS 已裁好的 80ms 緩衝，避免二次裁切吃掉輕聲起音。
+
 **版權**：這支腳本不會去取得任何素材，只處理你指定的檔案。放進 MOD 並公開發布前，
 請自行確認該音效的授權允許再散布——商業作品（動畫、遊戲）的音效通常不允許。
 """
@@ -45,10 +54,20 @@ DEFAULT_FADE_OUT = 0.15
 SILENCE_GATE = 0.02        # 自動修剪頭尾靜音的門檻（相對峰值）
 
 SOUND_NAME = "MinidoracatNBNotify"
-DEFAULT_OUT = os.path.join(
-    "MOD", "MinidoracatNoticeBoardFor42", "Contents", "mods",
-    "MinidoracatNoticeBoardFor42", "42", "media", "sound", SOUND_NAME + ".wav",
-)
+# 語音提示音（公告面板的「語音語系」選項，CH/CN 共用 CH）。內容來源與重生指令見
+# scripts/voice_lines.json；一樣走這支腳本處理，所以與提示音共用同一組資產規格。
+VOICE_SOUND_NAMES = ("MinidoracatNBVoiceCH", "MinidoracatNBVoiceEN", "MinidoracatNBVoiceJP")
+
+
+def sound_path(name):
+    return os.path.join(
+        "MOD", "MinidoracatNoticeBoardFor42", "Contents", "mods",
+        "MinidoracatNoticeBoardFor42", "42", "media", "sound", name + ".wav",
+    )
+
+
+DEFAULT_OUT = sound_path(SOUND_NAME)
+VOICE_OUTS = tuple(sound_path(name) for name in VOICE_SOUND_NAMES)
 
 
 def read_wav(path):

@@ -56,7 +56,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 ┌───────────────────────────────────────────────────────┐
 │ [X]              伺服器公告欄             [釘][收合] │  原生標題列
 ├───────────────────────────────────────────────────────┤
-│ [▤側欄] [▾展開] [▸收合]    [⌘語言][⤢重設大小][📁重建範例][↻重新載入] │  工具列
+│ [側欄] [展開] [收合]   [語音][音量 ━━●━ 60%][語言][重設大小][重建範例][重新載入] │ 工具列
 ├──────────────────┬────────────────────────────────────┤
 │ ▾ 📁 一般公告   ●│                                    │
 │    📄 歡迎公告   │                                    │
@@ -69,7 +69,8 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 
 - **面板底與外框**：`prerender`／`render` 整段覆寫、不再呼叫父類版本（父類會畫直角底與直角貼圖條）；面板底用 `NBSkin.fill(..., BG_PANEL)`、外框用 `NBSkin.border(..., BORDER)`，底部 resize 列保留原生把手與 1px 分隔線。文件樹與 RichText 各自使用原生 stencil 收支；主面板不再維護舊頁籤的額外巢狀 stencil，因此 `scripts/test_nbpanel.lua` 釘住 `maxLevel == 1` 且沒有主面板 repaint。
 - **標題列**：高度與原生 `titleBarHeight()` 相同，疊 `TITLEBAR_FILL`、下緣 1px `BORDER`；標題 `IGUI_MinidoracatNB_PanelTitle` 置中。
-- **工具列**：高度 = `getTextManager():getFontHeight(UIFont.Small) + 6`，y = `titleBarHeight()`。左組由左到右為側欄開關、「全部展開」、「全部收合」；右組由左到右為語言、重設大小、重建範例（僅 admin）、重新載入（僅 admin）。**重新載入固定在最右**（每天都會按的那顆留給肌肉記憶），重建範例排在它左邊（一次性入口）。非 admin 兩顆 admin 按鈕都不建立，server 仍重新驗證權限。**重建範例不是「按了就送」**：點下去只開一個原生 `ISContextMenu`，兩個選項（CH／EN）各自把「會覆寫 categories.txt」寫進標籤，選定語系後才送出請求；直接關掉選單零副作用。七顆按鈕各掛一張 14px 圖示（`sidebar`／`chevronDown`／`chevronRight`／`language`／`resetSize`／`folder`／`reload`；「全部展開」用 `chevronDown`、「全部收合」用 `chevronRight`；重建範例沿用文件樹分類那張 `folder`），走原生 `ISButton.iconTexture` ＋ `joypadTextureWH = 14`——原生把圖示排在標題左邊、間距寫死 5（`ISButton.lua:238-246`），所以有圖示時按鈕寬要多留 `14 + 5 = 19`；沒有圖示（框架舊／資產缺）就維持純文字寬，不留空欄。minimumWidth 必須依左組（側欄、展開、收合）與右組整體寬度計算，確保工具列不互相覆蓋。
+- **工具列**：高度 = `getTextManager():getFontHeight(UIFont.Small) + 6`，y = `titleBarHeight()`。左組由左到右為側欄開關、「全部展開」、「全部收合」；右組由左到右為語音、音量滑桿、語言、重設大小、重建範例（僅 admin）、重新載入（僅 admin）。**重新載入固定在最右**，非 admin 不建立兩顆管理按鈕，server 仍重新驗證權限。重建範例先開原生 `ISContextMenu`，CH／EN 選項各自明示「會覆寫 categories.txt」，選定才送請求，關閉選單零副作用。八顆按鈕各掛 14px 框架圖示：`sidebar`／`chevronDown`／`chevronRight`／`language`（語音與文字語系共用）／`resetSize`／`folder`／`reload`。沿用 `ISButton.iconTexture` ＋ `joypadTextureWH = 14`，原生圖示與標題間距為 5（`ISButton.lua:238-246`），有圖示時寬度多留 19px；缺圖示退純文字，不留空欄。minimumWidth 由左組最右的收合鈕與右組最左的語音鈕計算，包含音量滑桿寬度，避免群組互相覆蓋。語音選單與保存規則見 `ADMIN_GUIDE.md`「玩家自己的音效設定」。
+- **音量滑桿**：`NBVolumeSlider` 繼承原生 `ISSliderPanel` 的拖曳、框外放開、上下限與步進；「音量」標籤與百分比依實際字寬留位，軌道寬 120px。框架 rev≥3 的 `Skin.slider` 畫琥珀軌道與白色旋鈕，缺能力則退原生繪製，不另造拖曳模型。收合時不繪製；原生 Toggle UI 繞過 Lua setter，因此在既有 UI update 生命週期觀察實際可見狀態並收尾。保存與試聽時機見管理指南；本輪未新增公告面板的完整手把導覽。
 - **文件樹**：原生 `ISScrollingListBox` 子類 `NBDocTree`，自繪分類與公告列，不畫原生每列外框。展開／收合時重建可見 items，讓 rowAt、捲動高度與 ensureVisible 全部沿用原生實作。
 - **內容區**：`ISRichTextPanel`＋`addScrollBars()`，`autosetheight=false`、`clip=true`、`doRepaintStencil=true`，左右 margin 都是 `10 + scrollbarWidth`，確保 `<H1>`／`<CENTRE>` 以內容區真正中心對齊。側欄寬度改變時 `updateLayout()` 手動調整兩個子元件，不同時使用 anchors。
 
@@ -126,7 +127,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
   - **退場**：400ms，alpha `1→0` 同時 `y` 向上位移 -10px 做輕微上浮消失感；結束後 `removeFromUIManager()` 並讓佇列遞補下一則。
   - 總時長：250 + 3000 + 400 = 3650ms／則。
 - **觸發時機**：在線更新推播抵達（manifest 帶來新 hash）→ 依 PopupMode 決策（見 4）若未直接彈窗，則降級為 Toast＋浮窗紅點；SP 遊戲中改檔同理。文案模板 `IGUI_MinidoracatNB_ToastNewContent` 的 `%1` 是公告標題，禁裸 `%`。
-- **提示音**：跳 Toast 的同時播一聲 `getSoundManager():playUISound("MinidoracatNBNotify")`——**MOD 自帶的音檔**（`42/media/sound/MinidoracatNBNotify.wav`；走 `GameSounds` 的 non-bank fallback（`GameSounds.java:95-137`），不需要 FMOD bank）。不用遊戲內建音效是因為那 19 個 UI 音效都是點擊／勾選的操作回饋，當「有新東西」的通知太輕。音檔可由服主替換（`docs/ADMIN_GUIDE.md`「換掉提示音」），原創的備援版本由 `scripts/gen_notify_sound.py` 生成、服主自備素材由 `scripts/prep_notify_sound.py` 處理成合規資產。
+- **提示音與語音**：跳 Toast 時以 `getSoundManager():playUISound` 播放玩家選定的通知音；預設 `MinidoracatNBNotify`，語音使用 `MinidoracatNBVoiceCH`／`EN`／`JP`。全部位於 `42/media/sound/`，走 `GameSounds` 的 non-bank fallback（`GameSounds.java:95-137`），不需要 FMOD bank。自動模式直接讀遊戲 `Translator`，不讀公告內容語系；CN 共用 CH，其他未支援語系使用 EN。資產替換與語系選擇見 `ADMIN_GUIDE.md` 的「換掉提示音」及「玩家自己的音效設定」。
 - **音量**：玩家在「選項 → MODS」的滑桿（`PZAPI.ModOptions`，`NBOptions.lua`）決定，0 = 靜音；實作是拿 `playUISound` 回傳的 instance ref 呼叫 `getUIEmitter():setVolume(ref, 0..1)`（`SoundManager.java:201,875-880`、`FMODSoundEmitter.java:284-298`，`FileSound.tick` 每幀套用 `:1242`）。沙盒 `NotifySound` 是服主端總開關，與玩家設定是 AND 關係。**一批一聲不是一則一聲**——首次同步逾時那條路徑會一次帶出所有未讀，逐則播就是連續叭好幾聲；換語系的第一份快照本來就靜音（hash 全變不算新內容），因此也不響。服主可用沙盒選項 `NotifySound` 關閉；沒有 Toast 可跳時（全部已讀）不會有聲音。
 
 ---

@@ -52,10 +52,12 @@ NBSkin.COLORS = {
 -- 載入期綁定：mod.info require= 保證框架的 lua 已全部先執行（見檔頭）。
 -- 版本不合＝當框架不存在處理（走退回），不帶半套狀態運行。
 local FW = nil
+local revision = 0
 do
     local ui = MinidoracatUI and MinidoracatUI.v1
     if ui and ui.API_MAJOR == 1 and ui.API_REVISION >= 1 and ui.Skin then
         FW = ui.Skin
+        revision = ui.API_REVISION
     end
 end
 
@@ -102,6 +104,12 @@ function NBSkin.dot(element, x, y, size, color, outline)
         element:drawRectBorder(x, y, size, size,
             outline.a or 1, outline.r, outline.g, outline.b)
     end
+end
+
+-- rev 3 only paints the track/knob; interaction remains the native slider's job.
+function NBSkin.slider(element, x, y, width, height, ratio)
+    return FW and revision >= 3 and type(FW.slider) == "function"
+        and FW.slider(element, x, y, width, height, ratio) == true or false
 end
 
 return NBSkin

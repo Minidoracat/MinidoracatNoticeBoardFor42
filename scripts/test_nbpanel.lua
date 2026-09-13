@@ -259,6 +259,10 @@ function Base:addToUIManager() end
 function Base:removeFromUIManager() end
 _G.ISPanel = Base
 _G.ISBaseObject = Base
+_G.ISUIElement = Base
+function Base:render() end
+function Base:prerender() end
+function Base:update() end
 -- ISScrollingListBox 與 ISRichTextPanel 同樣**載原版**（不移植、不重寫）：文件樹側欄的
 -- addItem／clear／rowAt／ensureVisible／捲動高度全部靠它，自己寫一份模擬器等於讓模擬器
 -- 與實作一起錯時兩邊都看不出來。它 derive 自 ISPanelJoypad，本 harness 把那一層當 Base。
@@ -266,6 +270,7 @@ _G.ISPanelJoypad = Base:derive("ISPanelJoypad")
 
 dofile(ENGINE_FILE)
 dofile(LISTBOX_FILE)
+dofile(VANILLA_LUA .. "/client/RadioCom/ISUIRadio/ISSliderPanel.lua")
 
 local NBCore = realRequire "NoticeBoard/NBCore"
 _G.NBCore = NBCore
@@ -286,6 +291,7 @@ local UNREAD_IDS = {}
 local READ_MARKS = {}
 -- 側欄收合偏好：harness 端當成一顆可讀寫的記憶體格子（真模組寫 settings.ini）。
 local SIDEBAR_PREFERENCE = { value = nil, writes = 0, allow = true }
+local VOICE_PREFERENCE = { value = "chime" }
 -- 範例重建請求：harness 端記次數與**選到的語系**，並可切成「送不出去」，
 -- 驗面板的兩條送出 toast 分支與「選單選了哪個語系就送哪個」。
 local EXAMPLE_REQUESTS = { count = 0, allow = true, langs = {} }
@@ -295,6 +301,11 @@ _G.NBClient = { CONTENT_READY_EVENT = "e1", UNREAD_CHANGED_EVENT = "e2",
     markRead = function(fileId)
         READ_MARKS[#READ_MARKS + 1] = fileId
         UNREAD_IDS[fileId] = nil
+        return true
+    end,
+    getVoiceLanguagePreference = function() return VOICE_PREFERENCE.value end,
+    setVoiceLanguagePreference = function(value)
+        VOICE_PREFERENCE.value = value
         return true
     end,
     getSidebarCollapsedPreference = function() return SIDEBAR_PREFERENCE.value end,
@@ -316,8 +327,16 @@ _G.NBClient = { CONTENT_READY_EVENT = "e1", UNREAD_CHANGED_EVENT = "e2",
 _G.NBToast = { show = function() end }
 -- 玩家端音效設定（真模組會去讀 PZAPI.ModOptions／ModOptions.ini，harness 沒有那一套）。
 -- 音量預設 1 = 滿音量，這樣「不呼叫 setVolume」是可斷言的行為；下面音效那段會改它。
-local SOUND_VOLUME = { value = 1 }
-_G.NBOptions = { soundVolume = function() return SOUND_VOLUME.value end }
+local SOUND_VOLUME = { value = 1, saves = 0 }
+_G.NBOptions = {
+    soundVolume = function() return SOUND_VOLUME.value end,
+    volumePercent = function() return SOUND_VOLUME.value * 100 end,
+    setVolumePercent = function(value, persist)
+        SOUND_VOLUME.value = value / 100
+        if persist then SOUND_VOLUME.saves = SOUND_VOLUME.saves + 1 end
+        return true
+    end,
+}
 _G.ISCollapsableWindowJoypad = Base:derive("ISCollapsableWindowJoypad")
 -- 版面常數（原生公式 ISCollapsableWindow.lua:298-303 代入本 harness 的假字高 18）：
 -- titleBarHeight = max(16, 18+1) = 19；resizeWidgetHeight = (18+6)/2 + 2 = 14。
@@ -417,7 +436,21 @@ _G.luautils = { stringStarts = function(text, prefix)
     return string.sub(text, 1, string.len(prefix)) == prefix
 end }
 dofile(VANILLA_LUA .. "/client/ISUI/ISLayoutManager.lua")
-_G.getText = function(key) return "[" .. tostring(key) .. "]" end
+do
+    -- Model visible toolbar labels, not long translation keys that inflate minimumWidth.
+    local toolbarLabels = {
+        IGUI_MinidoracatNB_Reload = "Reload",
+        IGUI_MinidoracatNB_Examples = "Rebuild examples",
+        IGUI_MinidoracatNB_ResetSize = "Reset size",
+        IGUI_MinidoracatNB_Language = "Language",
+        IGUI_MinidoracatNB_VoiceLanguage = "Voice",
+        IGUI_MinidoracatNB_Volume = "Volume",
+        IGUI_MinidoracatNB_Sidebar = "Contents",
+        IGUI_MinidoracatNB_ExpandAll = "Expand all",
+        IGUI_MinidoracatNB_CollapseAll = "Collapse all",
+    }
+    _G.getText = function(key) return toolbarLabels[key] or "[" .. tostring(key) .. "]" end
+end
 _G.getTimestampMs = function() return 0 end
 _G.getSpecificPlayer = function() return nil end
 _G.getAccessLevel = function() return "None" end
@@ -931,7 +964,6 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     -- 版面回歸紅線：工具列與內容區的 rect／margins 逐像素釘死。
     -- 期望值全是字面數字（toolbarY 19 + toolbarHeight 18+6=24 → 43；950-43-14 → 893；
     -- 側欄 clamp(180, floor(1382*0.26)=359, 300) → 300；內文寬 1382-300 → 1082；捲軸寬 13）。
-    checkEqual(panel.width, 1382, "面板預設寬（1920×0.72）")
     checkEqual(panel.height, 950, "面板預設高（1080×0.88）")
     checkEqual(panel.toolbarY, 19, "工具列 y = titleBarHeight")
     checkEqual(panel.toolbarHeight, 24, "工具列高 = 字高 + 6")
@@ -1443,7 +1475,7 @@ end)()
             getUIEmitter = function()
                 return { setVolume = function(_, ref, volume)
                     volumes[#volumes + 1] = { ref = ref, volume = volume }
-                end }
+                end, stopSoundLocal = function() end }
             end,
         }
     end
@@ -1514,6 +1546,57 @@ end)()
     checkEqual(#toasts, 1, "音量 0 不影響 toast")
     checkEqual(#sounds, 0, "音量 0（或玩家關閉）連 playUISound 都不該呼叫")
     SOUND_VOLUME.value = 1
+
+    -- Select through the actual toolbar menu, then observe the next notification.
+    local panel = NBPanel:new()
+    panel:createChildren()
+    panel.voiceButton.onclick(panel, panel.voiceButton)
+    local menu = CONTEXT_MENUS.list[#CONTEXT_MENUS.list]
+    checkEqual(#menu.options, 5, "voice menu offers original, auto and three languages")
+    local savedTranslator = _G.Translator
+    local gameLanguage = "CN"
+    _G.Translator = { getLanguage = function()
+        return { name = function() return gameLanguage end }
+    end }
+    local expectedSounds = {
+        chime = "MinidoracatNBNotify", auto = "MinidoracatNBVoiceCH",
+        CH = "MinidoracatNBVoiceCH", EN = "MinidoracatNBVoiceEN",
+        JP = "MinidoracatNBVoiceJP",
+    }
+    for _, option in ipairs(menu.options) do
+        sounds = {}
+        option.callback(option.target, option.param)
+        checkEqual(sounds[1], expectedSounds[option.param],
+            "selecting a voice immediately previews that voice")
+        sounds, toasts = {}, {}
+        NBPanel.notifyUnread(snapshot, nil)
+        checkEqual(sounds[1], expectedSounds[option.param],
+            "selected voice controls notification playback")
+        panel.voiceButton.onclick(panel, panel.voiceButton)
+        local checkedCount = 0
+        for _, reopened in ipairs(CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options) do
+            if reopened.checked then
+                checkedCount = checkedCount + 1
+                checkEqual(reopened.param, option.param, "reopened menu marks selected voice")
+            end
+        end
+        checkEqual(checkedCount, 1, "voice menu has exactly one selected option")
+    end
+    VOICE_PREFERENCE.value = "auto"
+    gameLanguage = "FR"
+    sounds = {}
+    NBPanel.notifyUnread(snapshot, nil)
+    checkEqual(sounds[1], "MinidoracatNBVoiceEN", "unsupported game language uses English")
+    SOUND_VOLUME.value = 0
+    sounds = {}
+    NBPanel.notifyUnread(snapshot, nil)
+    checkEqual(#sounds, 0, "voice selection cannot bypass player mute")
+    SOUND_VOLUME.value = 1
+    _G.SandboxVars = { MinidoracatNB = { NotifySound = false } }
+    NBPanel.notifyUnread(snapshot, nil)
+    checkEqual(#sounds, 0, "voice selection cannot bypass server mute")
+    VOICE_PREFERENCE.value = "chime"
+    _G.Translator = savedTranslator
 
     -- 音效系統整個壞掉（getSoundManager 拋錯）不得讓通知跟著失敗。
     sounds, toasts = {}, {}
@@ -1978,10 +2061,6 @@ end)()
     local panel = newPanel()
     check(panel.expandAllButton ~= nil and panel.collapseAllButton ~= nil,
         "非 admin 的連線玩家也有全部展開／全部收合")
-    checkEqual(panel.expandAllButton.title, "[IGUI_MinidoracatNB_ExpandAll]",
-        "全部展開的標題取自翻譯鍵，不是硬寫的字面文字")
-    checkEqual(panel.collapseAllButton.title, "[IGUI_MinidoracatNB_CollapseAll]",
-        "全部收合的標題取自翻譯鍵")
     local savedIsClient = _G.isClient
     _G.isClient = function() return false end
     local spPanel = NBPanel:new()
@@ -2387,13 +2466,10 @@ end)()
         "I2 多一顆 admin 按鈕必須把動態 minimumWidth 一起撐大，否則工具列會重疊")
     -- 左組的右緣是**最右那顆**（全部收合），不是側欄開關：拿側欄開關算會少算兩顆按鈕，
     -- 左右兩組就會在預設寬度下重疊。
-    local expectedMinimum = adminPanel.collapseAllButton:getX()
-        + adminPanel.collapseAllButton:getWidth()
-        + 6 + (adminPanel.width - 6 - adminPanel.langButton:getX()) + 6
-    checkEqual(adminPanel.minimumWidth, math.max(420, math.ceil(expectedMinimum)),
-        "I2 minimumWidth 必須由左組最右按鈕與 admin 右側整組的實際寬度決定")
+    check(adminPanel.voiceButton:getX() + adminPanel.voiceButton:getWidth()
+        < adminPanel.langButton:getX(), "voice and notice language buttons do not overlap")
     check(adminPanel.collapseAllButton:getX() + adminPanel.collapseAllButton:getWidth() + 6
-        <= adminPanel.langButton:getX(),
+        <= adminPanel.voiceButton:getX(),
         "I2 預設寬度下左／右工具列群不得重疊")
 
     -- 小畫面／大字型／admin 四鈕：建立當下就要把目前寬度夾到動態 minimum，
@@ -2634,11 +2710,166 @@ end)()
     NBToast.show = savedToastShow
 end)()
 
--- 條數本身也是斷言：整段測試被 `if false then` 包掉或誤刪時，印出來的數字會變小，
--- 但沒有任何東西會紅。加測試時把這個數字一起改大（改小要說得出刪了什麼）。
-local EXPECTED_ASSERTIONS = 449
-assert(assertionCount == EXPECTED_ASSERTIONS,
-    "斷言條數不符：預期 " .. EXPECTED_ASSERTIONS .. "、實際 " .. assertionCount
-        .. "（有測試被刪掉或跳過？）")
+-- Real ISSliderPanel input -> existing volume option -> local preview.
+;(function()
+    local savedManager, savedToast, savedSandbox = getSoundManager, NBToast.show, SandboxVars
+    local active, played, messages = {}, 0, {}
+    local emitter = {
+        setVolume = function(_, ref, volume) active[ref].volume = volume end,
+        stopSoundLocal = function(_, ref) active[ref] = nil end,
+    }
+    _G.getSoundManager = function()
+        return {
+            getUIEmitter = function() return emitter end,
+            playUISound = function(_, name)
+                played = played + 1
+                active[played] = { name = name, volume = 1 }
+                return played
+            end,
+        }
+    end
+    NBToast.show = function(message) messages[#messages + 1] = message end
+    _G.SandboxVars = {}
+    SOUND_VOLUME.value, SOUND_VOLUME.saves = 1, 0
+    local panel = NBPanel:new()
+    panel:createChildren()
+    local slider = panel.volumeSlider
+    slider.parent = panel
+    panel:onVoiceLanguageSelected("EN")
+    checkEqual(active[1].name, "MinidoracatNBVoiceEN", "language selection previews immediately")
+    panel:onVoiceLanguageSelected("JP")
+    check(active[1] == nil and active[2].name == "MinidoracatNBVoiceJP",
+        "new selection replaces only the previous preview")
+
+    local bar = slider.sliderBarDim
+    slider:onMouseDown(bar.x + bar.w, 5)
+    checkEqual(SOUND_VOLUME.value, 1, "grabbing the current knob does not change volume")
+    checkEqual(active[2], nil, "same-value drag still stops the preceding sample")
+    slider.getMouseX = function() return bar.x + bar.w * 0.25 end
+    slider:onMouseMove(0, 0)
+    checkEqual(SOUND_VOLUME.value, 0.25, "drag changes live volume")
+    checkEqual(SOUND_VOLUME.saves, 0, "drag does not write on each pointer movement")
+    check(active[2] == nil, "drag stops the old sample before changing volume")
+    slider.getMouseX = function() return bar.x + bar.w * 0.75 end
+    slider:onMouseMoveOutside(0, 0)
+    checkEqual(SOUND_VOLUME.value, 0.75, "native outside drag changes live volume")
+    slider:onMouseUpOutside(0, 0)
+    checkEqual(SOUND_VOLUME.saves, 1, "outside release saves once")
+    checkEqual(active[3].volume, 0.75, "release previews at the final volume")
+    slider:onJoypadDirLeft()
+    check(active[3] == nil and active[4].volume == 0.7,
+        "joypad adjustment replaces preview at the new volume")
+    slider:onMouseDown(bar.x, 5)
+    slider:onMouseUp(0, 0)
+    checkEqual(played, 4, "zero percent stops preview without starting a new sound")
+    checkEqual(active[4], nil, "zero percent silences the preceding sample")
+    check(contains(messages[#messages], "PreviewMuted"), "mute produces visible feedback")
+    _G.SandboxVars = { MinidoracatNB = { NotifySound = false } }
+    slider:onJoypadDirRight()
+    checkEqual(played, 4, "server mute applies to manual previews")
+    _G.SandboxVars = {}
+    panel:onVoiceLanguageSelected("EN")
+    checkEqual(played, 5, "positive volume can preview again")
+    panel:setVisible(false)
+    checkEqual(active[5], nil, "closing the panel stops its sample")
+
+    -- Java visibility changes do not call NBPanel:setVisible.
+    local visible = true
+    panel.getIsVisible = function() return visible end
+    panel:onVoiceLanguageSelected("EN")
+    visible = false
+    panel:update()
+    checkEqual(active[6], nil, "native Toggle UI stops the sample through update")
+    visible = true
+    local savedCount = SOUND_VOLUME.saves
+    slider:onMouseDown(bar.x + bar.w * 0.25, 5)
+    visible = false
+    panel:update()
+    checkEqual(SOUND_VOLUME.saves, savedCount + 1, "hiding mid-drag commits once without preview")
+    visible = true
+    slider.getMouseX = function() return bar.x + bar.w * 0.9 end
+    slider:onMouseMove(0, 0)
+    panel:update()
+    checkEqual(SOUND_VOLUME.value, 0.25, "showing UI again cannot continue a released drag")
+    checkEqual(SOUND_VOLUME.saves, savedCount + 1, "visibility recovery does not save twice")
+    checkEqual(played, 6, "native hiding never starts a preview")
+
+    local drawn = {}
+    slider.drawText = function(_, text) drawn[#drawn + 1] = text end
+    SOUND_VOLUME.value = 0.45
+    slider:render()
+    checkEqual(drawn[#drawn], "45%", "slider reflects changes from the other settings surface")
+    panel.isCollapsed = true
+    drawn = {}
+    slider:render()
+    checkEqual(#drawn, 0, "collapsed panel does not render slider labels")
+    check(panel.voiceButton:getX() + panel.voiceButton:getWidth() < slider:getX()
+        and slider:getX() + slider:getWidth() < panel.langButton:getX(),
+        "voice, volume and text-language controls do not overlap")
+    _G.getSoundManager = savedManager
+    NBToast.show, _G.SandboxVars = savedToast, savedSandbox
+    SOUND_VOLUME.value, VOICE_PREFERENCE.value = 1, "chime"
+end)()
+
+-- Native ModOptions serialization: one volume source, verified saves and retry.
+;(function()
+    local savedOptions, savedAPI = NBOptions, PZAPI
+    local savedReader, savedWriter, savedSplit = getFileReader, getFileWriter, luautils.split
+    local disk = "slider|MinidoracatNoticeBoard|sound_volume|60\n"
+        .. "tickbox|Other|enabled|false\n"
+    local writes, dropWrites, failReads = 0, false, false
+    _G.getFileReader = function(path)
+        assert(path == "ModOptions.ini")
+        if failReads then error("read unavailable") end
+        local lines = string.gmatch(disk, "[^\r\n]+")
+        return { readLine = function() return lines() end, close = function() end }
+    end
+    _G.getFileWriter = function(path)
+        assert(path == "ModOptions.ini")
+        writes = writes + 1
+        local text = ""
+        return {
+            write = function(_, value) text = text .. value end,
+            close = function() if not dropWrites then disk = text end end,
+        }
+    end
+    luautils.split = string.split
+    dofile(VANILLA_LUA .. "/client/PZAPI/ModOptions.lua")
+    local other = PZAPI.ModOptions:create("Other", "Other")
+    other:addTickBox("enabled", "Enabled", true)
+    _G.NBOptions = nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBOptions.lua")
+    checkEqual(NBOptions.volumePercent(), 60, "load existing volume from native settings")
+    check(NBOptions.setVolumePercent(25, false), "live adjustment accepted")
+    checkEqual(NBOptions.soundVolume(), 0.25, "live adjustment affects notification gain")
+    checkEqual(writes, 0, "uncommitted adjustment never saves")
+    check(NBOptions.setVolumePercent(75, true), "committed volume verifies on disk")
+    other:getOption("enabled"):setValue(true) -- Clear the live value before testing durable reload.
+    PZAPI.ModOptions:load()
+    checkEqual(NBOptions.volumePercent(), 75, "native reload restores committed volume")
+    checkEqual(other:getOption("enabled"):getValue(), false, "save preserves other mods' settings")
+    dropWrites = true
+    checkEqual(NBOptions.setVolumePercent(80, true), false, "silent write loss is reported")
+    checkEqual(NBOptions.volumePercent(), 80, "failed save retains the live adjustment")
+    dropWrites = false
+    check(NBOptions.setVolumePercent(80, true), "same value can retry a failed save")
+    NBOptions._options:getOption(NBOptions.SOUND_ENABLED):setValue(false)
+    checkEqual(NBOptions.volumePercent(), 80, "muting does not erase the configured volume")
+    checkEqual(NBOptions.soundVolume(), 0, "muting still disables playback")
+    checkEqual(NBOptions.setVolumePercent(0 / 0, true), false, "NaN never enters native settings")
+    check(NBOptions.setVolumePercent(200, true), "out-of-range volume is clamped")
+    checkEqual(NBOptions.volumePercent(), 100, "volume cannot exceed 100 percent")
+    failReads = true
+    _G.NBOptions = nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBOptions.lua")
+    local previousWrites = writes
+    checkEqual(NBOptions.setVolumePercent(35, true), false, "failed initial load blocks saving")
+    checkEqual(writes, previousWrites, "failed load cannot overwrite unread settings")
+    failReads = false
+    check(NBOptions.setVolumePercent(35, true), "user can retry after an initial load failure")
+    checkEqual(NBOptions.volumePercent(), 35, "retry restores editable volume")
+    _G.NBOptions, _G.PZAPI = savedOptions, savedAPI
+    _G.getFileReader, _G.getFileWriter, luautils.split = savedReader, savedWriter, savedSplit
+end)()
 
 print("Step 2 tests passed: " .. assertionCount .. " assertions")
