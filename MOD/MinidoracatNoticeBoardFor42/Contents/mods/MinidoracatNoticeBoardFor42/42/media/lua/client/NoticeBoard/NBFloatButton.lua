@@ -125,6 +125,7 @@ function NBFloatButton.ensureInstance()
 
     local button = FW.new({
         size = BUTTON_SIZE,
+        alwaysOnTop = false, -- 入口不覆蓋後開的設定視窗或確認框。
         x = defaultX(),
         y = defaultY(),
         colors = {

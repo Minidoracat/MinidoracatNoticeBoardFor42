@@ -255,7 +255,12 @@ function Base:updateScrollbars() end
 -- 框架 widget（FloatButton/Toast）所需的最小補充面
 function Base:setCapture(v) self.captured = v end
 function Base:bringToTop() end
-function Base:addToUIManager() end
+function Base:addToUIManager()
+    if self._nativeAlwaysOnTop == nil then self._nativeAlwaysOnTop = false end
+end
+function Base:setAlwaysOnTop(value)
+    if self._nativeAlwaysOnTop ~= nil then self._nativeAlwaysOnTop = value end
+end
 function Base:removeFromUIManager() end
 _G.ISPanel = Base
 _G.ISBaseObject = Base
