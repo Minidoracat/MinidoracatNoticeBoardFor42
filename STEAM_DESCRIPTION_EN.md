@@ -54,6 +54,7 @@ Headings, lists, quotes, rules, links and images all work as expected; the full 
 [/list]
 
 [h2]☕ Support the author[/h2]
+If this helped, a 👍 on this page and a ⭐ on GitHub help other players find it.
 The mod is free and always will be. If you enjoy it, consider buying me a coffee - tips go straight into servers and mod development. Source code is public on GitHub.
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
