@@ -49,6 +49,18 @@ Steam Workshop 用 JPG（≤280KB，Steamworks 預覽圖上傳上限）在 `docs
 
 版本號格式：`{PZ 版本}-{mod 版本}`（例 `42.20.2-0.1.0`），詳見 [CHANGELOG.md](CHANGELOG.md)。
 
+## 授權
+
+本專案採 [MIT License](LICENSE)（Copyright (c) 2026 Minidoracat），涵蓋作者持有權利的全部內容：`MOD/**/media/lua/` 下的 Lua、`scripts/` 下的 Python／PowerShell／Lua 測試、`docs/` 說明文件、翻譯 JSON、`mod.info`／`workshop.txt`／`sandbox-options.txt` 等設定檔，以及自製的封面、介面素材與音訊（`preview.png`、`42/poster.png`、`workshop/preview.gif`、`media/ui/NoticeBoard/*.png`、`media/sound/MinidoracatNBNotify.wav`、`media/sound/MinidoracatNBVoice{CH,EN,JP}.wav`）。
+
+提示音與中／英／日語音由作者確認使用自己的帳號生成並提供；作者就其持有的權利，一併以 MIT 授權。
+
+下列素材含第三方權利，不在 MIT 授權範圍內：
+
+- `docs/screenshots/**`：Project Zomboid 實際遊戲畫面截圖，畫面內容權利屬 The Indie Stone，僅作為本 MOD 的說明用途。
+
+程式碼註解與文件中的 `*.java:行號` 是對 Project Zomboid 引擎行為的出處標註，本倉庫不含任何反編譯原始碼。
+
 ## 作者
 
 Minidoracat — [Discord](https://discord.gg/Gur2V67) | [Twitch](https://www.twitch.tv/minidoracat)
