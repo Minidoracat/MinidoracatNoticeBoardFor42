@@ -45,7 +45,7 @@ An in-game notice board. Write announcements in Markdown, edit the files directl
 [/list]
 
 [h2]☕ Support the author[/h2]
-The mod is free and always will be. If you enjoy it, consider buying me a coffee - tips go straight into servers and mod development.
-[url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url]
+The mod is free and always will be. If you enjoy it, consider buying me a coffee - tips go straight into servers and mod development. Source code is public on GitHub.
+[url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
 [b]#Minidoracat[/b]
