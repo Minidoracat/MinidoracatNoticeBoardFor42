@@ -532,14 +532,85 @@ end
 local findEmphasisStar = makeEmphasisFinder("*", false)
 local findEmphasisUnderscore = makeEmphasisFinder("_", true)
 
+-- autolink `<https://...>`。注意**不是**靠 pattern 與「原生大寫 tag 白名單」互斥擋下來的：
+-- 兩者其實會重疊——`<HTTPS://A.EXAMPLE/X>` 完全符合白名單的
+-- `^<([A-Z][A-Z0-9_]*):[^<>%s]*>$`（name = HTTPS）。真正把它擋住的是 ALLOWED_PARAM_TAG
+-- 這張查表。往那張表加名字前先確認新名字不會意外收下畸形參數。
+-- scheme 限 http/https，與 NBPanel 的連結安全政策一致。
+local function findAutolink(text, from)
+    local position = from
+    while true do
+        local start, stop, uri = string.find(text, "<(%a[%w%+%.%-]*://[^%s<>]*)>", position)
+        if not start then
+            return nil
+        end
+        local scheme = string.match(uri, "^(%a[%w%+%.%-]*)://")
+        if scheme and (string.lower(scheme) == "http" or string.lower(scheme) == "https") then
+            return start, stop, uri, uri
+        end
+        position = start + 1
+    end
+end
+
+local function findBracketLink(text, from)
+    local searchPosition = from
+    while searchPosition <= string.len(text) do
+        local linkStart, linkEnd, label, url = string.find(
+            text,
+            "%[([^%]]-)%]%(([^%)]-)%)",
+            searchPosition
+        )
+        if not linkStart then
+            return nil
+        end
+
+        local previous = ""
+        if linkStart > 1 then
+            previous = string.sub(text, linkStart - 1, linkStart - 1)
+        end
+        if previous ~= "!" and trim(url) ~= "" then
+            return linkStart, linkEnd, label, trim(url)
+        end
+        searchPosition = linkEnd + 1
+    end
+    return nil
+end
+
 -- 索引必須與 INLINE_FINDER 一致；3 與 4（* 與 _）共用 emphasis 分支，故沒有具名常數。
 local KIND_IMAGE = 1
 local KIND_CODE = 2
 local KIND_STRIKE = 5
+local KIND_LINK = 6
+local KIND_AUTOLINK = 7
 local INLINE_FINDER = {
     findImage, findCode, findEmphasisStar, findEmphasisUnderscore, findStrike,
+    findBracketLink, findAutolink,
 }
 local INLINE_KIND_COUNT = #INLINE_FINDER
+-- 上色區的邊界要補 NBSP 的 token 種類（粗體／斜體／連結）。引擎在每個 command token
+-- 處開新 chunk、新 chunk 直接接前一個的右邊緣、文字 token 又一律 string.trim
+-- （ISRichTextPanel.lua:468-474、:497-499、:530），所以 `甲 **乙** 丙` 畫出來是
+-- 「甲乙丙」——原文的空白只有換成 U+00A0 才活得下來（Java String.trim 只剝 <= U+0020，
+-- StringLib.java:1405-1407）。只在原文真的有空白時才補：`(**粗**)` 這種零間距是
+-- CommonMark 合法寫法，不能多出空格。行內程式碼不在這張表：它無條件在內側墊 NBSP
+-- （見 KIND_CODE 分支），再補一次會變成兩個空白寬。
+local PADDED_KIND = {
+    [3] = true, [4] = true, [KIND_LINK] = true, [KIND_AUTOLINK] = true,
+}
+
+-- 把普通文字段「貼著上色 token 那一側」的空白換成單一 NBSP；只動邊界，不動內部。
+local function padColoredEdges(plain, padLeft, padRight)
+    if padRight then
+        local kept = trimTrailing(plain)
+        if kept ~= plain then
+            plain = kept .. MDParser.NBSP
+        end
+    end
+    if padLeft then
+        plain = string.gsub(plain, "^[ \t]+", MDParser.NBSP)
+    end
+    return plain
+end
 
 local renderInline
 
@@ -555,6 +626,11 @@ renderInline = function(text, state, lineNumber)
     local cacheFirst = {}
     local cacheSecond = {}
     local exhausted = {}
+    -- 上一個輸出的 token 是否為上色 token（決定下一段普通文字的左緣要不要補 NBSP）
+    local previousPadded = false
+    -- 整段以上色 token 起頭（第二回傳值）：呼叫端據此決定 bullet／編號／引言記號與它之間
+    -- 的空白要不要換成 NBSP——那個空白在 prefix 裡，這裡看不到。
+    local startsPadded = false
 
     while position <= textLength do
         local kind
@@ -583,14 +659,19 @@ renderInline = function(text, state, lineNumber)
         end
 
         if not best then
-            result[#result + 1] = escapeText(string.sub(text, position))
+            result[#result + 1] = escapeText(padColoredEdges(
+                string.sub(text, position), previousPadded, false))
             break
         end
 
         local tokenStart = cacheStart[best]
         local tokenStop = cacheStop[best]
+        local padded = PADDED_KIND[best]
         if tokenStart > position then
-            result[#result + 1] = escapeText(string.sub(text, position, tokenStart - 1))
+            result[#result + 1] = escapeText(padColoredEdges(
+                string.sub(text, position, tokenStart - 1), previousPadded, padded))
+        elseif position == 1 then
+            startsPadded = padded
         end
 
         if best == KIND_IMAGE then
@@ -662,6 +743,26 @@ renderInline = function(text, state, lineNumber)
         elseif best == KIND_STRIKE then
             -- PZ RichText 沒有刪除線效果（drawText 無此參數，:672），只能吃掉標記顯示純文字
             result[#result + 1] = renderInline(cacheFirst[KIND_STRIKE], state, lineNumber)
+        elseif best == KIND_LINK or best == KIND_AUTOLINK then
+            -- 連結是一般行內元素（CommonMark），不獨占一行。<NBLINK:n>／<NBLINKEND:n> 是
+            -- 引擎的 no-op tag（不在 ISRichTextPanel.lua:17-352 任何子字串比對內），
+            -- NBLinkRichTextPanel:processCommand 在 paginate 時靠它記下 chunk 索引範圍當點擊區；
+            -- 服主手寫的同名 tag 不在白名單、會被轉義成可見文字，不可能相撞（與 NBIMG 同理）。
+            -- 顯示文字不再遞迴解析行內語法（`[**a**](u)` 原樣顯示星號），與舊行為一致。
+            local display = trim(cacheFirst[best])
+            local url = cacheSecond[best]
+            if display == "" then
+                display = url
+            end
+            local linkIndex = #state.links + 1
+            state.links[linkIndex] = {
+                text = plainText(display),
+                url = plainText(url),
+            }
+            local serial = integerToString(linkIndex)
+            result[#result + 1] = " <NBLINK:" .. serial .. "> "
+                .. MDParser.LINK_PREFIX .. escapeText(display) .. MDParser.LINK_SUFFIX
+                .. " <NBLINKEND:" .. serial .. "> "
         else
             local level = cacheSecond[best]
             local inner = renderInline(cacheFirst[best], state, lineNumber)
@@ -675,119 +776,11 @@ renderInline = function(text, state, lineNumber)
                     .. inner .. MDParser.ITALIC_SUFFIX .. MDParser.BOLD_SUFFIX
             end
         end
+        previousPadded = padded
         position = tokenStop + 1
     end
 
-    if text == "" then
-        return ""
-    end
-    return table.concat(result)
-end
-
--- autolink `<https://...>`。注意**不是**靠 pattern 與「原生大寫 tag 白名單」互斥擋下來的：
--- 兩者其實會重疊——`<HTTPS://A.EXAMPLE/X>` 完全符合白名單的
--- `^<([A-Z][A-Z0-9_]*):[^<>%s]*>$`（name = HTTPS）。真正把它擋住的是 ALLOWED_PARAM_TAG
--- 這張查表。往那張表加名字前先確認新名字不會意外收下畸形參數。
--- scheme 限 http/https，與 NBPanel 的連結安全政策一致。
-local function findAutolink(text, from)
-    local position = from
-    while true do
-        local start, stop, uri = string.find(text, "<(%a[%w%+%.%-]*://[^%s<>]*)>", position)
-        if not start then
-            return nil
-        end
-        local scheme = string.match(uri, "^(%a[%w%+%.%-]*)://")
-        if scheme and (string.lower(scheme) == "http" or string.lower(scheme) == "https") then
-            return start, stop, uri, uri
-        end
-        position = start + 1
-    end
-end
-
-local function findBracketLink(text, from)
-    local searchPosition = from
-    while searchPosition <= string.len(text) do
-        local linkStart, linkEnd, label, url = string.find(
-            text,
-            "%[([^%]]-)%]%(([^%)]-)%)",
-            searchPosition
-        )
-        if not linkStart then
-            return nil
-        end
-
-        local previous = ""
-        if linkStart > 1 then
-            previous = string.sub(text, linkStart - 1, linkStart - 1)
-        end
-        if previous ~= "!" and trim(url) ~= "" then
-            return linkStart, linkEnd, label, trim(url)
-        end
-        searchPosition = linkEnd + 1
-    end
-    return nil
-end
-
-local LINK_FINDER = { findBracketLink, findAutolink }
-
--- 與 renderInline 同一套快取策略：每種搜尋器只在快取落後於 from 時重掃，掃不到就標 done。
--- 文件裡缺哪一種，那一種若每輪都重掃剩餘字串就是 O(n^2)——段落合併之後，
--- 「連續 N 行、每行一個連結」會被併成單一超長邏輯行，正好餵中這條路徑。
-local function newLinkCache()
-    return { start = {}, stop = {}, label = {}, url = {}, done = {} }
-end
-
-local function findNextLink(text, from, cache)
-    local kind
-    for kind = 1, #LINK_FINDER do
-        if not cache.done[kind] and (cache.start[kind] == nil or cache.start[kind] < from) then
-            local start, stop, label, url = LINK_FINDER[kind](text, from)
-            if start == nil then
-                cache.done[kind] = true
-                cache.start[kind] = nil
-            else
-                cache.start[kind] = start
-                cache.stop[kind] = stop
-                cache.label[kind] = label
-                cache.url[kind] = url
-            end
-        end
-    end
-
-    local best = nil
-    for kind = 1, #LINK_FINDER do
-        if cache.start[kind] ~= nil
-            and (best == nil or cache.start[kind] < cache.start[best]) then
-            best = kind
-        end
-    end
-    if best == nil then
-        return nil
-    end
-    return cache.start[best], cache.stop[best], cache.label[best], cache.url[best]
-end
-
--- 行內程式碼區間表（start1, stop1, start2, stop2, ...）。
--- renderContentLine 必須在 renderInline **之前**就掃連結（連結要獨占邏輯行），
--- 所以 findCode 沒機會先手，連結搜尋得自己跳過落在 code span 內的位置；
--- 否則 `` `[a](b)` `` 會被拆成一個可點擊連結、兩個反引號漏成可見文字，
--- 而且多個 code span 的分隔符會互相錯配（CommonMark：code span 內不解析任何行內語法）。
-local function codeSpanBounds(text)
-    if string.find(text, "`", 1, true) == nil then
-        return nil
-    end
-    local bounds = nil
-    local from = 1
-    while true do
-        local start, stop = findCode(text, from)
-        if start == nil then
-            return bounds
-        end
-        bounds = bounds or {}
-        bounds[#bounds + 1] = start
-        bounds[#bounds + 1] = stop
-        from = stop + 1
-    end
+    return table.concat(result), startsPadded
 end
 
 local function appendLogicalLine(state, text)
@@ -795,73 +788,14 @@ local function appendLogicalLine(state, text)
 end
 
 local function renderContentLine(content, prefix, state)
-    local position = 1
-    local prefixPending = prefix
-    local emitted = false
-
-    local function emitInline(fragment)
-        local lineNumber = #state.lines + 1
-        appendLogicalLine(state, prefixPending .. renderInline(fragment, state, lineNumber))
-        prefixPending = ""
-        emitted = true
+    local rendered, startsPadded = renderInline(content, state, #state.lines + 1)
+    -- `- **粗**`／`1. [連結](u)`／`> *斜*`：記號與上色區之間的空白在 prefix 尾端，
+    -- 同樣會被引擎 trim 掉，換成 NBSP。只認「可見記號＋空白」收尾的 prefix；
+    -- 段落／標題的 prefix 以 tag 收尾，補了反而會在行首多出一個 NBSP 寬的縮排。
+    if startsPadded and string.match(prefix, "[^%s>]%s+$") ~= nil then
+        prefix = trimTrailing(prefix) .. MDParser.NBSP
     end
-
-    local function emitLink(label, url)
-        local display = trim(label)
-        if display == "" then
-            display = url
-        end
-
-        local lineNumber = #state.lines + 1
-        local rendered = MDParser.LINK_PREFIX
-            .. escapeText(display)
-            .. MDParser.LINK_SUFFIX
-        appendLogicalLine(state, prefixPending .. rendered)
-        prefixPending = ""
-        state.links[#state.links + 1] = {
-            text = plainText(display),
-            url = plainText(url),
-            line = lineNumber,
-        }
-        emitted = true
-    end
-
-    local bounds = codeSpanBounds(content)
-    local boundIndex = 1
-    local cache = newLinkCache()
-    local searchFrom = 1
-    while searchFrom <= string.len(content) do
-        local linkStart, linkEnd, label, url = findNextLink(content, searchFrom, cache)
-        if not linkStart then
-            break
-        end
-
-        -- bounds 與 searchFrom 都只往前走，所以這個推進是攤還線性的
-        while bounds ~= nil and bounds[boundIndex] ~= nil
-            and bounds[boundIndex + 1] < linkStart do
-            boundIndex = boundIndex + 2
-        end
-        if bounds ~= nil and bounds[boundIndex] ~= nil and bounds[boundIndex] <= linkStart then
-            -- 連結落在行內程式碼內：整個 code span 跳過，內容留給 renderInline 當程式碼渲染
-            searchFrom = bounds[boundIndex + 1] + 1
-        else
-            local before = trim(string.sub(content, position, linkStart - 1))
-            if before ~= "" then
-                emitInline(before)
-            end
-            emitLink(label, url)
-            position = linkEnd + 1
-            searchFrom = position
-        end
-    end
-
-    local remainder = string.sub(content, position)
-    if emitted then
-        remainder = trim(remainder)
-    end
-    if remainder ~= "" or not emitted then
-        emitInline(remainder)
-    end
+    appendLogicalLine(state, prefix .. rendered)
 end
 
 -- ---------------------------------------------------------------------------

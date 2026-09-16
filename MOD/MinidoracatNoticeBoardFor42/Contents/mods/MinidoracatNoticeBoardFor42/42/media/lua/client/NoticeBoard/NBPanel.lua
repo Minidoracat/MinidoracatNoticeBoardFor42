@@ -182,26 +182,6 @@ local function trim(text)
     return string.gsub(text, "%s+$", "")
 end
 
-local function normalizeVisibleText(text)
-    text = tostring(text or "")
-    text = string.gsub(text, "<[A-Z][A-Z0-9_]*:[^<>]*>", "")
-    text = string.gsub(text, "<[A-Z][A-Z0-9_]*>", "")
-    text = string.gsub(text, "&lt;", "<")
-    text = string.gsub(text, "&gt;", ">")
-    text = string.gsub(text, "%s+", " ")
-    return trim(text)
-end
-
--- 清單項開頭的記號不是連結文字的一部分：無序是 MDParser 統一產生的 "- "，
--- 有序是自動編號的 "n. "。渲染側與 link.text 側**必須用同一份規則**——只剝一邊的話，
--- 顯示文字本身以 "- " 或 "N. " 開頭的連結（`[1. 規則](url)`）會永遠比不到，點不出區域。
-local function strippedVisibleText(text)
-    local result = normalizeVisibleText(text)
-    result = string.gsub(result, "^%-%s*", "")
-    result = string.gsub(result, "^%d+%.%s*", "")
-    return result
-end
-
 -- 依像素寬度截斷並補省略號。標準 Lua 測試字串是 UTF-8 bytes；Kahlua 字串則以
 -- UTF-16 code unit 索引。呼叫端先用 NBCore.utf16Length 判斷這份字串是否需要走 UTF-8 邊界，
 -- Kahlua 路徑則在尾端是 low surrogate 時連同前一個 high surrogate 一起移除。
@@ -271,21 +251,6 @@ local function replaceAllLiteral(text, needle, replacement)
     return table.concat(result)
 end
 
-local function splitLogicalLines(text)
-    local lines = {}
-    local position = 1
-    while true do
-        local first, last = string.find(text, "<LINE>", position, true)
-        if not first then
-            lines[#lines + 1] = string.sub(text, position)
-            break
-        end
-        lines[#lines + 1] = string.sub(text, position, first - 1)
-        position = last + 1
-    end
-    return lines
-end
-
 -- 只接受形狀合法、長度有界的 http(s) URL 進剪貼簿；擋掉 javascript:/file: 與控制字元 payload。
 local function isCopyableUrl(url)
     return type(url) == "string"
@@ -312,6 +277,9 @@ end
 local NBLinkRichTextPanel = ISRichTextPanel:derive("NBLinkRichTextPanel")
 
 function NBLinkRichTextPanel:paginate()
+    -- 連結的 chunk 索引範圍由 processCommand 在這一輪 paginate 內填入，每輪重來
+    self.linkChunkStart = {}
+    self.linkChunkStop = {}
     local ok, pageError = pcall(function()
         ISRichTextPanel.paginate(self)
     end)
@@ -448,6 +416,21 @@ end
 -- 原因：paginate 以空白切 token（ISRichTextPanel.lua:459），玩家家目錄含空白時
 -- 直接把絕對路徑寫進標記會被切斷；到了 processCommand 這層已經不再經過 tokenizer，換路徑才安全。
 function NBLinkRichTextPanel:processCommand(command, x, y, lineImageHeight, lineHeight)
+    -- 連結標記 <NBLINK:n>／<NBLINKEND:n>（MDParser 的 link 分支產生）：引擎剛為這個
+    -- command 開了新 chunk、self.currentLine 就是它的索引（ISRichTextPanel.lua:469-486）。
+    -- 連結文字落在 (start, stop) 開區間內的非空 chunk——自動折行會拆成多個 chunk，
+    -- 每一個都在區間內。原生實作對這兩個 tag 沒有任何分支，不必再往下呼叫。
+    local openIndex = string.match(command, "^NBLINK:(%d+)$")
+    if openIndex then
+        self.linkChunkStart[tonumber(openIndex)] = self.currentLine
+        return x, y, lineImageHeight
+    end
+    local closeIndex = string.match(command, "^NBLINKEND:(%d+)$")
+    if closeIndex then
+        self.linkChunkStop[tonumber(closeIndex)] = self.currentLine
+        return x, y, lineImageHeight
+    end
+
     -- rest 是預檢算好的 ",寬,高"（縮放用），原樣保留交給原生實作。
     -- 兩種標記都要接，但**主要路徑是 IMAGE**：markdown 的 `![]()` 由 preflightImages 換成
     -- <IMAGE:>（靠左的行內元素，不用會強制水平置中的 IMAGECENTRE——見 MDParser 的 NBIMG 註解）；
@@ -1309,7 +1292,6 @@ function NBPanel:renderSelected(markRead)
     if not entry then
         self.contentState = "empty"
         self.currentParsed = nil
-        self.currentRenderedText = nil
         self.linkHitRegions = {}
         self.richText:setVisible(false)
         return
@@ -1320,7 +1302,6 @@ function NBPanel:renderSelected(markRead)
         local parsed = Parser.parse(entry.file.content)
         local rendered = self:preflightImages(parsed)
         self.currentParsed = parsed
-        self.currentRenderedText = rendered
         self.contentState = "ready"
         self.contentError = nil
         self.richText.text = rendered
@@ -1348,9 +1329,14 @@ function NBPanel:renderSelected(markRead)
     end
 end
 
-function NBPanel:collectRenderedGroups()
+-- 每個非空 chunk 的內容座標框（boxes[chunkIndex] = {x1, x2, y1, y2}）。
+-- 座標照 render 的算法（ISRichTextPanel.lua:604-665）：font／orient 跨 chunk 沿用；
+-- 置中的位移是整行（同一 lineY 的所有 chunk 寬度總和）在 render 當下才算出來的，
+-- 這裡照樣算一次；靠右同理。
+function NBPanel:collectChunkBoxes()
     local richText = self.richText
-    local groups = {}
+    local parts = {}
+    local rowWidth = {}
     local font = richText.defaultFont
     local orientation = "left"
     local index
@@ -1362,174 +1348,74 @@ function NBPanel:collectRenderedGroups()
             orientation = richText.orient[index]
         end
 
-        local y = richText.lineY[index] or 0
-        local group = groups[#groups]
-        if not group or group.y ~= y then
-            group = {
-                y = y,
-                parts = {},
-                textParts = {},
-                indices = {},
-                maxFontHeight = 0,
-            }
-            groups[#groups + 1] = group
-        end
-
-        local text = trim(richText.lines[index] or "")
+        local text = richText.lines[index] or ""
         if text ~= "" then
+            local y = richText.lineY[index] or 0
             local width = getTextManager():MeasureStringX(font, text)
-            local fontHeight = getTextManager():getFontHeight(font)
-            group.parts[#group.parts + 1] = {
+            rowWidth[y] = (rowWidth[y] or 0) + width
+            parts[#parts + 1] = {
                 index = index,
-                text = text,
+                y = y,
                 width = width,
                 lineX = richText.lineX[index] or 0,
-                font = font,
+                height = getTextManager():getFontHeight(font),
                 orientation = orientation,
             }
-            group.textParts[#group.textParts + 1] = text
-            group.indices[#group.indices + 1] = index
-            if fontHeight > group.maxFontHeight then
-                group.maxFontHeight = fontHeight
-            end
         end
     end
 
-    local groupIndex
-    for groupIndex = 1, #groups do
-        local group = groups[groupIndex]
-        group.text = normalizeVisibleText(table.concat(group.textParts, " "))
-        if #group.parts > 0 then
-            local lineLength = 0
-            local partIndex
-            for partIndex = 1, #group.parts do
-                lineLength = lineLength + group.parts[partIndex].width
-            end
-            local centerX = richText.marginLeft
-                + (richText.width - richText.marginLeft - richText.marginRight - lineLength) / 2
-            local minimumX = nil
-            local maximumX = nil
-            for partIndex = 1, #group.parts do
-                local part = group.parts[partIndex]
-                local x1
-                local x2
-                if part.orientation == "centre" then
-                    x1 = centerX + part.lineX
-                    x2 = x1 + part.width
-                elseif part.orientation == "right" then
-                    x2 = richText.marginLeft + part.lineX
-                    x1 = x2 - part.width
-                else
-                    x1 = richText.marginLeft + part.lineX
-                    x2 = x1 + part.width
-                end
-                minimumX = minimumX and math.min(minimumX, x1) or x1
-                maximumX = maximumX and math.max(maximumX, x2) or x2
-            end
-            group.segment = {
-                x1 = minimumX,
-                x2 = maximumX,
-                y1 = group.y + richText.marginTop,
-                y2 = group.y + richText.marginTop + group.maxFontHeight,
-            }
+    local boxes = {}
+    local partIndex
+    for partIndex = 1, #parts do
+        local part = parts[partIndex]
+        local x1
+        if part.orientation == "centre" then
+            x1 = richText.marginLeft + part.lineX
+                + (richText.width - richText.marginLeft - richText.marginRight - rowWidth[part.y]) / 2
+        elseif part.orientation == "right" then
+            x1 = richText.marginLeft + part.lineX - part.width
+        else
+            x1 = richText.marginLeft + part.lineX
         end
+        boxes[part.index] = {
+            x1 = x1,
+            x2 = x1 + part.width,
+            y1 = part.y + richText.marginTop,
+            y2 = part.y + richText.marginTop + part.height,
+        }
     end
-    return groups
+    return boxes
 end
 
-local function firstCandidateGroup(groups, logicalLines, logicalLine)
-    local nonEmptyBefore = 0
-    local index
-    for index = 1, math.max(0, (logicalLine or 1) - 1) do
-        if normalizeVisibleText(logicalLines[index] or "") ~= "" then
-            nonEmptyBefore = nonEmptyBefore + 1
-        end
-    end
-
-    local seen = 0
-    for index = 1, #groups do
-        if groups[index].text ~= "" then
-            if seen >= nonEmptyBefore then
-                return index
-            end
-            seen = seen + 1
-        end
-    end
-    return 1
-end
-
-local function matchLinkGroups(groups, startIndex, target)
-    local candidateStart
-    for candidateStart = startIndex, #groups do
-        if groups[candidateStart].text ~= "" then
-            local combined = ""
-            local candidateEnd
-            for candidateEnd = candidateStart, #groups do
-                local groupText = groups[candidateEnd].text
-                if groupText == "" then
-                    if combined ~= "" then
-                        break
-                    end
-                else
-                    if combined == "" then
-                        combined = groupText
-                    else
-                        combined = combined .. " " .. groupText
-                    end
-                    local comparable = strippedVisibleText(combined)
-                    if comparable == target then
-                        return candidateStart, candidateEnd
-                    end
-                    if string.len(comparable) > string.len(target)
-                        or string.sub(target, 1, string.len(comparable)) ~= comparable then
-                        break
-                    end
-                end
-            end
-        end
-    end
-    return nil, nil
-end
-
+-- 連結 n 的 chunk 範圍由 NBLinkRichTextPanel:processCommand 在 paginate 時記下
+-- （<NBLINK:n> 與 <NBLINKEND:n> 各自佔的空 chunk 索引），連結文字就是開區間內的非空 chunk。
+-- 不再靠可見文字比對：連結現在是行內元素，同一視覺行上會有其他文字。
 function NBPanel:rebuildLinkHitRegions()
     self.linkHitRegions = {}
-    if not self.currentParsed or not self.currentRenderedText then
+    if not self.currentParsed then
         return
     end
 
-    local groups = self:collectRenderedGroups()
-    local logicalLines = splitLogicalLines(self.currentRenderedText)
-    local cursor = 1
+    local richText = self.richText
+    local boxes = self:collectChunkBoxes()
     local linkIndex
     for linkIndex = 1, #self.currentParsed.links do
-        local link = self.currentParsed.links[linkIndex]
-        local target = strippedVisibleText(link.text)
-        local minimum = firstCandidateGroup(groups, logicalLines, link.line)
-        if minimum < cursor then
-            minimum = cursor
-        end
-        local first, last = matchLinkGroups(groups, minimum, target)
-        if first then
+        local first = richText.linkChunkStart[linkIndex]
+        local last = richText.linkChunkStop[linkIndex]
+        if first and last then
             local region = {
-                text = link.text,
-                url = link.url,
-                logicalLine = link.line,
+                url = self.currentParsed.links[linkIndex].url,
                 segments = {},
                 indices = {},
             }
-            local groupIndex
-            for groupIndex = first, last do
-                local group = groups[groupIndex]
-                if group.segment then
-                    region.segments[#region.segments + 1] = group.segment
-                end
-                local index
-                for index = 1, #group.indices do
-                    region.indices[#region.indices + 1] = group.indices[index]
+            local index
+            for index = first + 1, last - 1 do
+                if boxes[index] then
+                    region.segments[#region.segments + 1] = boxes[index]
+                    region.indices[#region.indices + 1] = index
                 end
             end
             self.linkHitRegions[#self.linkHitRegions + 1] = region
-            cursor = last + 1
         end
     end
 end

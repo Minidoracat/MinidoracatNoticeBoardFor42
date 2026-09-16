@@ -264,7 +264,7 @@ checkEqual(
 -- 沒有跟著 `](...)` 的字面 ![ 也不成立。兩者都得留在置中的 <H1>。
 checkEqual(
     norm(MDParser.safeParse("# \\![替代](images/x.png)").richText),
-    "<H1> <RGB:1,1,1> <INDENT:0> ! <LINE> <PUSHRGB:0.35,0.65,1> 替代 <POPRGB>",
+    "<H1> <RGB:1,1,1> <INDENT:0> ! <NBLINK:1> <PUSHRGB:0.35,0.65,1> 替代 <POPRGB> <NBLINKEND:1>",
     "逸出的 \\![ 不是圖片，H1 必須維持置中"
 )
 checkEqual(
@@ -304,11 +304,47 @@ checkEqual(
     "含手寫 <IMAGE:> 的 H2 產出必須完全不變"
 )
 
+-- 上色區的邊界：引擎在每個 command token 處開新 chunk 且新 chunk 直接接前一個的右邊緣
+-- （ISRichTextPanel.lua:468-474、:530），文字 token 一律 string.trim（:497-499），
+-- 所以原文的空白只有換成 NBSP 才畫得出來（玩家回報「粗體前後的空格消失」）。
+-- NBSP 落在**普通文字那一側**（不在上色區內），且只在原文真有空白時才補。
 local bold = MDParser.safeParse("一般 **重點** 結尾")
 checkEqual(
     norm(bold.richText),
-    "<TEXT> <INDENT:0> 一般 <PUSHRGB:1,0.85,0.4> 重點 <POPRGB> 結尾",
+    "<TEXT> <INDENT:0> 一般" .. NBSP .. " <PUSHRGB:1,0.85,0.4> 重點 <POPRGB> " .. NBSP .. "結尾",
     "粗體映射錯誤"
+)
+-- 零間距是 CommonMark 合法寫法（括號／標點緊貼），不得憑空多出空白
+checkEqual(
+    norm(MDParser.safeParse("(**重點**)").richText),
+    "<TEXT> <INDENT:0> ( <PUSHRGB:1,0.85,0.4> 重點 <POPRGB> )",
+    "原文沒有空白時不得補 NBSP"
+)
+-- 兩個上色區之間只有一個空白：左右兩條規則落在同一個字元上，不得變成兩個 NBSP
+checkEqual(
+    norm(MDParser.safeParse("**甲** **乙**").richText),
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.85,0.4> 甲 <POPRGB> " .. NBSP .. " <PUSHRGB:1,0.85,0.4> 乙 <POPRGB>",
+    "相鄰上色區之間的單一空白只換成一個 NBSP"
+)
+-- 行首／行尾的上色區沒有相鄰空白，不補；段落 prefix 以 tag 收尾也不補（否則行首多一格縮排）
+checkEqual(
+    norm(MDParser.safeParse("**開頭** 中 **結尾**").richText),
+    "<TEXT> <INDENT:0> <PUSHRGB:1,0.85,0.4> 開頭 <POPRGB> " .. NBSP .. "中" .. NBSP .. " <PUSHRGB:1,0.85,0.4> 結尾 <POPRGB>",
+    "行首行尾的上色區不得補 NBSP"
+)
+-- bullet／編號／引言記號與上色區之間的空白在 prefix 尾端，同樣要換成 NBSP
+checkEqual(
+    norm(MDParser.safeParse("- **粗**\n> *斜*").richText),
+    "<TEXT> <INDENT:20> -" .. NBSP .. " <PUSHRGB:1,0.85,0.4> 粗 <POPRGB> <LINE>"
+        .. " <TEXT> <INDENT:20> <RGB:0.6,0.6,0.6> |" .. NBSP .. " <PUSHRGB:0.6,0.9,0.6> 斜 <POPRGB>",
+    "清單／引言記號與上色區之間要有 NBSP"
+)
+-- 巢狀：內層的邊界在遞迴那一層處理，外層的邊界照外層原文判
+checkEqual(
+    norm(MDParser.safeParse("甲 **乙 *丙* 丁** 戊").richText),
+    "<TEXT> <INDENT:0> 甲" .. NBSP .. " <PUSHRGB:1,0.85,0.4> 乙" .. NBSP
+        .. " <PUSHRGB:0.6,0.9,0.6> 丙 <POPRGB> " .. NBSP .. "丁 <POPRGB> " .. NBSP .. "戊",
+    "巢狀上色區的每一層邊界都要補 NBSP"
 )
 
 local list = MDParser.safeParse("    - 巢狀項目")
@@ -344,28 +380,55 @@ checkEqual(
     "非大寫原生 tag 不得注入 RichText"
 )
 
+-- 連結是行內元素（CommonMark），不再獨占 RichText 行；點擊區靠 <NBLINK:n>…<NBLINKEND:n>
+-- 標記在 paginate 時記 chunk 範圍（驗在 test_nbpanel.lua），邊界空白規則與粗體相同。
 local link = MDParser.safeParse("前文 [網站](https://example.com/path) 後文")
 check(link.ok, "連結 parser 不應失敗")
 checkEqual(#link.links, 1, "連結表筆數錯誤")
 checkEqual(link.links[1].text, "網站", "連結顯示文字錯誤")
 checkEqual(link.links[1].url, "https://example.com/path", "連結 URL 錯誤")
-checkEqual(link.links[1].line, 2, "獨行化後 link 行號錯誤")
 checkEqual(
     norm(link.richText),
-    "<TEXT> <INDENT:0> 前文 <LINE> <PUSHRGB:0.35,0.65,1> 網站 <POPRGB> <LINE> 後文",
-    "連結必須與前後文字分成獨立 RichText 行"
+    "<TEXT> <INDENT:0> 前文" .. NBSP .. " <NBLINK:1> <PUSHRGB:0.35,0.65,1> 網站 <POPRGB> <NBLINKEND:1> "
+        .. NBSP .. "後文",
+    "連結必須留在同一 RichText 行，並以 NBLINK 標記包住"
 )
 
 local twoLinks = MDParser.safeParse("[甲](https://a.example) 和 [乙](https://b.example)")
 checkEqual(#twoLinks.links, 2, "同一來源行的多個 link 都必須收集")
-checkEqual(twoLinks.links[1].line, 1, "第一個 link 行號錯誤")
-checkEqual(twoLinks.links[2].line, 3, "第二個 link 應在獨立行")
 checkEqual(
     norm(twoLinks.richText),
-    "<TEXT> <INDENT:0> <PUSHRGB:0.35,0.65,1> 甲 <POPRGB> <LINE> 和 <LINE>"
-        .. " <PUSHRGB:0.35,0.65,1> 乙 <POPRGB>",
-    "多 link 獨行化錯誤"
+    "<TEXT> <INDENT:0> <NBLINK:1> <PUSHRGB:0.35,0.65,1> 甲 <POPRGB> <NBLINKEND:1> "
+        .. NBSP .. "和" .. NBSP .. " <NBLINK:2> <PUSHRGB:0.35,0.65,1> 乙 <POPRGB> <NBLINKEND:2>",
+    "多 link 的標記序號必須與 links[] 索引對齊"
 )
+-- 主 chunk 的區域變數貼著 Lua 的 200 上限，這一段用立即呼叫的函式包起來。
+;(function()
+    -- 連結可以落在粗體裡（舊版會把粗體切成兩行而失效）；連結文字本身不再遞迴解析
+    local boldLink = MDParser.safeParse("**見 [這裡](https://a.example) 說明** 完")
+    checkEqual(#boldLink.links, 1, "粗體內的連結必須收集")
+    checkEqual(boldLink.links[1].text, "這裡", "粗體內的連結顯示文字錯誤")
+    checkEqual(
+        norm(boldLink.richText),
+        "<TEXT> <INDENT:0> <PUSHRGB:1,0.85,0.4> 見" .. NBSP
+            .. " <NBLINK:1> <PUSHRGB:0.35,0.65,1> 這裡 <POPRGB> <NBLINKEND:1> "
+            .. NBSP .. "說明 <POPRGB> " .. NBSP .. "完",
+        "粗體內的連結必須維持巢狀"
+    )
+    checkEqual(
+        norm(MDParser.safeParse("[**a**](https://a.example)").richText),
+        "<TEXT> <INDENT:0> <NBLINK:1> <PUSHRGB:0.35,0.65,1> **a** <POPRGB> <NBLINKEND:1>",
+        "連結文字內的行內語法原樣顯示"
+    )
+    -- 服主手寫的同名 tag 不在白名單，會被轉義，不可能與 parser 產生的標記相撞
+    local fakeMark = MDParser.safeParse("<NBLINK:1> 假 <NBLINKEND:1>")
+    checkEqual(#fakeMark.links, 0, "手寫的 NBLINK 不是連結")
+    checkEqual(
+        norm(fakeMark.richText),
+        "<TEXT> <INDENT:0> &lt;NBLINK:1&gt; 假 &lt;NBLINKEND:1&gt;",
+        "手寫的 NBLINK 標記必須轉義成可見文字"
+    )
+end)()
 
 local image = MDParser.safeParse("前綴 ![公告圖](media/textures/notice.png) 後綴")
 check(image.ok, "圖片 parser 不應失敗")
@@ -1259,8 +1322,10 @@ checkEqual(
 )
 checkNoTextLost("執行 `abc` 完成", { "執行", "abc", "完成" }, "行內程式碼")
 -- 反引號保留在上色區內當視覺邊界（見 MDParser 的 KIND_CODE 分支）：引擎在 command
--- token 處開新 chunk 且新 chunk 直接接前一個的右邊緣，所以上色區兩側零間距；空白
--- 救不了（trim 吃掉）、多位元組空白會亂碼（實測 U+00A0 渲染成 "Â"）。
+-- token 處開新 chunk 且新 chunk 直接接前一個的右邊緣，所以上色區兩側零間距；一般空白
+-- 救不了（trim 吃掉），只有 NBSP 活得下來——而且**沒有空白的原文也要有邊界**，所以行內
+-- 程式碼無條件在內側墊（粗體／斜體／連結則只在原文有空白時才補，見上方 bold 一節）。
+-- NBSP 必須是單一 string.char(0xA0)：拆成 UTF-8 兩個位元組實機會畫出 "Â"。
 checkEqual(
     norm(MDParser.safeParse("顯示尺寸：`=600x200`（寬x高）").richText),
     "<TEXT> <INDENT:0> 顯示尺寸： <PUSHRGB:1,0.7,0.85> " .. NBSP .. "`=600x200`" .. NBSP .. " <POPRGB> （寬x高）",
@@ -1297,8 +1362,8 @@ checkNoTextLost("```\nplain code\n```", { "plain code" }, "圍欄程式碼區塊
 -- 斜體只能用顏色；'_' 必須有 intra-word 守衛，否則 snake_case_name 會被吃掉
 checkEqual(
     norm(MDParser.safeParse("甲 *斜體* 乙 _斜體二_ 丙 snake_case_name").richText),
-    "<TEXT> <INDENT:0> 甲 <PUSHRGB:0.6,0.9,0.6> 斜體 <POPRGB> 乙"
-        .. " <PUSHRGB:0.6,0.9,0.6> 斜體二 <POPRGB> 丙 snake_case_name",
+    "<TEXT> <INDENT:0> 甲" .. NBSP .. " <PUSHRGB:0.6,0.9,0.6> 斜體 <POPRGB> " .. NBSP .. "乙" .. NBSP
+        .. " <PUSHRGB:0.6,0.9,0.6> 斜體二 <POPRGB> " .. NBSP .. "丙 snake_case_name",
     "斜體映射或 intra-word 守衛錯誤"
 )
 checkEqual(
@@ -1362,8 +1427,9 @@ checkEqual(autolink.links[1].text, "https://example.com/a", "autolink 顯示文�
 checkEqual(autolink.links[1].url, "https://example.com/a", "autolink URL 錯誤")
 checkEqual(
     norm(autolink.richText),
-    "<TEXT> <INDENT:0> 見 <LINE> <PUSHRGB:0.35,0.65,1> https://example.com/a <POPRGB> <LINE> 完",
-    "autolink 必須與一般連結同樣獨行化"
+    "<TEXT> <INDENT:0> 見" .. NBSP .. " <NBLINK:1> <PUSHRGB:0.35,0.65,1> https://example.com/a <POPRGB> <NBLINKEND:1> "
+        .. NBSP .. "完",
+    "autolink 必須與一般連結同樣行內化"
 )
 local badScheme = MDParser.safeParse("<ftp://example.com/a>")
 checkEqual(#badScheme.links, 0, "非 http/https 的 autolink 不得成為連結")
@@ -1387,8 +1453,8 @@ checkEqual(
 )
 checkNoTextLost("甲 ~~刪除~~ 乙", { "甲", "刪除", "乙" }, "刪除線")
 
--- 行內程式碼必須擋住連結與 autolink：renderContentLine 在 renderInline 之前就掃連結
--- （連結要獨占邏輯行），findCode 沒機會先手，所以連結搜尋要自己跳過 code span。
+-- 行內程式碼必須擋住連結與 autolink：連結與 code span 同在 renderInline 的 finder 表裡，
+-- 最靠左的 token 勝出，code span 的反引號在前就整段吃掉（CommonMark：code span 內不解析）。
 local codeLink = MDParser.safeParse("`[a](b)`")
 checkEqual(#codeLink.links, 0, "行內程式碼內的連結不得成為可點擊連結")
 checkEqual(
@@ -1457,13 +1523,13 @@ checkEqual(
     "`- ---` 必須是分隔線（CommonMark 規定 thematic break 優先於清單項）"
 )
 
--- 清單項內的連結：NBPanel:matchLinkGroups 會剝除 "- " 與 "n. " 才比對得到
+-- 清單項內的連結：編號與連結之間的空白在 prefix 尾端，一樣要換成 NBSP
 local listLink = MDParser.safeParse("1. [站台](https://a.example)")
 checkEqual(#listLink.links, 1, "有序清單項內的連結必須收集")
 checkEqual(listLink.links[1].text, "站台", "有序清單項內的連結顯示文字錯誤")
 checkEqual(
     norm(listLink.richText),
-    "<TEXT> <INDENT:20> 1. <PUSHRGB:0.35,0.65,1> 站台 <POPRGB>",
+    "<TEXT> <INDENT:20> 1." .. NBSP .. " <NBLINK:1> <PUSHRGB:0.35,0.65,1> 站台 <POPRGB> <NBLINKEND:1>",
     "有序清單項內的連結映射錯誤"
 )
 

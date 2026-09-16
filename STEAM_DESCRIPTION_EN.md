@@ -22,6 +22,15 @@ An in-game notice board. Write announcements in Markdown, edit the files directl
 [*] [b]Display size and storage are both under your control[/b]: the Markdown image syntax takes an explicit display size (give only width or height and the other side follows the original aspect ratio); image count, per-file size and total budget are sandbox options, while the client-side cache is bounded, evicts the least recently used images automatically, and resumes an interrupted transfer from the missing part instead of restarting it
 [/list]
 
+[h2]⚠️ Display limitations and trade-offs[/h2]
+Notices are rendered by the game's built-in text panel, which only knows two styles: color and font size. It has no bold, italic, monospace or strikethrough fonts. Getting a real bold font in there would mean either replacing a font that other game screens already use (changing those screens too), or shipping our own bold fonts and doing the layout ourselves — and since notices support every language the game does, that means a separate font set per script just like the game itself (Chinese, Japanese, Korean, Thai, Cyrillic, ... one per font-size setting; the Chinese set alone is 10,000+ glyphs and tens of MB), and any script we missed would simply render blank. We decided that isn't worth it, so styles are shown as colors instead:
+[list]
+[*] [b]Bold[/b] shows as amber text, [b]italic[/b] as green text, and [b]inline code[/b] as pink text (backticks are kept as a visual boundary)
+[*] [b]Strikethrough[/b] only removes the ~~ markers and shows the text as-is; [b]tables[/b] are not supported
+[*] The built-in fonts have no emoji glyphs, so never rely on emoji alone for important information
+[/list]
+Headings, lists, quotes, rules, links and images all work as expected; the full syntax and difference list is in the admin guide on GitHub.
+
 [h2]🔗 MOD Series[/h2]
 [list]
 [*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]

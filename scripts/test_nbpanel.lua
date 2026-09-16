@@ -1638,6 +1638,80 @@ end)()
     check(panel:findLinkAt(20, 130) == nil, "區域外不命中")
 end)()
 
+-- 行內連結的點擊區，跑在真的 paginate 上：區域只能覆蓋連結文字本身的 chunk
+-- （同一視覺行上的前後文字不得命中），折行的連結要有多個 segment，粗體內的連結照樣成立。
+-- chunk 範圍來自 NBLinkRichTextPanel:processCommand 記下的 <NBLINK:n>／<NBLINKEND:n> 索引。
+-- 幾何常數：每字 8px、行高 18px、marginLeft 20、marginTop 10、可用寬 570px（見檔頭 stub）。
+;(function()
+    local function layout(markdown)
+        local owner = NBPanel:new()
+        local richText = newRichText()
+        owner.richText = richText
+        richText.owner = owner
+        local parsed = MDParser.parse(markdown)
+        owner.currentParsed = parsed
+        richText.text = owner:preflightImages(parsed)
+        local ok, pageError = richText:paginate()
+        check(ok, "paginate 拋錯：" .. tostring(pageError))
+        return owner, richText
+    end
+
+    -- 同一行：`before␣` 佔 7 字 = 56px，連結 "Site" 從 x=20+56=76 到 108
+    local owner, richText = layout("before [Site](https://a.example) after")
+    checkEqual(#owner.linkHitRegions, 1, "行內連結必須建出一個點擊區")
+    local region = owner.linkHitRegions[1]
+    checkEqual(region.url, "https://a.example", "點擊區 URL 錯誤")
+    checkEqual(#region.segments, 1, "沒折行的連結只有一個 segment")
+    checkEqual(region.segments[1].x1, 76, "連結 segment 左緣錯誤（前文寬度沒算進去）")
+    checkEqual(region.segments[1].x2, 108, "連結 segment 右緣錯誤")
+    checkEqual(region.segments[1].y1, 10, "連結 segment 上緣錯誤")
+    checkEqual(region.segments[1].y2, 28, "連結 segment 下緣錯誤")
+    check(owner:findLinkAt(90, 15) ~= nil, "連結文字上必須命中")
+    check(owner:findLinkAt(30, 15) == nil, "同一行的前文不得命中（舊版整行判定會誤中）")
+    check(owner:findLinkAt(130, 15) == nil, "同一行的後文不得命中")
+    -- hover 變色只動連結文字的 chunk：多含一個空 chunk 會把它的 rgb 一起改掉，
+    -- render 的顏色延續（ISRichTextPanel.lua:613-617）會讓後文跟著變色
+    checkEqual(#region.indices, 1, "hover 索引只能含連結文字的 chunk")
+    checkEqual(richText.lines[region.indices[1]], "Site", "hover 索引指到的 chunk 不是連結文字")
+
+    -- 折行：15 個 "word" 以空白相連超過 570px，引擎在 chunk 內換行 -> 兩個 segment、兩個 y
+    local words = {}
+    local wordIndex
+    for wordIndex = 1, 15 do
+        words[wordIndex] = "word"
+    end
+    owner = layout("[" .. table.concat(words, " ") .. "](https://b.example)")
+    checkEqual(#owner.linkHitRegions, 1, "折行的連結仍是同一個點擊區")
+    region = owner.linkHitRegions[1]
+    checkEqual(#region.segments, 2, "折行的連結必須有兩個 segment")
+    check(region.segments[1].y1 < region.segments[2].y1, "第二個 segment 必須在下一行")
+    checkEqual(region.segments[2].x1, 20, "折行後的 segment 從行首開始")
+    check(owner:findLinkAt(25, region.segments[2].y1 + 2) ~= nil, "第二行的連結文字必須命中")
+
+    -- 粗體內的連結（舊版會把粗體切成兩行）：連結照常可點，且前後粗體文字不命中
+    owner = layout("**see [here](https://c.example) now**")
+    checkEqual(#owner.linkHitRegions, 1, "粗體內的連結必須建出點擊區")
+    region = owner.linkHitRegions[1]
+    -- `see␣` = 4 字 = 32px -> 連結 "here" 從 20+32=52 到 84
+    checkEqual(region.segments[1].x1, 52, "粗體內連結的左緣錯誤")
+    checkEqual(region.segments[1].x2, 84, "粗體內連結的右緣錯誤")
+    check(owner:findLinkAt(30, 15) == nil, "粗體的前半段不得命中")
+
+    -- 同一行兩個連結：各自獨立、順序與 links[] 對齊
+    owner = layout("[a](https://a.example) x [b](https://b.example)")
+    checkEqual(#owner.linkHitRegions, 2, "兩個連結要有兩個點擊區")
+    checkEqual(owner.linkHitRegions[1].url, "https://a.example", "第一個點擊區順序錯誤")
+    checkEqual(owner.linkHitRegions[2].url, "https://b.example", "第二個點擊區順序錯誤")
+    check(owner.linkHitRegions[1].segments[1].x2 <= owner.linkHitRegions[2].segments[1].x1,
+        "兩個點擊區不得重疊")
+
+    -- 有序清單項內的連結：編號 "1." 與連結之間的 NBSP 讓連結不貼著編號
+    owner = layout("1. [Site](https://a.example)")
+    checkEqual(#owner.linkHitRegions, 1, "清單項內的連結必須建出點擊區")
+    -- INDENT:20 + "1.␣"（3 字 = 24px）-> 連結從 20+20+24=64 起
+    checkEqual(owner.linkHitRegions[1].segments[1].x1, 64, "清單項內連結的左緣錯誤")
+end)()
+
 -- 連結 hover 提示（NBPanel:renderLinkTooltip）：顯示完整網址、過長截斷、邊界 clamp。
 -- 直接呼叫 renderLinkTooltip 而不跑整個 render：這裡要驗的是提示框自己的幾何與文字，
 -- 不是 render 的其他部分（那些已在上面的 stencil／頁籤測試涵蓋）。
