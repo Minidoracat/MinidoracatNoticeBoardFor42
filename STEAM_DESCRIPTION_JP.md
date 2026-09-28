@@ -3,54 +3,40 @@
 
 [hr][/hr]
 
-[h2]⚠️ 必須の前提 MOD[/h2]
-本 MOD の動作には [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701][b]Minidoracat UI Library for B42[/b][/url]（共用 UI ライブラリ）が必要です。このページの Required Items から併せてサブスクライブしてください。本 MOD 単体では読み込まれません。
+ゲーム内のサーバー掲示板です。サーバー管理者が Markdown でお知らせファイルを書いて保存すると、オンラインのプレイヤーへ配信されます。プレイヤーは画面上のアイコンをクリックするだけで閲覧できます。
 
-[hr][/hr]
-
-[h2]✨ これは何[/h2]
-ゲーム内の掲示板 MOD です。お知らせを Markdown で書き、ファイルを直接編集するだけでサーバーのポーリング間隔（既定 60 秒）でゲーム内に反映されます。複数ファイルは折りたたみ可能な文書ツリーに表示され、サーバー管理者は独自の分類と言語別のお知らせを用意できます。プレイヤーはゲーム言語に追従するか、サーバーが提供する言語へ手動で切り替えられます（1 言語あたり最大 200 ファイル）。
-
-[h2]🧰 主な機能[/h2]
+[h2]📦 必要なもの[/h2]
 [list]
-[*] [b]Markdown のお知らせ[/b]：お知らせを Markdown で記述し、ゲーム内で自動整形して表示
-[*] [b]準リアルタイム更新[/b]：ファイルを保存すると、サーバーのポーリング間隔内（既定 60 秒。管理者は「再読み込み」で即時更新可）にゲーム内へ反映。サーバー再起動は不要
-[*] [b]文書ツリーと独自分類[/b]：各 .md/.txt ファイルが 1 件のお知らせになります。NoticeBoard/categories.txt で多言語の分類を宣言し、対応するフォルダーへファイルを置くと、プレイヤーは折りたたみ可能なサイドバーから切り替えられます。ツールバーにワンクリック展開・ワンクリック収合のボタンを提供するので、プレイヤーが個別にカテゴリーをクリックする必要はありません
-[*] [b]お知らせ言語を自由に追加[/b]：PZ が対応する言語コードで NoticeBoard/<LANG>/ フォルダーを作成し、.md/.txt のお知らせを置くだけです。実際にお知らせがある言語はツールバーへ自動表示され、プレイヤーはゲーム言語への追従または手動切り替えを選べます
-[*] [b]サンプルお知らせのワンクリック再生成（管理者限定）[/b]：パネルのツールバーにある「サンプル再生成」ボタンを押すと、まず管理者が言語（繁体字中国語／English）を選び、サーバーがその言語の完全なサンプル——3 件の見本お知らせとルート直下の README.txt・categories.txt——を正式なお知らせフォルダーへ直接書き込み、その場で更新します。対象は毎回この 5 ファイルのみで、もう一方の言語・自作のお知らせ・images/ には一切触れません。ただしルート直下の categories.txt は上書きされます（メニューのラベルにも明記されています）
-[*] [b]お知らせに画像を載せ、プレイヤーへ自動同期[/b]：サーバーの NoticeBoard/images/ に PNG を置けばお知らせから参照でき、サーバーが分割して各プレイヤーのローカルキャッシュへ同期します——[b]テクスチャパック MOD を作る必要はなく、プレイヤーが追加で何かをサブスクライブする必要もありません[/b]。同名ファイルを上書きすれば次のポーリングで反映されます
-[*] [b]表示サイズも容量も管理できます[/b]：Markdown の画像記法で表示サイズを指定できます（幅か高さの一方だけなら元画像の比率で自動補完）。枚数・1 枚あたりの容量・合計容量はサンドボックス設定で調整でき、クライアント側キャッシュは上限付きで古いものから自動削除、同期が中断しても次回は欠けた部分から再開します
+[*] 必須：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]（Required Items に表示されます。ないと読み込まれません）
+[*] シングル・マルチ両対応です。マルチではサーバー側で本 MOD を有効にしてください
+[*] 対応バージョン: Build 42.20.2+
 [/list]
 
-[h2]⚠️ 表示上の制限と設計判断[/h2]
-お知らせはゲーム内蔵のテキストパネルで描画され、このパネルには「色」と「文字サイズ」の 2 種類のスタイルしかありません。太字・斜体・等幅・取り消し線のフォントは存在しません。本物の太字フォントを使うには、ゲームの他の画面が使っているフォントを差し替える（その画面も変わってしまう）か、太字フォントを同梱して自前でレイアウトするしかありません。しかもお知らせはゲームが対応するすべての言語に対応しているため、ゲーム本体と同じく言語ごとにフォント一式（中国語・日本語・韓国語・タイ語・キリル文字……を文字サイズ設定ごとに 1 セット、中国語だけで 1 万字以上・数十 MB）を用意する必要があり、漏れた言語の文字はそのまま消えてしまいます。それに見合わないと判断し、色で区別する方式にしています：
-[list]
-[*] [b]太字[/b]は琥珀色、[b]斜体[/b]は緑色、[b]インラインコード[/b]はピンク色の文字として表示されます（バッククォートは境界として残ります）
-[*] [b]取り消し線[/b]は ~~ 記号が取り除かれるだけで文字はそのまま表示されます。[b]表[/b]は非対応です
-[*] 内蔵フォントには絵文字がないため、重要な情報を絵文字だけで伝えないでください
-[/list]
-見出し・リスト・引用・区切り線・リンク・画像などその他の記法は通常どおり動作します。完全な記法と差異の一覧は GitHub の管理者ガイドをご覧ください。
+[h2]🚀 クイックスタート[/h2]
+[olist]
+[*] サーバー管理者：MOD を有効にしてサーバーを一度起動すると、お知らせフォルダーとサンプルが自動で作成されます
+[*] サンプルを編集するかお知らせファイルを追加すると、保存後に自動で配信されます
+[*] プレイヤー：画面上のスピーカーのフローティングアイコンをクリックして掲示板を開閉します。未読があると赤い点が付きます
+[/olist]
 
-[h2]🔗 MOD シリーズ[/h2]
+[h2]✨ 主な機能[/h2]
 [list]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349]Minidoracat Cleaner for B42[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3653490664]Minidoracat Safe Spawn[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3386633401]繁体字・簡体字 中国語翻訳[/url]
+[*] [b]Markdown のお知らせ[/b]：ゲーム内で自動整形。太字・斜体は色で表示されます
+[*] [b]編集するだけで更新[/b]：サーバー再起動は不要。管理者はワンクリックで再読み込みできます
+[*] [b]文書ツリーと独自分類[/b]：1 ファイル 1 件のお知らせを折りたたみ式サイドバーで表示。すべて展開／すべて折りたたみにも対応
+[*] [b]多言語のお知らせ[/b]：提供する言語は自由に追加でき、プレイヤーはゲーム言語への追従か手動切り替えを選べます
+[*] [b]お知らせに画像を掲載[/b]：PNG はプレイヤーへ自動同期。テクスチャパック MOD は不要です
+[*] [b]サンプルのワンクリック再生成（管理者）[/b]：繁体字中国語または英語の完全なサンプル一式を書き込み、参考にできます
 [/list]
+📖 [b]フォルダーの場所、ファイル名の規則、分類、画像、Markdown 記法の一覧、よくある質問：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3789836823/586187095760095724/]Notice Board Guide: Server Owner Manual & Markdown[/url]（英語）
 
-[h2]📋 MOD 情報[/h2]
-[list]
-[*] [b]Workshop ID:[/b] 3789836823
-[*] [b]Mod ID:[/b] MinidoracatNoticeBoardFor42
-[*] [b]対応バージョン:[/b] Build 42.20.2+
-[*] [b]シングル / マルチ:[/b] 両対応
-[/list]
+[h2]🔗 Minidoracat の MOD 一覧[/h2]
+すべての MOD を[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全シリーズ コレクション[/url]にまとめています。必要なものを選んでサブスクライブしてください。
 
 [h2]💬 フィードバック[/h2]
 [list]
-[*] [url=https://discord.gg/Gur2V67]Discord コミュニティ[/url]
+[*] [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/issues]GitHub Issues[/url]
+[*] [url=https://discord.gg/Gur2V67]Discord[/url]
 [/list]
 
 [h2]☕ 作者を応援[/h2]
@@ -59,3 +45,6 @@
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
 [b]#Minidoracat[/b]
+
+Workshop ID: 3789836823
+Mod ID: MinidoracatNoticeBoardFor42

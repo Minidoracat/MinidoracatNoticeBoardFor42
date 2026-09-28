@@ -3,54 +3,40 @@
 
 [hr][/hr]
 
-[h2]⚠️ 必要前置 MOD[/h2]
-本 MOD 需要 [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701][b]Minidoracat UI Library for B42[/b][/url]（家族共用介面函式庫）才能運作，請一併訂閱（見本頁 Required Items）。只訂閱本 MOD 會無法載入。
+遊戲內的伺服器公告欄：服主用 Markdown 寫公告檔，存檔後就會推送給線上玩家；玩家點一下畫面上的圖標就能翻閱。
 
-[hr][/hr]
-
-[h2]✨ 這是什麼[/h2]
-遊戲內公告欄，直接編輯 Markdown 檔案即可更新（依伺服器輪詢間隔生效，預設 60 秒）；多份檔案以可收合文件樹瀏覽，服主可建立自訂分類與多語公告，玩家則可跟隨遊戲語系或自行切換伺服器提供的語系（每語系上限 200 檔）
-
-[h2]🧰 主要功能[/h2]
+[h2]📦 需要安裝[/h2]
 [list]
-[*] [b]Markdown 公告[/b]：公告內容以 Markdown 撰寫，遊戲內自動排版顯示
-[*] [b]近即時更新[/b]：編輯公告檔案存檔後，於伺服器輪詢間隔內（預設 60 秒；管理員可按面板「重新載入」立即刷新）反映，不需重啟伺服器
-[*] [b]文件樹與自訂分類[/b]：每份 .md/.txt 都是獨立公告；服主可用 NoticeBoard/categories.txt 宣告多語分類並把檔案放進對應目錄，玩家從左側可收合清單快速切換；工具列提供一鍵全部展開或全部收合，不必逐個點擊
-[*] [b]自訂公告語系[/b]：服主可用 PZ 支援的語系代碼建立 NoticeBoard/<LANG>/ 目錄；只要目錄內有 .md/.txt 公告，該語系就會自動出現在玩家工具列。玩家可選「自動（跟隨遊戲語系）」或手動切換
-[*] [b]一鍵重建範例公告（管理員限定）[/b]：面板工具列的「重建範例」按鈕先讓管理員挑語系（繁體中文／English），伺服器就把該語系的完整範例——三則示範公告加上根層 README.txt 與 categories.txt——直接寫進正式公告目錄並立刻刷新。每次固定就是這 5 個檔：另一個語系、你自己的其他公告與 images/ 一律不動；代價是根層 categories.txt 會被覆寫，選單標籤已把這件事寫在上面
-[*] [b]公告可以放圖片，自動同步給玩家[/b]：PNG 丟進伺服器的 NoticeBoard/images/ 就能在公告裡引用，伺服器會分批同步到每位玩家的本機快取——[b]不必另外做圖包 MOD，玩家也不用額外訂閱任何東西[/b]。換新圖或直接覆蓋同名檔案，下一輪輪詢就生效
-[*] [b]圖片的顯示尺寸與容量都可控[/b]：Markdown 圖片語法可指定顯示尺寸（只給寬或高，另一邊依原圖比例自動補）；張數、單張大小、總容量都是沙盒選項，玩家端快取有上限並會自動淘汰最久沒用到的圖，同步中斷下次從缺的部分接續、不整張重來
+[*] 必裝：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]（Required Items 會一併列出，缺少會無法載入）
+[*] 單人與多人皆可用；多人遊戲需要伺服器啟用本 MOD
+[*] 支援版本: Build 42.20.2+
 [/list]
 
-[h2]⚠️ 顯示限制與取捨[/h2]
-公告是用遊戲內建的文字面板顯示的，它只有「換顏色」和「換字級」兩種樣式，沒有粗體、斜體、等寬或刪除線字型。要補上真正的粗體字型只有兩條路：替換遊戲其他畫面正在使用的字型（那些畫面會跟著變），或自帶粗體字型、自己排版——而公告支援遊戲的每一種語系，字型得像遊戲本身一樣按語系各準備一套（中文、日文、韓文、泰文、西里爾……每種字級設定各一份，光中文一套就一萬多字、數十 MB），漏掉的語系那段文字會直接消失。我們認為這不值得，所以選擇用顏色區分：
-[list]
-[*] [b]粗體[/b]顯示為琥珀色文字、[b]斜體[/b]顯示為綠色文字、[b]行內程式碼[/b]顯示為粉色文字（保留反引號當邊界）
-[*] [b]刪除線[/b]只會去掉 ~~ 記號、文字照常顯示；[b]表格[/b]不支援
-[*] 遊戲內建字型沒有 emoji，重要資訊請不要只靠 emoji 表達
-[/list]
-標題、清單、引言、分隔線、連結與圖片等其餘語法都正常運作；完整語法與差異清單見 GitHub 上的管理員指南。
+[h2]🚀 快速上手[/h2]
+[olist]
+[*] 服主：啟用 MOD 後開一次伺服器，會自動建立公告資料夾與入門範例
+[*] 修改範例或新增公告檔，存檔後就會自動推送給線上玩家
+[*] 玩家：點畫面上的喇叭浮動圖標開關公告板，有未讀公告時會出現紅點
+[/olist]
 
-[h2]🔗 MOD 系列[/h2]
+[h2]✨ 主要功能[/h2]
 [list]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349]Minidoracat Cleaner for B42[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3653490664]Minidoracat Safe Spawn[/url]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3386633401]繁體簡體中文完全翻譯[/url]
+[*] [b]Markdown 公告[/b]：遊戲內自動排版；粗體、斜體以顏色呈現
+[*] [b]改檔即更新[/b]：不用重啟伺服器，管理員可一鍵重新載入
+[*] [b]文件樹與自訂分類[/b]：每個檔案一則公告，側欄可收合、一鍵全部展開或收合
+[*] [b]多語公告[/b]：服主想提供幾種語系就放幾種，玩家可跟隨遊戲語系或手動切換
+[*] [b]公告可放圖片[/b]：PNG 圖片自動同步給玩家，不必另做圖包 MOD
+[*] [b]一鍵重建範例（管理員）[/b]：寫入一套完整的繁中或英文範例公告當參考
 [/list]
+📖 [b]公告放哪裡、檔名規則、分類、圖片、Markdown 語法表與常見問題：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3789836823/586187095760095709/]Notice Board 完整說明：服主手冊與 Markdown 語法[/url]
 
-[h2]📋 MOD 資訊[/h2]
-[list]
-[*] [b]Workshop ID:[/b] 3789836823
-[*] [b]Mod ID:[/b] MinidoracatNoticeBoardFor42
-[*] [b]支援版本:[/b] Build 42.20.2+
-[*] [b]單人 / 多人:[/b] 皆支援
-[/list]
+[h2]🔗 Minidoracat 全系列[/h2]
+其他作品都在[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全系列收藏[/url]，依需求自選訂閱。
 
-[h2]💬 意見回饋與交流[/h2]
+[h2]💬 回報與交流[/h2]
 [list]
-[*] [url=https://discord.gg/Gur2V67]Discord 社群[/url]
+[*] [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/issues]GitHub Issues[/url]
+[*] [url=https://discord.gg/Gur2V67]Discord[/url]
 [/list]
 
 [h2]☕ 支持作者[/h2]
@@ -59,3 +45,6 @@ MOD 永遠免費。喜歡的話可以請我喝杯咖啡，贊助會用在伺服�
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
 [b]#Minidoracat[/b]
+
+Workshop ID: 3789836823
+Mod ID: MinidoracatNoticeBoardFor42
