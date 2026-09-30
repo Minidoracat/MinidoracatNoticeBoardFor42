@@ -374,10 +374,7 @@ end
 -- 是可以回 nil 的（沒有這位玩家的 UI），所以 allow=false 那條路徑也必須驗。
 local CONTEXT_MENUS = { list = {}, allow = true }
 _G.ISContextMenu = Base:derive("ISContextMenu")
-function ISContextMenu.get(playerIndex, x, y)
-    if not CONTEXT_MENUS.allow then
-        return nil
-    end
+local function newContextMenu(playerIndex, x, y)
     local menu = { playerIndex = playerIndex, x = x, y = y, options = {} }
     menu.addOption = function(_, title, target, callback, param)
         local option = {
@@ -392,8 +389,25 @@ function ISContextMenu.get(playerIndex, x, y)
     menu.setOptionChecked = function(_, option, checked)
         option.checked = checked
     end
+    -- 原生 addSubMenu 只在入口記下子選單編號（ISContextMenu.lua:1075-1077）；harness 直接掛表
+    menu.addSubMenu = function(_, option, subMenu)
+        option.subMenu = subMenu
+    end
+    return menu
+end
+function ISContextMenu.get(playerIndex, x, y)
+    if not CONTEXT_MENUS.allow then
+        return nil
+    end
+    local menu = newContextMenu(playerIndex, x, y)
     CONTEXT_MENUS.list[#CONTEXT_MENUS.list + 1] = menu
     return menu
+end
+-- 子選單不是新開的選單：不進 CONTEXT_MENUS.list（原生也是同一個 context 的 subInstance，:1199-1223）
+function ISContextMenu:getNew(parent)
+    local subMenu = newContextMenu(parent.playerIndex, 0, 0)
+    subMenu.parent = parent
+    return subMenu
 end
 _G.Events = setmetatable({}, { __index = function(events, key)
     -- handlers 只給測試用：「面板把哪個函式掛到哪個事件上」是按鈕按下去之後有沒有人接的
@@ -1567,21 +1581,37 @@ end)()
     panel:createChildren()
     panel.voiceButton.onclick(panel, panel.voiceButton)
     local menu = CONTEXT_MENUS.list[#CONTEXT_MENUS.list]
-    local expectedParams = { "chime", "auto", "CH", "EN", "JP", "stacy", "yui", "classic" }
-    checkEqual(#menu.options, #expectedParams, "voice menu offers five languages then three actors")
-    for index, option in ipairs(menu.options) do
-        checkEqual(option.param, expectedParams[index], "voice menu order is languages then actors")
-        checkEqual(option.callback, index <= 5 and NBPanel.onVoiceLanguageSelected
-            or NBPanel.onVoiceActorSelected, "each voice menu group routes to its own handler")
+    -- 主選單：5 個語言＋1 個「聲音」入口；聲音在子選單。一串選項只會有一個勾。
+    local expectedParams = { "chime", "auto", "CH", "EN", "JP" }
+    checkEqual(#menu.options, #expectedParams + 1, "voice menu lists five languages then the voice entry")
+    for index, code in ipairs(expectedParams) do
+        checkEqual(menu.options[index].param, code, "voice languages keep their order")
+        checkEqual(menu.options[index].callback, NBPanel.onVoiceLanguageSelected,
+            "language rows route to the language handler")
     end
-    checkEqual(menu.options[6].title, "[IGUI_MinidoracatNB_VoiceActorMenu]",
-        "actor rows carry the group prefix (ISContextMenu has no separator)")
+    local actorEntry = menu.options[#expectedParams + 1]
+    checkEqual(actorEntry.title, "[IGUI_MinidoracatNB_VoiceActorMenu]",
+        "voice entry names the current voice")
+    check(actorEntry.callback == nil and actorEntry.subMenu ~= nil,
+        "voice entry only opens a submenu (no onSelect, ISContextMenu.lua:164)")
+    local actorParams = { "stacy", "yui", "classic" }
+    checkEqual(#actorEntry.subMenu.options, #actorParams, "voice submenu lists three voices")
+    for index, name in ipairs(actorParams) do
+        local option = actorEntry.subMenu.options[index]
+        checkEqual(option.param, name, "voices keep the saved-index order")
+        checkEqual(option.callback, NBPanel.onVoiceActorSelected, "voice rows route to the voice handler")
+        checkEqual(option.title, "[IGUI_MinidoracatNB_VoiceActor_" .. name .. "]",
+            "voice rows drop the group prefix inside the submenu")
+    end
     local function checkedParams()
         local langs, actors = {}, {}
-        for _, reopened in ipairs(CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options) do
-            if reopened.checked then
-                local group = reopened.callback == NBPanel.onVoiceActorSelected and actors or langs
-                group[#group + 1] = reopened.param
+        local reopened = CONTEXT_MENUS.list[#CONTEXT_MENUS.list]
+        for _, option in ipairs(reopened.options) do
+            if option.checked then langs[#langs + 1] = option.param end
+            if option.subMenu then
+                for _, sub in ipairs(option.subMenu.options) do
+                    if sub.checked then actors[#actors + 1] = sub.param end
+                end
             end
         end
         return langs, actors
@@ -1640,7 +1670,7 @@ end)()
     gameLanguage = "CN"
     VOICE_PREFERENCE.value, VOICE_ACTOR.value, VOICE_ACTOR.saves = "chime", "stacy", 0
     panel.voiceButton.onclick(panel, panel.voiceButton)
-    local yui = CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options[7]
+    local yui = CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options[6].subMenu.options[2]
     sounds, toasts = {}, {}
     yui.callback(yui.target, yui.param)
     checkEqual(VOICE_ACTOR.saves, 1, "picking an actor saves it")

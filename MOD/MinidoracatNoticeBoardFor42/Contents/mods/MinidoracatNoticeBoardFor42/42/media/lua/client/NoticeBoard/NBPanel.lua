@@ -1034,15 +1034,20 @@ function NBPanel:onVoiceLanguageButton(button)
             self, NBPanel.onVoiceLanguageSelected, code)
         menu:setOptionChecked(option, current == code)
     end
-    -- 語系組之後接聲音組。原版 ISContextMenu 沒有分隔線 API（全檔只有 addOption 家族，
-    -- :873-1082），所以聲音組以「聲音：」前綴區隔。
+    -- 聲音是另一個設定，收進子選單：同一串出現兩個勾會被看成「只能選一個卻選了兩個」。
+    -- 原版做法（ISWorldObjectContextMenu.lua:615-617、:1147-1149）：無 onSelect 的入口＋
+    -- ISContextMenu:getNew＋addSubMenu（ISContextMenu.lua:1075-1077、:1199-1223）。滑過展開、
+    -- 右緣空間不夠往左開（:585-591）、手把可進子選單（:163-170）。入口帶出目前的聲音，不展開也看得到。
     local actor = Options.voiceActor()
+    local actorOption = menu:addOption(getText("IGUI_MinidoracatNB_VoiceActorMenu",
+        getText("IGUI_MinidoracatNB_VoiceActor_" .. actor)))
+    local actorMenu = ISContextMenu:getNew(menu)
+    menu:addSubMenu(actorOption, actorMenu)
     for index = 1, #Options.VOICE_ACTORS do
         local name = Options.VOICE_ACTORS[index]
-        local option = menu:addOption(getText("IGUI_MinidoracatNB_VoiceActorMenu",
-            getText("IGUI_MinidoracatNB_VoiceActor_" .. name)),
+        local option = actorMenu:addOption(getText("IGUI_MinidoracatNB_VoiceActor_" .. name),
             self, NBPanel.onVoiceActorSelected, name)
-        menu:setOptionChecked(option, actor == name)
+        actorMenu:setOptionChecked(option, actor == name)
     end
 end
 
