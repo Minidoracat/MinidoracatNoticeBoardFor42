@@ -42,6 +42,7 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 [*] A same-named file in the player's language folder replaces it; untranslated notices fall back to the baseline, so one version is enough.
 [*] For one language only, add .only to the name, e.g. EN/20_notice.only.txt. Marked files are never used as baseline.
 [*] Players can follow the game language or pick one in the panel's Language menu.
+[*] Text is drawn with the font of the player's game language, which has no fallback: the English font has no Chinese or Japanese, and the Chinese font has no Japanese kana. Missing characters show as ? or blanks, so switching to a notice language in another script may not be readable.
 [/list]
 
 [h3]Categories (optional)[/h3]

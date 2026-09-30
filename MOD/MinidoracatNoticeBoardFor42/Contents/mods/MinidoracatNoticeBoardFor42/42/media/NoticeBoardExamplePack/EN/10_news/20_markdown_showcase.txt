@@ -9,8 +9,11 @@ down to the game's fonts: the notice panel draws text with the game's built-in
 bitmap fonts, which have no bold, italic or monospace faces and no emoji. So
 bold and italic are shown as colours, code blocks cannot line up in columns, and
 emoji turn into question marks or blanks. Tables are not supported either,
-because the panel has no column layout. Each case is covered in its section
-below.
+because the panel has no column layout. The font also follows each player's
+game language: the English font has no Chinese or Japanese characters and the
+Chinese font has no Japanese kana, so a player who switches to a notice language
+written in another script sees the missing characters as question marks or
+blanks. Each case is covered in its section below.
 
 ## Headings
 
