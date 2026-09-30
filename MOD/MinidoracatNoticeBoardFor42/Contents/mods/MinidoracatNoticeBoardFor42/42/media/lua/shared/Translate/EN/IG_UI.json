@@ -13,6 +13,12 @@
   "IGUI_MinidoracatNB_VoiceSelected": "Announcement voice set to: %1",
   "IGUI_MinidoracatNB_VoiceSaveFailed": "Voice preference could not be saved. It applies for this session; saving will be retried.",
   "IGUI_MinidoracatNB_VoiceSaveRecovered": "Voice preference saved.",
+  "IGUI_MinidoracatNB_VoiceActorMenu": "Voice: %1",
+  "IGUI_MinidoracatNB_VoiceActor_stacy": "Stacy (sweet)",
+  "IGUI_MinidoracatNB_VoiceActor_yui": "Yui (gentle)",
+  "IGUI_MinidoracatNB_VoiceActor_classic": "Classic (original voice)",
+  "IGUI_MinidoracatNB_VoiceActorSelected": "Announcement voice actor set to: %1",
+  "IGUI_MinidoracatNB_VoiceActorSaveFailed": "Voice actor could not be saved. It applies for this session; pick it again to retry.",
   "IGUI_MinidoracatNB_Volume": "Volume",
   "IGUI_MinidoracatNB_VolumeSaveFailed": "Could not save the volume. Adjust the slider again to retry.",
   "IGUI_MinidoracatNB_PreviewMuted": "Preview is muted. Check the volume, your notification sound switch and the server settings.",
@@ -55,5 +61,7 @@
   "IGUI_MinidoracatNB_OptSoundEnabled": "Play a sound for new notices",
   "IGUI_MinidoracatNB_OptSoundEnabledTip": "Play a chime when a new or updated notice arrives. One sound per batch, never one per notice. The server owner can disable it for everyone; this setting only affects you.",
   "IGUI_MinidoracatNB_OptSoundVolume": "Notice sound volume (0-100)",
-  "IGUI_MinidoracatNB_OptSoundVolumeTip": "Volume of the notice chime, 0 = silent. The mod ships its own sound file, which is not affected by the game's sound volume slider, so this is the only way to turn it down."
+  "IGUI_MinidoracatNB_OptSoundVolumeTip": "Volume of the notice chime, 0 = silent. The mod ships its own sound file, which is not affected by the game's sound volume slider, so this is the only way to turn it down.",
+  "IGUI_MinidoracatNB_OptVoiceActor": "Announcement voice actor",
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "Which voice reads the announcements, in Chinese, English and Japanese. Stacy and Yui are the new voices; Classic is the voice from earlier versions. You can also switch it from the notice board's Voice menu. Not used while the voice is set to the original sound."
 }

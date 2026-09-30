@@ -19,14 +19,21 @@
     python scripts/prep_notify_sound.py --src ... --peak 0.25 --no-mono
 輸入支援 16-bit PCM 的 .wav（Python 標準庫只解得了未壓縮 WAV；mp3／ogg 請先自行轉檔）。
 
-語音提示音（MinidoracatNBVoiceCH／EN／JP）也走這支腳本；內容用 fish-audio-tts skill 重生，
-台詞與聲音參數留在 scripts/voice_lines.json（CH/CN 共用 CH，JP 另一個聲音）：
-    python ~/.claude/skills/fish-audio-tts/scripts/fish_tts.py batch \
-        --manifest scripts/voice_lines.json --out-dir temp/voice/regenerated --trim --verify
-    python scripts/prep_notify_sound.py --src temp/voice/regenerated/notice_zh.wav \
-        --out MOD/MinidoracatNoticeBoardFor42/Contents/mods/MinidoracatNoticeBoardFor42/42/media/sound/MinidoracatNBVoiceCH.wav \
-        --no-trim --fade-out 0.02
-    # en→EN、ja→JP；保留 TTS 已裁好的 80ms 緩衝，避免二次裁切吃掉輕聲起音。
+語音提示音也走這支腳本。檔名＝語系底名＋聲音後綴（CH/CN 共用 CH）：
+  * Stacy／Yui：MinidoracatNBVoice{CH,EN,JP}{Stacy,Yui}，ElevenLabs Eleven v4 以 elevenlabs-tts
+    skill 生成，台詞在 scripts/voice_lines.json（兩個聲音共用同一份，用 --voice／--suffix 各跑一次）。
+  * 經典：MinidoracatNBVoice{CH,EN,JP}（無後綴），Fish Audio 舊版語音，台詞在
+    scripts/voice_lines_classic.json（fish-audio-tts skill）。
+    python ~/.omp/agent/skills/elevenlabs-tts/scripts/eleven_tts.py batch \
+        --manifest scripts/voice_lines.json --out-dir temp/voice/eleven --format wav \
+        --suffix _stacy --voice stacy --trim --verify --retries 2      # yui 同理
+    python scripts/prep_notify_sound.py --src temp/voice/eleven/notice_zh_stacy.wav \
+        --out MOD/MinidoracatNoticeBoardFor42/Contents/mods/MinidoracatNoticeBoardFor42/42/media/sound/MinidoracatNBVoiceCHStacy.wav \
+        --no-trim --fade-out 0.02 --peak <P>
+    # en→EN、ja→JP；保留 TTS 已裁好的緩衝，避免二次裁切吃掉輕聲起音。
+    # <P>：ElevenLabs 音檔峰值因子高，固定 0.32 峰值會比經典語音小 3-6 LU。先以 0.32 輸出、
+    # 用 ffmpeg ebur128 量整合響度 I，再取 P = min(0.58, 0.32 * 10 ** ((-23 - I) / 20))
+    # 重跑，讓各語音都落在約 -23 LUFS（與經典語音、提示音同一檔），峰值仍在規格內。
 
 **版權**：這支腳本不會去取得任何素材，只處理你指定的檔案。放進 MOD 並公開發布前，
 請自行確認該音效的授權允許再散布——商業作品（動畫、遊戲）的音效通常不允許。
@@ -54,9 +61,13 @@ DEFAULT_FADE_OUT = 0.15
 SILENCE_GATE = 0.02        # 自動修剪頭尾靜音的門檻（相對峰值）
 
 SOUND_NAME = "MinidoracatNBNotify"
-# 語音提示音（公告面板的「語音語系」選項，CH/CN 共用 CH）。內容來源與重生指令見
-# scripts/voice_lines.json；一樣走這支腳本處理，所以與提示音共用同一組資產規格。
-VOICE_SOUND_NAMES = ("MinidoracatNBVoiceCH", "MinidoracatNBVoiceEN", "MinidoracatNBVoiceJP")
+# 語音提示音（公告面板的「語音」選單：語系 × 聲音，CH/CN 共用 CH）。內容來源與重生指令見
+# 檔頭；一樣走這支腳本處理，所以與提示音共用同一組資產規格。無後綴＝經典（舊版語音）。
+VOICE_SOUND_NAMES = tuple(
+    "MinidoracatNBVoice" + language + actor
+    for actor in ("", "Stacy", "Yui")
+    for language in ("CH", "EN", "JP")
+)
 
 
 def sound_path(name):

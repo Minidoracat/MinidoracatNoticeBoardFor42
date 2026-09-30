@@ -73,15 +73,18 @@ local EXAMPLE_PACK_LANGS = {
 }
 -- 語音語系的資產白名單。與公告語系**完全獨立**：玩家可能看中文公告但想聽英文語音，
 -- 所以這一欄不參與 register、不碰網路，也不看公告語系偏好。
--- 只有這三份語音存在；資產對應（含 CN 併到 CH、auto 跟隨遊戲語系）由面板那張表負責，
--- 這裡只管「偏好值本身合不合法」。
+-- 語音只有這三種語言（每種語言各有 Stacy／Yui／經典三個聲音）；資產對應（含 CN 併到 CH、
+-- auto 跟隨遊戲語系、聲音後綴）由面板那張表負責，這裡只管「偏好值本身合不合法」。
 local VOICE_LANGS = {
     CH = true,
     EN = true,
     JP = true,
 }
--- 沒設過（或手改壞了）一律回到原本的提示音，不動既有玩家的體驗。
-local VOICE_DEFAULT = "chime"
+-- 原提示音（無語音）。只有玩家明選才會寫進 settings.ini；之後一直沿用，不會被預設蓋掉。
+local VOICE_CHIME = "chime"
+-- 沒設過（或手改壞了）一律跟隨遊戲語系播語音，聲音由 NBOptions.voiceActor 決定（預設 Stacy）。
+-- 2026-09-30 使用者裁定：預設要聽得到語音，不再是原提示音。
+local VOICE_DEFAULT = Core.AUTO_LANGUAGE
 
 local function newState()
     return {
@@ -328,10 +331,10 @@ local function normalizeSidebarPreference(raw)
 end
 
 -- 語音偏好的三態化，比照 normalizeSidebarPreference：白名單外（含 nil、大小寫不符、
--- 玩家手改）一律回 nil＝沒設過，由 getVoiceLanguagePreference 退回 chime。
+-- 玩家手改）一律回 nil＝沒設過，由 getVoiceLanguagePreference 退回預設（自動）。
 -- 回傳值會直接參與音檔檔名組合，所以**只能放行白名單內的字面值**。
 local function normalizeVoicePreference(raw)
-    if raw == VOICE_DEFAULT or raw == Core.AUTO_LANGUAGE then
+    if raw == VOICE_CHIME or raw == Core.AUTO_LANGUAGE then
         return raw
     end
     if type(raw) == "string" and rawget(VOICE_LANGS, raw) == true then
@@ -359,7 +362,7 @@ local function writeSettings()
         if sidebar ~= nil then
             writer:write("sidebar=" .. tostring(sidebar) .. "\n")
         end
-        -- voice 同理：沒選過就不寫，預設提示音不該長得像玩家挑過的設定。
+        -- voice 同理：沒選過就不寫，預設（自動）不該長得像玩家挑過的設定。
         if voice ~= nil then
             writer:write("voice=" .. voice .. "\n")
         end
@@ -1093,7 +1096,7 @@ end
 
 -- 語音語系偏好。與公告語系是兩件事：這一欄只決定播哪一段語音，不進 register、
 -- 不觸發任何網路請求，也不影響公告文字。
--- 回傳值必定是 VOICE_DEFAULT／Core.AUTO_LANGUAGE／VOICE_LANGS 之一（沒選過＝預設提示音）。
+-- 回傳值必定是 VOICE_CHIME／Core.AUTO_LANGUAGE／VOICE_LANGS 之一（沒選過＝自動）。
 function NBClient.getVoiceLanguagePreference()
     ensureSettingsLoaded()
     return NBClient.state.voicePreference or VOICE_DEFAULT
@@ -1101,7 +1104,7 @@ end
 
 -- 回傳是否確實寫進 settings.ini。失敗時本場仍套用記憶體值，並排入共用 settings 維護輪；
 -- LANGUAGE_STATUS_EVENT 的 voice-save-failed／voice-save-recovered 讓面板如實提示。
--- 白名單外的值一律收斂成預設提示音：這個值會被面板拿去組音檔名，放行原字串等於
+-- 白名單外的值一律收斂成預設（自動）：這個值會被面板拿去組音檔名，放行原字串等於
 -- 讓一個壞掉的 ini 決定要載入哪個檔案。
 function NBClient.setVoiceLanguagePreference(value)
     local preference = normalizeVoicePreference(value) or VOICE_DEFAULT

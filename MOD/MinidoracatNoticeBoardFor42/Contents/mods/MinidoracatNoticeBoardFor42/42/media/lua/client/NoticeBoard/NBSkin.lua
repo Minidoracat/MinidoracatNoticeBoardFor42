@@ -2,7 +2,7 @@
 --
 -- 圓角繪製核心（NinePatchTexture 生命週期、fill/border/dot、直角退回）已上移框架
 -- `MinidoracatUI/V1.lua`（該 repo docs/ARCHITECTURE.md），本檔只剩三件事：
---   1. 色票 COLORS（含本 MOD 自有 token：TAB_*／LINK／UNREAD_*／TOAST_*／ERROR_*）
+--   1. 色票 COLORS（含本 MOD 自有 token：TAB_*／LINK／UNREAD_*／TOAST_*／ERROR_*／SLIDER_*）
 --   2. 轉發 fill/border/dot/fits/reset 到框架 Skin（公開簽章與換皮前逐位相同，
 --      topOnly boolean 直通——框架 shape 參數相容 boolean）
 --   3. 框架不可用時的直角退回（drawRect／drawRectBorder／方點）
@@ -47,6 +47,18 @@ NBSkin.COLORS = {
     PLACEHOLDER_TEXT = { r = 0.55, g = 0.55, b = 0.55, a = 1.0 },
     TOAST_BG = { r = 0, g = 0, b = 0, a = 0.85 },
     TOAST_BORDER = { r = 1, g = 0.85, b = 0.4, a = 0.9 },
+    -- 音量滑桿：與 AutoDrive HUD 滑桿同一組（MDAD_HUD.lua:243,267-269,985），家族的音量滑桿長一樣
+    SLIDER_TRACK = { r = 0.22, g = 0.22, b = 0.22, a = 1.0 },
+    SLIDER_FILL = { r = 0.75, g = 0.55, b = 0.20, a = 1.0 },
+    SLIDER_KNOB = { r = 1, g = 1, b = 1, a = 1.0 },
+    SLIDER_BORDER = { r = 0.353, g = 0.353, b = 0.353, a = 0.95 },
+}
+
+local SLIDER_COLORS = {
+    track = NBSkin.COLORS.SLIDER_TRACK,
+    fill = NBSkin.COLORS.SLIDER_FILL,
+    knob = NBSkin.COLORS.SLIDER_KNOB,
+    border = NBSkin.COLORS.SLIDER_BORDER,
 }
 
 -- 載入期綁定：mod.info require= 保證框架的 lua 已全部先執行（見檔頭）。
@@ -109,7 +121,7 @@ end
 -- rev 3 only paints the track/knob; interaction remains the native slider's job.
 function NBSkin.slider(element, x, y, width, height, ratio)
     return FW and revision >= 3 and type(FW.slider) == "function"
-        and FW.slider(element, x, y, width, height, ratio) == true or false
+        and FW.slider(element, x, y, width, height, ratio, SLIDER_COLORS) == true or false
 end
 
 return NBSkin

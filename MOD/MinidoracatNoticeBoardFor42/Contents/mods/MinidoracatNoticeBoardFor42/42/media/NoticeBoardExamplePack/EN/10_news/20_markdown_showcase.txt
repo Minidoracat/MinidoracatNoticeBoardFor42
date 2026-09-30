@@ -4,6 +4,14 @@ Everything below is real syntax that this mod parses. Read this notice in game
 with the text file open beside it: what the panel shows is what the parser did
 with what is written on disk.
 
+This mod supports most everyday Markdown. The few effects it cannot show come
+down to the game's fonts: the notice panel draws text with the game's built-in
+bitmap fonts, which have no bold, italic or monospace faces and no emoji. So
+bold and italic are shown as colours, code blocks cannot line up in columns, and
+emoji turn into question marks or blanks. Tables are not supported either,
+because the panel has no column layout. Each case is covered in its section
+below.
+
 ## Headings
 
 Six levels are parsed. The engine only has three font sizes: H3 shares H2's
@@ -102,28 +110,29 @@ A backtick fence is three of them: ```
 
 ## Inline syntax
 
-- Bold: **important** - amber, because the engine has no bold font
-- Italic: *emphasis* - green, because the engine has no italic font
+- Bold: **important** - amber (the game fonts have no bold face)
+- Italic: *emphasis* - green (the game fonts have no italic face)
 - Bold italic: ***both*** - colours stack and the inner one wins, so it looks
   the same as italic
 - Underscore forms: __bold__ and _emphasis_
-- Inline code: `getTexture()` - pink, no monospace font and no background box
+- Inline code: `getTexture()` - pink, with its backticks kept as a border (no
+  monospace font, no background box)
 - More backticks when the code itself contains one: ``a ` inside code``
 - Strikethrough: ~~withdrawn~~ - the markers are eaten and the text stays; the
   engine cannot draw a line through text
 - Backslash escape: \*not italic\*, \#not a heading, \_not italic\_
 
-The engine splits text on spaces, so a space appears on both sides of every
-bold, italic, code and link run. That is the panel's own behaviour, not a bug.
-It shows up most in Chinese and Japanese text - if the spacing matters in a
-sentence, do not use an inline style there.
+Spaces around bold, italic and link runs follow the source, as in regular
+Markdown: a space you type is shown, and a run written tight against a bracket
+or a word stays tight, like (**this**). That matters most in Chinese and
+Japanese, which do not put spaces between words. Inline code is the exception:
+it always keeps its backticks and a small gap on both sides, so text meant to be
+typed stands out.
 
-A link takes a display line of its own, so give each link its own line in the
-file as well.
-
-[Project Zomboid](https://projectzomboid.com)
-
-<https://projectzomboid.com>
+Links are ordinary inline elements: put them mid-sentence, in a list item or
+inside bold text, like this [Project Zomboid](https://projectzomboid.com) link.
+Hovering shows the full address, and only the link text itself lights up. An
+address wrapped in angle brackets becomes a link too: <https://projectzomboid.com>
 
 Clicking any valid link copies the address to the clipboard. Approved official
 Project Zomboid domains are also opened through the game's whitelist; other

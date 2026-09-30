@@ -2870,7 +2870,7 @@ checkEqual(statusEvents[1].kind, "save-recovered", "恢復事件種類錯誤")
 reloadSettings()
 checkEqual(settingsBack.lang, "CH", "重試成功後的偏好必須真的讀得回來")
 checkEqual(settingsBack.sidebar, nil, "沒按過收合鈕就不該讀出側欄偏好")
-checkEqual(settingsBack.voice, "chime", "沒選過語音語系時必須是原本的提示音")
+checkEqual(settingsBack.voice, "auto", "沒選過語音語系時預設跟隨遊戲語系播語音")
 
 
 -- ---------------------------------------------------------------------------
@@ -2995,12 +2995,20 @@ diskFiles = {}
 fsWorking = true
 clientState.lastSettingsRetryMs = 0
 reloadSettings()
-checkEqual(NBClient.getVoiceLanguagePreference(), "chime",
-    "沒選過語音語系時必須是原本的提示音")
+checkEqual(NBClient.getVoiceLanguagePreference(), "auto",
+    "沒選過語音語系時預設跟隨遊戲語系播語音")
 checkEqual(NBClient.setVoiceLanguagePreference("JP"), true, "語音偏好必須落地")
 reloadSettings()
 checkEqual(settingsBack.voice, "JP", "語音偏好必須讀得回來")
 checkEqual(settingsBack.lang, "auto", "選語音不得順手把公告語系寫成別的值")
+
+-- 預設已是「自動」：明選原提示音必須照樣落地、讀回，不得被當成沒設過而退回預設。
+checkEqual(NBClient.setVoiceLanguagePreference("chime"), true, "明選原提示音必須落地")
+checkEqual(diskFiles["NoticeBoard/settings.ini"] ~= nil
+    and string.find(diskFiles["NoticeBoard/settings.ini"], "voice=chime", 1, true) ~= nil, true,
+    "明選原提示音必須寫進 settings.ini")
+reloadSettings()
+checkEqual(settingsBack.voice, "chime", "明選的原提示音必須讀得回來")
 
 -- 語音與公告語系互不相干：改語音不得產生新的切換請求，兩邊也不得互洗。
 clientState.registerLanguage = "EN"
@@ -3026,11 +3034,11 @@ checkEqual(settingsBack.voice, "EN", "側欄寫入不得洗掉語音偏好")
 -- 這個值會被面板拿去組音檔名，白名單外的一切都不得放行。
 checkEqual(NBClient.setVoiceLanguagePreference("../../evil"), true,
     "不合法的語音值仍算完成寫入（收斂後照常落地）")
-checkEqual(NBClient.getVoiceLanguagePreference(), "chime",
-    "不合法的語音值必須收斂成提示音，不得變成任意檔名")
+checkEqual(NBClient.getVoiceLanguagePreference(), "auto",
+    "不合法的語音值必須收斂成預設（自動），不得變成任意檔名")
 diskFiles["NoticeBoard/settings.ini"] = "lang=CH\nvoice=jp\n"
 reloadSettings()
-checkEqual(settingsBack.voice, "chime", "手改成小寫 jp 不在白名單內，必須退回提示音")
+checkEqual(settingsBack.voice, "auto", "手改成小寫 jp 不在白名單內，必須退回預設（自動）")
 checkEqual(settingsBack.lang, "CH", "語音值壞掉不得連帶影響公告語系")
 
 -- 落地失敗：本場生效、排入維護輪、事件如實回報，補寫成功後要收到恢復事件。
@@ -3072,8 +3080,8 @@ clientState.settingsLoadPending = false
 clientState.lastSettingsRetryMs = 0
 clientState.registerLanguage = "EN"
 readerFails["NoticeBoard/settings.ini"] = true
-checkEqual(NBClient.getVoiceLanguagePreference(), "chime",
-    "settings 暫時讀不到時語音可退回提示音")
+checkEqual(NBClient.getVoiceLanguagePreference(), "auto",
+    "settings 暫時讀不到時語音退回預設（自動）")
 checkEqual(NBClient.setVoiceLanguagePreference("JP"), false,
     "舊 settings 尚未成功讀回前，語音操作不得截斷重寫整檔")
 checkEqual(diskFiles["NoticeBoard/settings.ini"], seedSettings,

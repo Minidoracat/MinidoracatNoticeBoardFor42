@@ -609,31 +609,36 @@ NoticeBoard/<語系>/20_rules/30_server_rules.only.txt
 
 ## 玩家自己的音效設定
 
-面板工具列的「語音」按鈕可直接切換通知聲音，不需要修改音檔：
+面板工具列的「語音」按鈕可直接切換通知聲音，不需要修改音檔。選單上半選語言，下半選聲音：
 
-- **原提示音（預設）**：沿用上節的 `MinidoracatNBNotify.wav`。
+- **原提示音**：沿用上節的 `MinidoracatNBNotify.wav`，不播語音。
 - **中文／English／日本語**：播放各自的公告語音；繁體與簡體中文共用中文聲音。
-- **自動**：跟隨遊戲語系，非中／英／日語系使用英文；不跟隨面板的公告文字語系。
+- **自動（預設）**：跟隨遊戲語系，非中／英／日語系使用英文；不跟隨面板的公告文字語系。
+- **聲音：Stacy（甜美，預設）／Yui（溫柔）／經典（舊版語音）**：語音用哪一個聲音，三種都有中、英、日。
+  明選「原提示音」之後再選聲音，會一併切回「自動」，選了就聽得到。
 
-選擇存在 `Zomboid/Lua/NoticeBoard/settings.ini` 的 `voice` 欄位（全域偏好，不分伺服器），
-選擇時立即播放該語音試聽，之後通知沿用同一選擇；不重載公告、不改已讀狀態。寫入失敗時本場仍生效，畫面會提示並在背景重試。
-三語資產為 `42/media/sound/MinidoracatNBVoiceCH.wav`、`MinidoracatNBVoiceEN.wav`、
-`MinidoracatNBVoiceJP.wav`；重新生成的參數在 `scripts/voice_lines.json`，
+沒動過設定的玩家就是「自動＋Stacy」。語言選擇存在 `Zomboid/Lua/NoticeBoard/settings.ini` 的 `voice` 欄位（全域偏好，不分伺服器；沒選過不寫）；
+聲音選擇和音量一樣存在下方「選項 → MODS」的設定。兩者都是選擇時立即試聽，之後通知沿用同一選擇；
+不重載公告、不改已讀狀態。寫入失敗時本場仍生效，畫面會提示。
+語音資產為 `42/media/sound/MinidoracatNBVoice<語系><聲音>.wav`：語系是 `CH`／`EN`／`JP`，
+聲音後綴是 `Stacy`／`Yui`，經典沒有後綴（例如 `MinidoracatNBVoiceJPYui.wav`、`MinidoracatNBVoiceEN.wav`），共 9 檔。
+Stacy／Yui 的台詞在 `scripts/voice_lines.json`（ElevenLabs），經典在 `scripts/voice_lines_classic.json`（Fish Audio）；
 處理流程見 `scripts/prep_notify_sound.py` 檔頭。更換這些資產同樣需要重啟遊戲。
 
-「語音」旁的**音量滑桿**顯示 0–100%（步進 5），和下方「選項 → MODS」共用同一音量：
+「語音」旁的**音量滑桿**顯示 0–100%（步進 5），和下方「選項 → MODS」共用同一音量；滑鼠滾輪每格調 5%，每格都會保存並試聽：
 拖曳時只更新本場音量並停止舊試聽，放開滑桿（含游標已移出滑桿）後保存並以新音量試聽；
 重複選擇語音會停止上一段再播放；關閉面板或用遊戲快捷鍵隱藏介面，也會停止試聽並結束拖曳。
 音量為 0、個人提示音關閉或伺服器停用提示音時不播放，畫面會說明目前靜音；
 保存失敗會提示重新操作滑桿再試，不會宣稱已存檔。
 
-玩家在遊戲的**選項 → MODS** 分頁會看到本 MOD 的兩個設定（走 PZ 原生的 `PZAPI.ModOptions`，
+玩家在遊戲的**選項 → MODS** 分頁會看到本 MOD 的三個設定（走 PZ 原生的 `PZAPI.ModOptions`，
 值存在 `Zomboid/Lua/ModOptions.ini`）：
 
 | 設定 | 預設 | 說明 |
 |---|---|---|
 | 新公告播放提示音 | 開 | 玩家自己的開關 |
 | 公告提示音音量（0-100） | 60 | 0 = 靜音 |
+| 公告語音聲音 | Stacy | Stacy／Yui／經典；與面板「語音」選單的聲音是同一個設定。ini 存的是選項順序（1＝Stacy、2＝Yui、3＝經典） |
 
 與沙盒選項 `NotifySound` 是 **AND** 關係：你在沙盒關掉，玩家怎麼設都不會響；你開著，玩家仍可自己關。
 

@@ -160,12 +160,15 @@ local POPUP_NEVER = 3
 -- getUIEmitter():setVolume 套用 0..1 的倍率（細節見該函式的註解）。
 -- 沙盒 NotifySound 則是服主端的總開關，與玩家設定是 AND 關係。
 local NOTIFY_SOUND = "MinidoracatNBNotify"
+-- 語音檔名＝語系基底＋聲音後綴（NBOptions.VOICE_ACTORS）。CN 與 CH 只差書寫，共用同一份
+-- 國語音檔；classic 沒有後綴，就是改版前的原檔。例：MinidoracatNBVoiceJPYui。
 local VOICE_SOUNDS = {
     CH = "MinidoracatNBVoiceCH",
     CN = "MinidoracatNBVoiceCH",
     EN = "MinidoracatNBVoiceEN",
     JP = "MinidoracatNBVoiceJP",
 }
+local VOICE_ACTOR_SUFFIX = { stacy = "Stacy", yui = "Yui", classic = "" }
 local VOICE_CHOICES = { "chime", "auto", "CH", "EN", "JP" }
 local previewEmitter, previewReference
 local LAYOUT_NAME = "MinidoracatNBPanel"
@@ -674,6 +677,14 @@ function NBVolumeSlider:onMouseUpOutside(x, y)
     self:onMouseUp(x, y)
 end
 
+-- 原生 ISSliderPanel 沒有滾輪。一格一個步進（5）：del > 0（往下）降、del < 0 升，同 AutoDrive
+-- HUD 滑桿（MDAD_HUD.lua:957-961）與原生捲動方向（ISScrollingListBox.lua:347-371，回 true 吃掉
+-- 滾輪、外層不捲）。setCurrentValue 會夾限並回呼 onVolumeChanged；非拖曳中就當成放開：保存＋試聽。
+function NBVolumeSlider:onMouseWheel(del)
+    self:setCurrentValue(self.currentValue + (del > 0 and -self.stepValue or self.stepValue))
+    return true
+end
+
 function NBPanel:initialise()
     ISCollapsableWindowJoypad.initialise(self)
 end
@@ -1023,6 +1034,16 @@ function NBPanel:onVoiceLanguageButton(button)
             self, NBPanel.onVoiceLanguageSelected, code)
         menu:setOptionChecked(option, current == code)
     end
+    -- 語系組之後接聲音組。原版 ISContextMenu 沒有分隔線 API（全檔只有 addOption 家族，
+    -- :873-1082），所以聲音組以「聲音：」前綴區隔。
+    local actor = Options.voiceActor()
+    for index = 1, #Options.VOICE_ACTORS do
+        local name = Options.VOICE_ACTORS[index]
+        local option = menu:addOption(getText("IGUI_MinidoracatNB_VoiceActorMenu",
+            getText("IGUI_MinidoracatNB_VoiceActor_" .. name)),
+            self, NBPanel.onVoiceActorSelected, name)
+        menu:setOptionChecked(option, actor == name)
+    end
 end
 
 function NBPanel:onVoiceLanguageSelected(code)
@@ -1030,6 +1051,19 @@ function NBPanel:onVoiceLanguageSelected(code)
         NBToast.show(getText("IGUI_MinidoracatNB_VoiceSelected",
             getText("IGUI_MinidoracatNB_Voice_" .. Client.getVoiceLanguagePreference())))
     end
+    NBPanel.previewVoice()
+end
+
+function NBPanel:onVoiceActorSelected(actor)
+    if not Options.setVoiceActor(actor) then
+        NBToast.show(getText("IGUI_MinidoracatNB_VoiceActorSaveFailed"))
+    end
+    -- 挑聲音＝想聽語音：還停在原提示音時一併切到「自動」，否則試聽與之後的通知都聽不到差別。
+    if Client.getVoiceLanguagePreference() == "chime" then
+        Client.setVoiceLanguagePreference("auto")
+    end
+    NBToast.show(getText("IGUI_MinidoracatNB_VoiceActorSelected",
+        getText("IGUI_MinidoracatNB_VoiceActor_" .. Options.voiceActor())))
     NBPanel.previewVoice()
 end
 
@@ -2178,7 +2212,9 @@ local function playNoticeSound(preview)
                 code = "EN"
             end
         end
-        local reference = manager:playUISound(VOICE_SOUNDS[code] or NOTIFY_SOUND)
+        local voice = VOICE_SOUNDS[code]
+        local reference = manager:playUISound(voice
+            and voice .. VOICE_ACTOR_SUFFIX[Options.voiceActor()] or NOTIFY_SOUND)
         if reference == nil or reference == 0 then return false end
         local emitter = manager:getUIEmitter()
         if volume < 1 then emitter:setVolume(reference, volume) end

@@ -32,7 +32,7 @@
                            （42/media/ui/MinidoracatUI/，該 repo verify_mod.py 第 12 項驗），
                            本 repo 不再攜帶 PNG；NBSkin 是框架 thin adapter，缺框架退直角
  15. 提示音音檔           — 42/media/sound/MinidoracatNBNotify.wav 與語音提示音
-                           MinidoracatNBVoice{CH,EN,JP}.wav（面板語音語系選項）過
+                           MinidoracatNBVoice{CH,EN,JP}{,Stacy,Yui}.wav（面板語音：語系×聲音）過
                            scripts/prep_notify_sound.py 的 verify_notify_sound：未壓縮
                            16-bit PCM／聲道 1-2／取樣率白名單／長度 ≤5s／峰值在
                            0.05-0.60 之間。**刻意只驗規格不比對內容**——音效是服主可以
@@ -375,14 +375,14 @@ try:
 except ImportError as _e:
     skip("提示音音檔", f"無法載入 prep_notify_sound（{_e}）")
 else:
-    # 語音提示音（MinidoracatNBVoiceCH/EN/JP）同一組規格：面板的語音語系選項直接
+    # 語音提示音（MinidoracatNBVoice<語系><聲音>，經典無後綴）同一組規格：面板的語音選單直接
     # playUISound 這些名字，換聲音是使用者的權利，所以一樣只驗規格不比對內容。
     _snd_problems = []
     for _rel in (_SND_REL,) + _VOICE_RELS:
         _snd_problems += [f"{os.path.basename(_rel)}: {p}"
                           for p in _verify_sound(os.path.join(REPO, _rel))]
     fail("提示音音檔（prep_notify_sound.verify_notify_sound）", _snd_problems) if _snd_problems \
-        else ok(f"提示音音檔（提示音＋語音 {len(_VOICE_RELS)} 語過規格檢查）")
+        else ok(f"提示音音檔（提示音＋語音 {len(_VOICE_RELS)} 檔過規格檢查）")
 
 # ---- 16. Workshop preview / 遊戲 poster ----
 # PZ 42.20.4 SteamWorkshopItem.validatePreviewImage:487-500：preview 必須是可讀 PNG、

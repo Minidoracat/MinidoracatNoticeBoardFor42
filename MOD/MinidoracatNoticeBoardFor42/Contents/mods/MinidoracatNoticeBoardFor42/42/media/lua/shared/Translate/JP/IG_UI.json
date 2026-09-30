@@ -13,6 +13,12 @@
   "IGUI_MinidoracatNB_VoiceSelected": "お知らせの音声を設定しました：%1",
   "IGUI_MinidoracatNB_VoiceSaveFailed": "音声設定を保存できませんでした。今回は有効です。保存を再試行します。",
   "IGUI_MinidoracatNB_VoiceSaveRecovered": "音声設定を保存しました。",
+  "IGUI_MinidoracatNB_VoiceActorMenu": "声：%1",
+  "IGUI_MinidoracatNB_VoiceActor_stacy": "Stacy（あまい）",
+  "IGUI_MinidoracatNB_VoiceActor_yui": "Yui（やさしい）",
+  "IGUI_MinidoracatNB_VoiceActor_classic": "クラシック（旧音声）",
+  "IGUI_MinidoracatNB_VoiceActorSelected": "お知らせ音声の声を設定しました：%1",
+  "IGUI_MinidoracatNB_VoiceActorSaveFailed": "音声の声を保存できませんでした。今回は有効です。もう一度選んで再試行してください。",
   "IGUI_MinidoracatNB_Volume": "音量",
   "IGUI_MinidoracatNB_VolumeSaveFailed": "音量を保存できませんでした。スライダーを操作して再試行してください。",
   "IGUI_MinidoracatNB_PreviewMuted": "ミュート中のため試聴できません。音量、通知音の設定、サーバー設定を確認してください。",
@@ -55,5 +61,7 @@
   "IGUI_MinidoracatNB_OptSoundEnabled": "新しいお知らせで通知音を鳴らす",
   "IGUI_MinidoracatNB_OptSoundEnabledTip": "新しいお知らせや更新があったときに通知音を鳴らします。1 回のまとめて通知につき 1 回だけです。サーバー管理者はサーバー全体で無効にできます。この設定はあなたにのみ適用されます。",
   "IGUI_MinidoracatNB_OptSoundVolume": "お知らせ通知音の音量（0-100）",
-  "IGUI_MinidoracatNB_OptSoundVolumeTip": "通知音の音量です（0 = 無音）。この音は MOD 同梱のため、ゲーム側のサウンド音量設定では変更できず、ここでのみ調整できます。"
+  "IGUI_MinidoracatNB_OptSoundVolumeTip": "通知音の音量です（0 = 無音）。この音は MOD 同梱のため、ゲーム側のサウンド音量設定では変更できず、ここでのみ調整できます。",
+  "IGUI_MinidoracatNB_OptVoiceActor": "お知らせ音声の声",
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "お知らせを読み上げる声です。中国語・英語・日本語に対応しています。Stacy と Yui は新しい音声、クラシックは以前のバージョンの音声です。お知らせボードの「音声」メニューからも切り替えられます。「元の通知音（音声なし）」のときは使われません。"
 }

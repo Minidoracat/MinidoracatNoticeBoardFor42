@@ -127,7 +127,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
   - **退場**：400ms，alpha `1→0` 同時 `y` 向上位移 -10px 做輕微上浮消失感；結束後 `removeFromUIManager()` 並讓佇列遞補下一則。
   - 總時長：250 + 3000 + 400 = 3650ms／則。
 - **觸發時機**：在線更新推播抵達（manifest 帶來新 hash）→ 依 PopupMode 決策（見 4）若未直接彈窗，則降級為 Toast＋浮窗紅點；SP 遊戲中改檔同理。文案模板 `IGUI_MinidoracatNB_ToastNewContent` 的 `%1` 是公告標題，禁裸 `%`。
-- **提示音與語音**：跳 Toast 時以 `getSoundManager():playUISound` 播放玩家選定的通知音；預設 `MinidoracatNBNotify`，語音使用 `MinidoracatNBVoiceCH`／`EN`／`JP`。全部位於 `42/media/sound/`，走 `GameSounds` 的 non-bank fallback（`GameSounds.java:95-137`），不需要 FMOD bank。自動模式直接讀遊戲 `Translator`，不讀公告內容語系；CN 共用 CH，其他未支援語系使用 EN。資產替換與語系選擇見 `ADMIN_GUIDE.md` 的「換掉提示音」及「玩家自己的音效設定」。
+- **提示音與語音**：跳 Toast 時以 `getSoundManager():playUISound` 播放玩家選定的通知音；預設是「自動」語音（跟隨遊戲語系，聲音預設 Stacy），明選原提示音才播 `MinidoracatNBNotify`。語音音效名＝語系底名（`MinidoracatNBVoiceCH`／`EN`／`JP`）＋聲音後綴（`Stacy`／`Yui`；經典無後綴），聲音取自 ModOptions `voice_actor`。全部位於 `42/media/sound/`，走 `GameSounds` 的 non-bank fallback（`GameSounds.java:95-137`），不需要 FMOD bank。自動模式直接讀遊戲 `Translator`，不讀公告內容語系；CN 共用 CH，其他未支援語系使用 EN。資產替換與語系／聲音選擇見 `ADMIN_GUIDE.md` 的「換掉提示音」及「玩家自己的音效設定」。
 - **音量**：玩家在「選項 → MODS」的滑桿（`PZAPI.ModOptions`，`NBOptions.lua`）決定，0 = 靜音；實作是拿 `playUISound` 回傳的 instance ref 呼叫 `getUIEmitter():setVolume(ref, 0..1)`（`SoundManager.java:201,875-880`、`FMODSoundEmitter.java:284-298`，`FileSound.tick` 每幀套用 `:1242`）。沙盒 `NotifySound` 是服主端總開關，與玩家設定是 AND 關係。**一批一聲不是一則一聲**——首次同步逾時那條路徑會一次帶出所有未讀，逐則播就是連續叭好幾聲；換語系的第一份快照本來就靜音（hash 全變不算新內容），因此也不響。服主可用沙盒選項 `NotifySound` 關閉；沒有 Toast 可跳時（全部已讀）不會有聲音。
 
 ---

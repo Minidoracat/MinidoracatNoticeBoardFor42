@@ -22,6 +22,11 @@ local VOLUME_STEP = 5
 
 NBOptions.SOUND_ENABLED = "sound_enabled"
 NBOptions.SOUND_VOLUME = "sound_volume"
+NBOptions.VOICE_ACTOR = "voice_actor"
+-- 語音聲音（同 AutoDrive 的 MDAD_Voice.lua:64-68）：Stacy／Yui 是 ElevenLabs 的聲音，
+-- classic＝改版前的 Fish Audio 語音。combo 存的是 index（ModOptions.lua:272-273、:319-320），
+-- 所以這份順序是持久化契約：index 1（Stacy）為預設，新聲音一律接在尾端。
+NBOptions.VOICE_ACTORS = { "stacy", "yui", "classic" }
 
 local function registerOptions()
     if type(PZAPI) ~= "table" or type(PZAPI.ModOptions) ~= "table" then
@@ -41,6 +46,13 @@ local function registerOptions()
         getText("IGUI_MinidoracatNB_OptSoundVolume"),
         0, 100, VOLUME_STEP, DEFAULT_VOLUME,
         getText("IGUI_MinidoracatNB_OptSoundVolumeTip"))
+    -- addItem 自己會 getText（ModOptions.lua:131-136），這裡傳翻譯鍵。
+    local actor = options:addComboBox(NBOptions.VOICE_ACTOR,
+        getText("IGUI_MinidoracatNB_OptVoiceActor"),
+        getText("IGUI_MinidoracatNB_OptVoiceActorTip"))
+    for index = 1, #NBOptions.VOICE_ACTORS do
+        actor:addItem("IGUI_MinidoracatNB_VoiceActor_" .. NBOptions.VOICE_ACTORS[index], index == 1)
+    end
     return options
 end
 
@@ -117,20 +129,15 @@ function NBOptions.volumePercent()
     return volume
 end
 
--- Dragging updates the existing option; release saves once. The native setter also
--- updates an already-created MODS slider (PZAPI/ModOptions.lua:216-220).
-function NBOptions.setVolumePercent(value, persist)
-    if type(value) ~= "number" or value ~= value then
-        return false
-    end
+-- Sets the live option; persist also saves and verifies our own row. The native setter
+-- also updates an already-created MODS widget (PZAPI/ModOptions.lua:138-143,216-220).
+local function writeOption(id, rowType, value, persist)
     if not ensureLoaded(not loadSucceeded) then
         return false
     end
-    value = math.max(0, math.min(100, math.floor(value + 0.5)))
     local reader
     local ok, saveError = pcall(function()
-        local option = NBOptions._options:getOption(NBOptions.SOUND_VOLUME)
-        option:setValue(value)
+        NBOptions._options:getOption(id):setValue(value)
         if not persist then
             return
         end
@@ -138,9 +145,9 @@ function NBOptions.setVolumePercent(value, persist)
         -- PrintWriter can swallow I/O errors; verify only our row without
         -- reloading every mod's live options or creating a second settings file.
         reader = getFileReader("ModOptions.ini", false)
-        if not reader then error("volume settings readback unavailable") end
+        if not reader then error(id .. " readback unavailable") end
         local stored
-        local pattern = "^slider|" .. OPTIONS_ID .. "|" .. NBOptions.SOUND_VOLUME .. "|(.*)$"
+        local pattern = "^" .. rowType .. "|" .. OPTIONS_ID .. "|" .. id .. "|(.*)$"
         while true do
             local line = reader:readLine()
             if line == nil then break end
@@ -149,13 +156,37 @@ function NBOptions.setVolumePercent(value, persist)
         end
         reader:close()
         reader = nil
-        if stored ~= value then error("volume settings readback mismatch") end
+        if stored ~= value then error(id .. " readback mismatch") end
     end)
     if reader then pcall(function() reader:close() end) end
     if not ok then
-        print("[MinidoracatNoticeBoardFor42] volume save failed: " .. tostring(saveError))
+        print("[MinidoracatNoticeBoardFor42] " .. id .. " save failed: " .. tostring(saveError))
     end
     return ok
+end
+
+-- Dragging updates the existing option; release saves once.
+function NBOptions.setVolumePercent(value, persist)
+    if type(value) ~= "number" or value ~= value then
+        return false
+    end
+    value = math.max(0, math.min(100, math.floor(value + 0.5)))
+    return writeOption(NBOptions.SOUND_VOLUME, "slider", value, persist)
+end
+
+-- 缺值、index 越界或非整數（手改過的 ini）一律退 Stacy。
+function NBOptions.voiceActor()
+    return NBOptions.VOICE_ACTORS[optionValue(NBOptions.VOICE_ACTOR, 1)] or NBOptions.VOICE_ACTORS[1]
+end
+
+-- 選了就存：選單點一下就是確定，沒有拖曳中的暫態。
+function NBOptions.setVoiceActor(actor)
+    for index = 1, #NBOptions.VOICE_ACTORS do
+        if NBOptions.VOICE_ACTORS[index] == actor then
+            return writeOption(NBOptions.VOICE_ACTOR, "combobox", index, true)
+        end
+    end
+    return false
 end
 
 -- Notification and preview share both mute switches and the same 0..1 gain.

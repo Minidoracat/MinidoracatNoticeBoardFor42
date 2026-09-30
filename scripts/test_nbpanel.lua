@@ -296,6 +296,7 @@ local UNREAD_IDS = {}
 local READ_MARKS = {}
 -- 側欄收合偏好：harness 端當成一顆可讀寫的記憶體格子（真模組寫 settings.ini）。
 local SIDEBAR_PREFERENCE = { value = nil, writes = 0, allow = true }
+-- 起點是「明選原提示音」的玩家；真正的預設（自動）屬於 NBClient，由 test_mdparser.lua 驗。
 local VOICE_PREFERENCE = { value = "chime" }
 -- 範例重建請求：harness 端記次數與**選到的語系**，並可切成「送不出去」，
 -- 驗面板的兩條送出 toast 分支與「選單選了哪個語系就送哪個」。
@@ -333,13 +334,22 @@ _G.NBToast = { show = function() end }
 -- 玩家端音效設定（真模組會去讀 PZAPI.ModOptions／ModOptions.ini，harness 沒有那一套）。
 -- 音量預設 1 = 滿音量，這樣「不呼叫 setVolume」是可斷言的行為；下面音效那段會改它。
 local SOUND_VOLUME = { value = 1, saves = 0 }
+-- 語音聲音：allow=false 模擬 ModOptions.ini 寫入失敗（真模組仍保留本場的即時值）。
+local VOICE_ACTOR = { value = "stacy", saves = 0, allow = true }
 _G.NBOptions = {
+    VOICE_ACTORS = { "stacy", "yui", "classic" },
     soundVolume = function() return SOUND_VOLUME.value end,
     volumePercent = function() return SOUND_VOLUME.value * 100 end,
     setVolumePercent = function(value, persist)
         SOUND_VOLUME.value = value / 100
         if persist then SOUND_VOLUME.saves = SOUND_VOLUME.saves + 1 end
         return true
+    end,
+    voiceActor = function() return VOICE_ACTOR.value end,
+    setVoiceActor = function(actor)
+        VOICE_ACTOR.value = actor
+        VOICE_ACTOR.saves = VOICE_ACTOR.saves + 1
+        return VOICE_ACTOR.allow
     end,
 }
 _G.ISCollapsableWindowJoypad = Base:derive("ISCollapsableWindowJoypad")
@@ -1557,18 +1567,37 @@ end)()
     panel:createChildren()
     panel.voiceButton.onclick(panel, panel.voiceButton)
     local menu = CONTEXT_MENUS.list[#CONTEXT_MENUS.list]
-    checkEqual(#menu.options, 5, "voice menu offers original, auto and three languages")
+    local expectedParams = { "chime", "auto", "CH", "EN", "JP", "stacy", "yui", "classic" }
+    checkEqual(#menu.options, #expectedParams, "voice menu offers five languages then three actors")
+    for index, option in ipairs(menu.options) do
+        checkEqual(option.param, expectedParams[index], "voice menu order is languages then actors")
+        checkEqual(option.callback, index <= 5 and NBPanel.onVoiceLanguageSelected
+            or NBPanel.onVoiceActorSelected, "each voice menu group routes to its own handler")
+    end
+    checkEqual(menu.options[6].title, "[IGUI_MinidoracatNB_VoiceActorMenu]",
+        "actor rows carry the group prefix (ISContextMenu has no separator)")
+    local function checkedParams()
+        local langs, actors = {}, {}
+        for _, reopened in ipairs(CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options) do
+            if reopened.checked then
+                local group = reopened.callback == NBPanel.onVoiceActorSelected and actors or langs
+                group[#group + 1] = reopened.param
+            end
+        end
+        return langs, actors
+    end
     local savedTranslator = _G.Translator
     local gameLanguage = "CN"
     _G.Translator = { getLanguage = function()
         return { name = function() return gameLanguage end }
     end }
     local expectedSounds = {
-        chime = "MinidoracatNBNotify", auto = "MinidoracatNBVoiceCH",
-        CH = "MinidoracatNBVoiceCH", EN = "MinidoracatNBVoiceEN",
-        JP = "MinidoracatNBVoiceJP",
+        chime = "MinidoracatNBNotify", auto = "MinidoracatNBVoiceCHStacy",
+        CH = "MinidoracatNBVoiceCHStacy", EN = "MinidoracatNBVoiceENStacy",
+        JP = "MinidoracatNBVoiceJPStacy",
     }
-    for _, option in ipairs(menu.options) do
+    for index = 1, 5 do
+        local option = menu.options[index]
         sounds = {}
         option.callback(option.target, option.param)
         checkEqual(sounds[1], expectedSounds[option.param],
@@ -1578,20 +1607,64 @@ end)()
         checkEqual(sounds[1], expectedSounds[option.param],
             "selected voice controls notification playback")
         panel.voiceButton.onclick(panel, panel.voiceButton)
-        local checkedCount = 0
-        for _, reopened in ipairs(CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options) do
-            if reopened.checked then
-                checkedCount = checkedCount + 1
-                checkEqual(reopened.param, option.param, "reopened menu marks selected voice")
-            end
-        end
-        checkEqual(checkedCount, 1, "voice menu has exactly one selected option")
+        local langs, actors = checkedParams()
+        check(#langs == 1 and langs[1] == option.param, "reopened menu marks only the selected language")
+        check(#actors == 1 and actors[1] == "stacy", "reopened menu marks only the current actor")
     end
-    VOICE_PREFERENCE.value = "auto"
-    gameLanguage = "FR"
+
+    -- 語系 x 聲音全矩陣：CN 共用國語音檔、不支援的遊戲語系退英文、classic 無後綴。
+    local actorSuffix = { stacy = "Stacy", yui = "Yui", classic = "" }
+    local cases = {
+        { pref = "CH", base = "CH" }, { pref = "EN", base = "EN" }, { pref = "JP", base = "JP" },
+        { pref = "auto", game = "CH", base = "CH" }, { pref = "auto", game = "CN", base = "CH" },
+        { pref = "auto", game = "EN", base = "EN" }, { pref = "auto", game = "JP", base = "JP" },
+        { pref = "auto", game = "FR", base = "EN" },
+    }
+    for _, case in ipairs(cases) do
+        for actor, suffix in pairs(actorSuffix) do
+            VOICE_PREFERENCE.value, VOICE_ACTOR.value = case.pref, actor
+            gameLanguage = case.game or "CN"
+            sounds = {}
+            NBPanel.notifyUnread(snapshot, nil)
+            checkEqual(sounds[1], "MinidoracatNBVoice" .. case.base .. suffix,
+                "voice file = language base + actor suffix (" .. case.pref .. "/"
+                .. tostring(case.game) .. "/" .. actor .. ")")
+        end
+    end
+    VOICE_PREFERENCE.value, VOICE_ACTOR.value = "chime", "yui"
     sounds = {}
     NBPanel.notifyUnread(snapshot, nil)
-    checkEqual(sounds[1], "MinidoracatNBVoiceEN", "unsupported game language uses English")
+    checkEqual(sounds[1], "MinidoracatNBNotify", "chime ignores the actor")
+
+    -- 選聲音：存檔、原提示音自動切到「自動」、確認 toast、立刻試聽新聲音。
+    gameLanguage = "CN"
+    VOICE_PREFERENCE.value, VOICE_ACTOR.value, VOICE_ACTOR.saves = "chime", "stacy", 0
+    panel.voiceButton.onclick(panel, panel.voiceButton)
+    local yui = CONTEXT_MENUS.list[#CONTEXT_MENUS.list].options[7]
+    sounds, toasts = {}, {}
+    yui.callback(yui.target, yui.param)
+    checkEqual(VOICE_ACTOR.saves, 1, "picking an actor saves it")
+    checkEqual(VOICE_ACTOR.value, "yui", "picked actor becomes current")
+    checkEqual(VOICE_PREFERENCE.value, "auto", "picking an actor while on chime switches to auto")
+    checkEqual(toasts[#toasts], "[IGUI_MinidoracatNB_VoiceActorSelected]", "actor pick confirms")
+    checkEqual(sounds[1], "MinidoracatNBVoiceCHYui", "actor pick previews the new voice")
+    panel.voiceButton.onclick(panel, panel.voiceButton)
+    local langs, actors = checkedParams()
+    check(#langs == 1 and langs[1] == "auto", "reopened menu shows the auto switch")
+    check(#actors == 1 and actors[1] == "yui", "reopened menu marks the picked actor")
+    VOICE_PREFERENCE.value = "JP"
+    sounds, toasts = {}, {}
+    NBPanel.onVoiceActorSelected(panel, "classic")
+    checkEqual(VOICE_PREFERENCE.value, "JP", "explicit voice language survives an actor pick")
+    checkEqual(sounds[1], "MinidoracatNBVoiceJP", "classic previews the original file")
+    VOICE_ACTOR.allow = false
+    sounds, toasts = {}, {}
+    NBPanel.onVoiceActorSelected(panel, "stacy")
+    checkEqual(toasts[1], "[IGUI_MinidoracatNB_VoiceActorSaveFailed]", "failed actor save is visible")
+    checkEqual(sounds[1], "MinidoracatNBVoiceJPStacy", "failed save still previews the live choice")
+    VOICE_ACTOR.allow = true
+
+    VOICE_PREFERENCE.value = "auto"
     SOUND_VOLUME.value = 0
     sounds = {}
     NBPanel.notifyUnread(snapshot, nil)
@@ -1600,7 +1673,7 @@ end)()
     _G.SandboxVars = { MinidoracatNB = { NotifySound = false } }
     NBPanel.notifyUnread(snapshot, nil)
     checkEqual(#sounds, 0, "voice selection cannot bypass server mute")
-    VOICE_PREFERENCE.value = "chime"
+    VOICE_PREFERENCE.value, VOICE_ACTOR.value = "chime", "stacy"
     _G.Translator = savedTranslator
 
     -- 音效系統整個壞掉（getSoundManager 拋錯）不得讓通知跟著失敗。
@@ -2815,9 +2888,9 @@ end)()
     local slider = panel.volumeSlider
     slider.parent = panel
     panel:onVoiceLanguageSelected("EN")
-    checkEqual(active[1].name, "MinidoracatNBVoiceEN", "language selection previews immediately")
+    checkEqual(active[1].name, "MinidoracatNBVoiceENStacy", "language selection previews immediately")
     panel:onVoiceLanguageSelected("JP")
-    check(active[1] == nil and active[2].name == "MinidoracatNBVoiceJP",
+    check(active[1] == nil and active[2].name == "MinidoracatNBVoiceJPStacy",
         "new selection replaces only the previous preview")
 
     local bar = slider.sliderBarDim
@@ -2873,11 +2946,47 @@ end)()
     checkEqual(SOUND_VOLUME.saves, savedCount + 1, "visibility recovery does not save twice")
     checkEqual(played, 6, "native hiding never starts a preview")
 
+    -- Wheel: one notch = one step; down (del > 0) lowers. Each notch saves and previews like a release.
+    SOUND_VOLUME.value = 0.5
+    slider:setCurrentValue(50, true)
+    savedCount = SOUND_VOLUME.saves
+    check(slider:onMouseWheel(1) == true, "slider consumes the wheel")
+    checkEqual(SOUND_VOLUME.value, 0.45, "wheel down lowers one step")
+    checkEqual(SOUND_VOLUME.saves, savedCount + 1, "wheel notch saves")
+    checkEqual(played, 7, "wheel notch previews")
+    checkEqual(active[7].volume, 0.45, "wheel preview plays at the new volume")
+    slider:onMouseWheel(-1)
+    slider:onMouseWheel(-1)
+    checkEqual(SOUND_VOLUME.value, 0.55, "wheel up raises one step per notch")
+    check(active[8] == nil and active[9] ~= nil, "each wheel preview replaces the previous one")
+    SOUND_VOLUME.value = 1
+    slider:setCurrentValue(100, true)
+    savedCount = SOUND_VOLUME.saves
+    slider:onMouseWheel(-1)
+    checkEqual(slider:getCurrentValue(), 100, "wheel clamps at 100")
+    checkEqual(SOUND_VOLUME.saves, savedCount, "clamped notch does not rewrite settings")
+    checkEqual(played, 9, "clamped notch does not replay")
+
+    -- AutoDrive HUD slider palette reaches the framework painter.
+    local skinUI, painted = MinidoracatUI.v1.Skin, nil
+    local realPainter = skinUI.slider
+    skinUI.slider = function(...)
+        painted = select(7, ...)
+        return realPainter(...)
+    end
+
     local drawn = {}
     slider.drawText = function(_, text) drawn[#drawn + 1] = text end
     SOUND_VOLUME.value = 0.45
     slider:render()
     checkEqual(drawn[#drawn], "45%", "slider reflects changes from the other settings surface")
+    skinUI.slider = realPainter
+    local function rgba(c) return string.format("%g,%g,%g,%g", c.r, c.g, c.b, c.a) end
+    check(type(painted) == "table", "slider passes a palette to the framework painter")
+    checkEqual(rgba(painted.track), "0.22,0.22,0.22,1", "slider track matches AutoDrive")
+    checkEqual(rgba(painted.fill), "0.75,0.55,0.2,1", "slider fill matches AutoDrive")
+    checkEqual(rgba(painted.knob), "1,1,1,1", "slider knob matches AutoDrive")
+    checkEqual(rgba(painted.border), "0.353,0.353,0.353,0.95", "slider border matches AutoDrive")
     panel.isCollapsed = true
     drawn = {}
     slider:render()
@@ -2938,6 +3047,28 @@ end)()
     checkEqual(NBOptions.setVolumePercent(0 / 0, true), false, "NaN never enters native settings")
     check(NBOptions.setVolumePercent(200, true), "out-of-range volume is clamped")
     checkEqual(NBOptions.volumePercent(), 100, "volume cannot exceed 100 percent")
+
+    -- Voice actor combo: index order is the persistence contract; missing/bad values mean Stacy.
+    local combo = NBOptions._options:getOption(NBOptions.VOICE_ACTOR)
+    checkEqual(table.concat(combo.values, ","), "[IGUI_MinidoracatNB_VoiceActor_stacy],"
+        .. "[IGUI_MinidoracatNB_VoiceActor_yui],[IGUI_MinidoracatNB_VoiceActor_classic]",
+        "actor combo order is Stacy, Yui, Classic")
+    checkEqual(NBOptions.voiceActor(), "stacy", "missing actor row defaults to Stacy")
+    check(NBOptions.setVoiceActor("yui"), "actor pick verifies on disk")
+    check(contains(disk, "combobox|MinidoracatNoticeBoard|voice_actor|2"),
+        "actor persists as its combo index")
+    combo:setValue(1)
+    PZAPI.ModOptions:load()
+    checkEqual(NBOptions.voiceActor(), "yui", "native reload restores the picked actor")
+    checkEqual(NBOptions.setVoiceActor("bogus"), false, "unknown actor is rejected")
+    checkEqual(NBOptions.voiceActor(), "yui", "rejected actor leaves the choice alone")
+    dropWrites = true
+    checkEqual(NBOptions.setVoiceActor("classic"), false, "silent actor write loss is reported")
+    checkEqual(NBOptions.voiceActor(), "classic", "failed actor save keeps the live choice")
+    dropWrites = false
+    disk = string.gsub(disk, "voice_actor|%d+", "voice_actor|9")
+    PZAPI.ModOptions:load()
+    checkEqual(NBOptions.voiceActor(), "stacy", "out-of-range stored actor falls back to Stacy")
     failReads = true
     _G.NBOptions = nil
     dofile(MEDIA_LUA .. "client/NoticeBoard/NBOptions.lua")

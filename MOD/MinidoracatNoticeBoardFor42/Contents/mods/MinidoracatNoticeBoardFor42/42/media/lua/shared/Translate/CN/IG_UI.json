@@ -13,6 +13,12 @@
   "IGUI_MinidoracatNB_VoiceSelected": "公告语音已设为：%1",
   "IGUI_MinidoracatNB_VoiceSaveFailed": "语音偏好无法保存，暂时仅在本场生效；将在后台重试。",
   "IGUI_MinidoracatNB_VoiceSaveRecovered": "语音偏好已保存。",
+  "IGUI_MinidoracatNB_VoiceActorMenu": "声音：%1",
+  "IGUI_MinidoracatNB_VoiceActor_stacy": "Stacy（甜美）",
+  "IGUI_MinidoracatNB_VoiceActor_yui": "Yui（温柔）",
+  "IGUI_MinidoracatNB_VoiceActor_classic": "经典（旧版语音）",
+  "IGUI_MinidoracatNB_VoiceActorSelected": "公告语音声音已设为：%1",
+  "IGUI_MinidoracatNB_VoiceActorSaveFailed": "语音声音无法保存，暂时仅在本场生效；请重新选择重试。",
   "IGUI_MinidoracatNB_Volume": "音量",
   "IGUI_MinidoracatNB_VolumeSaveFailed": "音量无法保存，请重新调整滑块重试。",
   "IGUI_MinidoracatNB_PreviewMuted": "当前已静音，无法试听。请检查音量、个人提示音开关及服务器设置。",
@@ -55,5 +61,7 @@
   "IGUI_MinidoracatNB_OptSoundEnabled": "新公告播放提示音",
   "IGUI_MinidoracatNB_OptSoundEnabledTip": "有新公告或公告更新时播一声提示音。一批只响一次，不会每条公告都响。服务器管理者可以整台关闭；这里的设置只影响你自己。",
   "IGUI_MinidoracatNB_OptSoundVolume": "公告提示音音量（0-100）",
-  "IGUI_MinidoracatNB_OptSoundVolumeTip": "提示音的音量，0 = 静音。这颗音效是 MOD 自带的，不受游戏内置的音效音量影响，所以只能在这里调整。"
+  "IGUI_MinidoracatNB_OptSoundVolumeTip": "提示音的音量，0 = 静音。这颗音效是 MOD 自带的，不受游戏内置的音效音量影响，所以只能在这里调整。",
+  "IGUI_MinidoracatNB_OptVoiceActor": "公告语音声音",
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "语音公告用哪一个声音，中文／英文／日文都有。Stacy 与 Yui 是新录制的语音；经典是改版前的旧语音。公告栏的「语音」菜单也能切换；选择「原提示音（无语音）」时不会用到。"
 }
