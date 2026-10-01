@@ -11,8 +11,8 @@
 [olist]
 [*] Enable the mod and start the server (or a singleplayer game) once. If there are no notices yet, EN and CH starter examples are created.
 [*] Open the notice folder (below) and edit the examples or add your own .md / .txt notices.
-[*] Save: within one polling interval (default 60s) online players get the update and a new-notice alert. Admins can press Reload on the panel to apply it at once.
-[*] Players click the floating speaker icon to open or close the board. A red dot means unread notices; the icon can be dragged.
+[*] Save: online players get it with a new-notice alert within one polling interval (default 60s), or at once when an admin presses Reload on the panel.
+[*] Players click the floating speaker icon to open or close the board. A red dot means unread notices.
 [/olist]
 
 [h2]📁 Where notices live[/h2]
@@ -42,7 +42,7 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 [*] A same-named file in the player's language folder replaces it; untranslated notices fall back to the baseline, so one version is enough.
 [*] For one language only, add .only to the name, e.g. EN/20_notice.only.txt. Marked files are never used as baseline.
 [*] Players can follow the game language or pick one in the panel's Language menu.
-[*] Text is drawn with the font of the player's game language, which has no fallback: the English font has no Chinese or Japanese, and the Chinese font has no Japanese kana. Missing characters show as ? or blanks, so switching to a notice language in another script may not be readable.
+[*] Text uses the font of the player's game language with no fallback: the English font lacks Chinese and Japanese, the Chinese font lacks kana; missing characters show as ? or blanks.
 [/list]
 
 [h3]Categories (optional)[/h3]
@@ -55,21 +55,28 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 
 [h2]🖼️ Images[/h2]
 [list]
-[*] Put PNGs in NoticeBoard/images/ (shared by all languages) and write ![caption](images/name.png). The server syncs them to players in chunks: no texture-pack mod, nothing extra to subscribe to.
+[*] Put PNGs in NoticeBoard/images/ (shared by all languages) and write ![caption](images/name.png). The server syncs them to players: no texture-pack mod, nothing extra to subscribe to.
 [*] PNG only; names use ASCII letters, digits, _ and -, max 64 characters, no "." in the base name.
 [*] Size: ![caption](images/a.png =600x200), or =600x / =x200 to keep the aspect ratio. A space before "=" is required; a malformed size shows the line as raw text.
-[*] Defaults: 512 KB per image, 20 images, 4 MB total; sandbox allows up to 4096 KB / 200 / 16384 KB. Every player downloads it on first join (16 MB ≈ 3 minutes in the background).
+[*] Defaults: 512 KB per image, 20 images, 4 MB total; sandbox allows up to 4096 KB / 200 / 16384 KB. Players download it all on first join (16 MB ≈ 3 min in the background).
 [*] The panel is about 950px wide; wider images are scaled down, so shrink files first.
 [*] Adding, deleting or overwriting takes effect on the next poll. An overwrite with the exact same byte size isn't detected; press Reload or use a new name.
+[/list]
+
+[h2]🔊 Notification sound & voice[/h2]
+New or updated notices play one sound per batch, set per player at the top of the panel:
+[list]
+[*] [b]Voice[/b] menu: Auto (default; matches a Chinese or Japanese game, else English), Chinese, English, Japanese or "Original sound (no voice)". Its last item, "Voice: …", picks the speaker: Stacy (default), Yui or Classic.
+[*] The volume slider takes a drag or the mouse wheel (5% per notch) and plays a preview. It is the same setting as Options → MODS.
 [/list]
 
 [h2]🛠️ Admin tools[/h2]
 On the notice panel, admins only (the server re-checks permissions).
 [list]
-[*] [b]Reload[/b]: re-reads all notices and images and pushes them now. Fastest for urgent notices; you can also set the polling interval to 10s.
+[*] [b]Reload[/b]: re-reads and pushes all notices and images now, the fastest way for urgent notices. The polling interval can also go down to 10s.
 [*] [b]Rebuild examples[/b]: pick Traditional Chinese or English to write a full reference set (every supported syntax, categories, .only), pushed at once.
-[*] It always writes the same 5 files: README.txt and categories.txt in the root plus 3 example notices in that language. Other notices, the other language and images/ are untouched.
-[*] [b]Warning[/b]: the root categories.txt is replaced (only 10_news and 20_rules remain); back it up first. Edits in those 5 files are reverted.
+[*] It writes 5 fixed files (root README.txt and categories.txt, plus 3 notices in that language); other notices, the other language and images/ are untouched.
+[*] [b]Warning[/b]: the root categories.txt is replaced (only 10_news and 20_rules remain) and edits to those 5 files are reverted; back up first.
 [/list]
 
 [h2]⚙️ Sandbox options (Minidoracat Notice Board)[/h2]
@@ -77,7 +84,7 @@ On the notice panel, admins only (the server re-checks permissions).
 [*] [b]Automatic popup mode[/b]: Always / Unread notices only (default) / Never. The floating icon always opens the board.
 [*] [b]Notice polling interval[/b]: 60s default, 10–3600.
 [*] [b]Default notice language[/b]: the baseline language, default EN.
-[*] [b]Play a sound for new notices[/b]: server-wide switch; players can also mute it or set volume in Options → MODS.
+[*] [b]Play a sound for new notices[/b]: server-wide switch for the notice sound and voice.
 [/list]
 
 [h2]✍️ Supported Markdown[/h2]
@@ -93,24 +100,18 @@ The game's text panel has no bold or italic fonts, so some styles become colors.
 [*] *italic* / _italic_ → [b]green[/b] text; bold italic shows green.
 [*] `inline code` → [b]pink[/b] text, backticks kept.
 [*] ~~strike~~ → markers removed, text shown normally.
-[*] [text](https://url) or <https://url> → blue link; clicking copies it. Steam Community, projectzomboid.com, The Indie Stone and PZ Wiki links also try to open. Bare URLs aren't linked.
+[*] [text](https://url) or <https://url> → blue link; clicking copies it, and official PZ and Steam Community links also try to open. Bare URLs aren't linked.
 [*] Images: ![caption](images/name.png), optional " =WxH".
 [*] [b]Tables are not supported[/b]; use lists or code blocks.
 [*] Game fonts have [b]no emoji[/b] (shown as ? or nothing). Don't rely on emoji; use a PNG for pictures.
 [/list]
 
 [h2]❓ FAQ[/h2]
-[b]Q: Can the board pop up when players join?[/b]
-A: Yes. Set sandbox "Minidoracat Notice Board → Automatic popup mode" to "Always". By default it pops up only when there are unread notices.
-
-[b]Q: Why are bold and italic colors?[/b]
-A: The text panel has no bold or italic fonts. Real bold would mean replacing fonts other screens use, or shipping a font set per language (tens of MB for Chinese alone). Not worth it, so they're colors (see Supported Markdown).
-
 [b]Q: I edited a notice but players don't see it.[/b]
 A: Wait one polling interval or press Reload. Then check the file is in Zomboid/Lua/NoticeBoard/ (not the mod folder), the language folder is uppercase, the category is declared and the name is ASCII. Server log lines tagged [MinidoracatNoticeBoardFor42] say why a file was skipped.
 
 [b]Q: Images show only a [caption] placeholder.[/b]
-A: Right after adding an image or joining, it's still syncing and appears on its own. If it never does, check it's a PNG, the name follows the rules, the path is right and the limits aren't exceeded.
+A: It's still syncing right after you add an image or join. If it never appears, check it's a PNG with a valid name, the path is right and the limits aren't exceeded.
 
 [h2]📝 Reporting issues[/h2]
 [list]
