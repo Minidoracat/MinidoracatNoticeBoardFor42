@@ -7,6 +7,7 @@
   "IGUI_MinidoracatNB_VoiceLanguage": "语音",
   "IGUI_MinidoracatNB_Voice_chime": "原提示音（无语音）",
   "IGUI_MinidoracatNB_Voice_auto": "自动（跟随游戏语言，其他语言使用英语）",
+  "IGUI_MinidoracatNB_Voice_auto_server": "自动（使用服务器语音）",
   "IGUI_MinidoracatNB_Voice_CH": "中文",
   "IGUI_MinidoracatNB_Voice_EN": "English",
   "IGUI_MinidoracatNB_Voice_JP": "日本語",

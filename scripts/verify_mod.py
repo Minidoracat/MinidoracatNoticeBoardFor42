@@ -45,6 +45,11 @@
                            512×512 RGB PNG；preview ≤1,024,000 bytes
  17. Steam 介面預覽       — 固定清單的 JPG 必須可完整解碼、維持 1920×1032 RGB，
                           且每張 ≤280,000 bytes（Steamworks AddItemPreviewFile 實測上限 274KB～314KB 之間）
+ 18. PACKS 使用者包範本    — PACKS/<Item>/ 是給服主自備素材後自行上傳的 MOD 形狀資料夾：
+                          preview.png 256/512 正方形 PNG ≤1,024,000 bytes、Contents/ 只有
+                          mods/、mod.info 行首 id= 等於資料夾名且非家族前綴、無 require=、
+                          無上傳黑名單副檔名、無 Lua／scripts、音效直接放 42/media/sound/、
+                          無雜物、有 README.txt。沒有 PACKS/ 則 SKIP
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
 pz-mod-template（見 AGENTS.md）。
@@ -497,6 +502,137 @@ else:
                 f"{_name}: {os.path.getsize(_path):,} bytes，超過 280,000（publish_workshop.py --mode screenshots 會被 Steam 拒絕）")
     fail("Steam 介面預覽圖", _steam_shot_problems) if _steam_shot_problems \
         else ok(f"Steam 介面預覽圖（{len(_steam_shot_names)} 張 1920×1032 RGB JPG，皆 ≤280KB）")
+
+# ---- 18. PACKS 使用者包範本 ----
+# PACKS/<Item>/ 是給服主複製、自備素材後自行上傳 Workshop 的 MOD 形狀資料夾（不是本 repo
+# 的發布物，MOD/ 才是）。規則出自 42.21.0 反編譯：上傳器 SteamWorkshopItem.java 的
+# validatePreviewImage:487-512（a）、validateContents:514-562（b）、validateModsFolder
+# :450-477（c）、validateModDotInfo:277-307 用 startsWith("id=")（d）、validateFileTypes
+# :242-275（e）；GameSounds.getOrCreateSound:94-138 只探測 media/sound/<名稱>.ogg|.wav、
+# 不看子資料夾（g）。家族前綴 id 會被 pz-family-docs sync_mod.ps1:38-41 當家族 MOD 去 MOD/
+# 找來源而拒絕啟動（d）。範本只放素材：不帶 Lua／scripts（scripts 進 checksum、兩端須一致）
+# 也不 require=（f、d）；整包發給服主，雜物一律擋（h）；README.txt 是服主說明唯一出處（i）。
+PACK_JUNK = {".gitkeep", "thumbs.db", "desktop.ini", ".ds_store", ".omc", ".claude", ".gitnexus"}
+PACK_BANNED_EXTS = (".exe", ".dll", ".bat", ".app", ".dylib", ".sh", ".so", ".zip")
+PACK_SOUND_EXTS = (".ogg", ".wav")
+PACK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+PACK_FAMILY_ID_RE = re.compile(r"Minidoracat.*|Cat.*For42", re.I)   # PowerShell -like 不分大小寫
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def _prel(path):
+    return os.path.relpath(path, REPO).replace(os.sep, "/")
+
+
+def pack_problems(item_dir):
+    bad = []
+    readme = os.path.join(item_dir, "README.txt")
+    if not os.path.isfile(readme):
+        bad.append(f"{_prel(readme)}: 缺少（i：服主說明唯一出處）")
+
+    preview = os.path.join(item_dir, "preview.png")
+    rp = _prel(preview)
+    if not os.path.isfile(preview):
+        bad.append(f"{rp}: 缺少（a：上傳器回 PreviewNotFound）")
+    else:
+        size = os.path.getsize(preview)
+        if size > 1024000:
+            bad.append(f"{rp}: {size:,} bytes（a：上限 1,024,000 bytes）")
+        with open(preview, "rb") as fh:
+            head = fh.read(24)
+        if len(head) < 24 or head[:8] != PNG_SIG or head[12:16] != b"IHDR":
+            bad.append(f"{rp}: 不是 PNG（a：上傳器回 PreviewFormat）")
+        else:
+            w, h = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+            if w != h or w not in (256, 512):
+                bad.append(f"{rp}: {w}x{h}（a：需 256 或 512 正方形）")
+
+    contents = os.path.join(item_dir, "Contents")
+    if not os.path.isdir(contents):
+        bad.append(f"{_prel(contents)}/: 缺少（b：上傳器回 MissingContents）")
+        return bad
+    for name in sorted(os.listdir(contents)):
+        p = os.path.join(contents, name)
+        if not os.path.isdir(p):
+            bad.append(f"{_prel(p)}: Contents/ 底下不可放檔案（b：FileNotAllowedInContents）")
+        elif name != "mods":
+            bad.append(f"{_prel(p)}/: Contents/ 底下只能有 mods/（b：FolderNotAllowedInContents）")
+
+    mods = os.path.join(contents, "mods")
+    if not os.path.isdir(mods):
+        bad.append(f"{_prel(mods)}/: 缺少（c：至少要一個 MOD 資料夾）")
+        return bad
+    folders = []
+    for name in sorted(os.listdir(mods)):
+        p = os.path.join(mods, name)
+        if os.path.isdir(p):
+            folders.append(name)
+        else:
+            bad.append(f"{_prel(p)}: mods/ 底下只能放資料夾（c：FileNotAllowedInMods）")
+    if not folders:
+        bad.append(f"{_prel(mods)}/: 至少要一個 MOD 資料夾（c：EmptyModsFolder）")
+
+    for folder in folders:
+        info = os.path.join(mods, folder, "42", "mod.info")
+        ri = _prel(info)
+        if not os.path.isfile(info):
+            bad.append(f"{ri}: 缺少（d）")
+            continue
+        with open(info, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+        mod_id = next((ln[3:].strip() for ln in lines if ln.startswith("id=")), "")
+        if not mod_id:
+            bad.append(f"{ri}: 沒有行首 id= 或值為空（d：上傳器 startsWith(\"id=\")，不允許前置空白）")
+        else:
+            if mod_id != folder:
+                bad.append(f"{ri}: id={mod_id} 與資料夾名 {folder} 不同（d）")
+            if not PACK_ID_RE.fullmatch(mod_id):
+                bad.append(f"{ri}: id={mod_id} 只能用英數開頭、後接英數 _ . -（d）")
+            if PACK_FAMILY_ID_RE.fullmatch(mod_id):
+                bad.append(f"{ri}: id={mod_id} 用了家族前綴 Minidoracat*／Cat*For42"
+                           f"（d：sync_mod.ps1 會當家族 MOD 去 MOD/ 找來源而拒絕啟動）")
+        for lineno, ln in enumerate(lines, 1):
+            if "require=" in ln:   # ChooseGameInfo 用 contains 判斷
+                bad.append(f"{ri}:{lineno}: 不可有 require=（d：範本只放素材、不依賴載入順序）")
+
+    for base, dirs, files in os.walk(contents):
+        parts = os.path.relpath(base, contents).replace(os.sep, "/").split("/")
+        sound_dir = len(parts) == 5 and parts[0] == "mods" and parts[2:] == ["42", "media", "sound"]
+        for d in dirs:
+            rd = _prel(os.path.join(base, d))
+            if parts[-1].lower() == "media" and d.lower() in ("lua", "scripts"):
+                bad.append(f"{rd}/: 不可有 media/{d}/（f：範本只放素材，不帶程式／scripts）")
+            if sound_dir:
+                bad.append(f"{rd}/: 42/media/sound/ 不可有子資料夾（g：引擎只探測 media/sound/<名稱>）")
+        for name in files:
+            low = name.lower()
+            rf = _prel(os.path.join(base, name))
+            if low.endswith(PACK_BANNED_EXTS) and not low.endswith("pyramid.zip"):
+                bad.append(f"{rf}: 副檔名禁止上傳（e：上傳器回 FileTypeNotAllowed）")
+            if low.endswith(".lua"):
+                bad.append(f"{rf}: 不可有 .lua（f：範本只放素材，不帶程式）")
+            if low.endswith(PACK_SOUND_EXTS) and not sound_dir:
+                bad.append(f"{rf}: 音效只能直接放在 42/media/sound/（g：引擎不看子資料夾或其他位置）")
+            elif sound_dir and not low.endswith(PACK_SOUND_EXTS):
+                bad.append(f"{rf}: 42/media/sound/ 只能放 .ogg／.wav（g）")
+    return bad
+
+
+_packs_root = os.path.join(REPO, "PACKS")
+if not os.path.isdir(_packs_root):
+    skip("PACKS 使用者包範本", "repo 沒有 PACKS/ 目錄")
+else:
+    _pack_bad = []
+    for _base, _dirs, _files in os.walk(_packs_root):
+        for _name in _dirs + _files:
+            if _name.lower() in PACK_JUNK:
+                _pack_bad.append(f"{_prel(os.path.join(_base, _name))}: 雜物（h：整包發給服主，"
+                                 f"引擎也會把 MOD 樹每個檔案列成資源）")
+    _packs = sorted(d for d in os.listdir(_packs_root) if os.path.isdir(os.path.join(_packs_root, d)))
+    for _item in _packs:
+        _pack_bad += pack_problems(os.path.join(_packs_root, _item))
+    fail("PACKS 使用者包範本", _pack_bad) if _pack_bad \
+        else ok(f"PACKS 使用者包範本（{len(_packs)} 包）")
 
 # ---- 總結 ----
 print()

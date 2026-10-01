@@ -5712,6 +5712,84 @@ checkEqual(diskFiles["NoticeBoard/images/00_README.txt"], "my own notes\n",
 end)()
 
 -- ---------------------------------------------------------------------------
+-- 伺服器語音包範本（repo 的 PACKS/NoticeBoardVoicePackExample）必須與 NBCore 的約定一致：
+-- 範例音的檔名＝NBCore.SERVER_VOICE_SOUND（GameSounds 用檔名找，名稱一錯服主的語音永遠播不出來）、
+-- mod.info 的 id＝資料夾名＝NBCore.VOICE_PACK_EXAMPLE_ID（NBServer 靠它提醒服主改 id）、
+-- README 四個語系段落都寫出這兩個名稱（服主照著做的唯一說明）。任一方單獨改動都必須紅。
+-- ---------------------------------------------------------------------------
+;(function()
+    local packRoot = "PACKS/" .. NBCore.VOICE_PACK_EXAMPLE_ID .. "/"
+    local modDir = packRoot .. "Contents/mods/" .. NBCore.VOICE_PACK_EXAMPLE_ID .. "/42/"
+    local function readFile(path)
+        local handle = io.open(path, "rb")
+        if not handle then
+            return nil
+        end
+        local text = handle:read("*a")
+        handle:close()
+        return text
+    end
+
+    local modInfo = readFile(modDir .. "mod.info")
+    check(type(modInfo) == "string", "範本的 mod.info 不在 " .. modDir .. "（資料夾名要等於範例 id）")
+    checkEqual(string.match("\n" .. (modInfo or ""), "\nid=([^\r\n]+)"), NBCore.VOICE_PACK_EXAMPLE_ID,
+        "範本 mod.info 的 id 與 NBCore.VOICE_PACK_EXAMPLE_ID 不一致")
+    local sample = readFile(modDir .. "media/sound/" .. NBCore.SERVER_VOICE_SOUND .. ".wav")
+        or readFile(modDir .. "media/sound/" .. NBCore.SERVER_VOICE_SOUND .. ".ogg")
+    check(sample ~= nil, "範本 media/sound 的範例音檔名與 NBCore.SERVER_VOICE_SOUND 不一致")
+
+    local readme = readFile(packRoot .. "README.txt")
+    check(type(readme) == "string", "範本缺 README.txt")
+    local sectionTags = { "EN", "CH", "CN", "JP" }
+    local bounds = {}
+    local tagIndex
+    for tagIndex = 1, #sectionTags do
+        bounds[tagIndex] = string.find(readme, "%[" .. sectionTags[tagIndex] .. "%]%s")
+        check(bounds[tagIndex] ~= nil, "範本 README 缺少段落 " .. sectionTags[tagIndex])
+    end
+    bounds[#sectionTags + 1] = string.len(readme) + 1
+    for tagIndex = 1, #sectionTags do
+        local section = string.sub(readme, bounds[tagIndex], bounds[tagIndex + 1] - 1)
+        check(string.find(section, NBCore.SERVER_VOICE_SOUND, 1, true) ~= nil,
+            sectionTags[tagIndex] .. " 段落沒寫出音效檔名 " .. NBCore.SERVER_VOICE_SOUND)
+        check(string.find(section, NBCore.VOICE_PACK_EXAMPLE_ID, 1, true) ~= nil,
+            sectionTags[tagIndex] .. " 段落沒寫出要改掉的範例 id " .. NBCore.VOICE_PACK_EXAMPLE_ID)
+    end
+end)()
+
+-- 範例 id 提醒：只有伺服器真的啟用了範例 id 才寫 log；getActivatedMods 拋錯只是不提醒，
+-- 不能讓 onServerStarted 中斷（started 維持 false 會讓整個公告欄停擺）。
+;(function()
+    local savedActivated = getActivatedMods
+    local function modList(ids)
+        return { contains = function(_, id)
+            local index
+            for index = 1, #ids do
+                if ids[index] == id then
+                    return true
+                end
+            end
+            return false
+        end }
+    end
+
+    getActivatedMods = function() return modList({ "MinidoracatNoticeBoardFor42", "KnoxShelterVoice" }) end
+    local before = #logLines
+    checkEqual(NBServer.warnExampleVoicePack(), false, "改過 id 的語音包不提醒")
+    checkEqual(#logLines, before, "沒啟用範例 id 時不寫 log")
+
+    getActivatedMods = function()
+        return modList({ "MinidoracatNoticeBoardFor42", NBCore.VOICE_PACK_EXAMPLE_ID })
+    end
+    checkEqual(NBServer.warnExampleVoicePack(), true, "伺服器啟用範例 id 時要提醒服主改 id")
+    check(logContains(NBCore.VOICE_PACK_EXAMPLE_ID), "提醒要寫出是哪個 id")
+
+    getActivatedMods = function() error("no file system") end
+    checkEqual(NBServer.warnExampleVoicePack(), false, "getActivatedMods 拋錯時只是不提醒")
+    getActivatedMods = savedActivated
+end)()
+
+-- ---------------------------------------------------------------------------
 -- 圖片快取：檔名的命名空間（安全）、LRU 淘汰、寫入時間窗
 --
 -- 實跑真正出貨的 NBImageCache，不另寫一份邏輯副本。三件事光讀碼保證不了：

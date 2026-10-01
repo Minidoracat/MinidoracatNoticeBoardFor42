@@ -170,6 +170,27 @@ local VOICE_SOUNDS = {
 }
 local VOICE_ACTOR_SUFFIX = { stacy = "Stacy", yui = "Yui", classic = "" }
 local VOICE_CHOICES = { "chime", "auto", "CH", "EN", "JP" }
+
+-- 伺服器語音包（範本：repo 的 PACKS/NoticeBoardVoicePackExample）由服主的 Workshop 包提供
+-- media/sound/<Core.SERVER_VOICE_SOUND>.ogg|.wav。偵測不必真的播：getOrCreateSound 對這個名稱建 clip 時
+-- 只有找到 media/sound 底下的檔才會填 file（GameSounds.java:94-138），沒有包就是 nil。
+-- pcall：GameSounds 不存在（dedicated、離線測試）或任何一步拋錯都當成「伺服器沒提供」。
+local function serverVoiceAvailable()
+    local ok, file = pcall(function()
+        local sound = GameSounds.getSound(Core.SERVER_VOICE_SOUND)
+        local clip = sound and sound:getRandomClip()
+        return clip and clip:getFile()
+    end)
+    return ok and type(file) == "string" and file ~= ""
+end
+
+-- 「自動」在伺服器有語音包時改播伺服器語音，標籤要跟著說清楚，否則玩家以為自動仍是遊戲語系的內建語音。
+local function voiceChoiceLabel(code)
+    if code == "auto" and serverVoiceAvailable() then
+        return getText("IGUI_MinidoracatNB_Voice_auto_server")
+    end
+    return getText("IGUI_MinidoracatNB_Voice_" .. code)
+end
 local previewEmitter, previewReference
 local LAYOUT_NAME = "MinidoracatNBPanel"
 
@@ -1030,7 +1051,7 @@ function NBPanel:onVoiceLanguageButton(button)
     local index
     for index = 1, #VOICE_CHOICES do
         local code = VOICE_CHOICES[index]
-        local option = menu:addOption(getText("IGUI_MinidoracatNB_Voice_" .. code),
+        local option = menu:addOption(voiceChoiceLabel(code),
             self, NBPanel.onVoiceLanguageSelected, code)
         menu:setOptionChecked(option, current == code)
     end
@@ -1054,7 +1075,7 @@ end
 function NBPanel:onVoiceLanguageSelected(code)
     if Client.setVoiceLanguagePreference(code) then
         NBToast.show(getText("IGUI_MinidoracatNB_VoiceSelected",
-            getText("IGUI_MinidoracatNB_Voice_" .. Client.getVoiceLanguagePreference())))
+            voiceChoiceLabel(Client.getVoiceLanguagePreference())))
     end
     NBPanel.previewVoice()
 end
@@ -2211,15 +2232,23 @@ local function playNoticeSound(preview)
     local ok, played = pcall(function()
         local manager = getSoundManager()
         local code = Client.getVoiceLanguagePreference()
-        if code == "auto" then
-            code = Translator.getLanguage():name()
-            if VOICE_SOUNDS[code] == nil then
-                code = "EN"
-            end
+        local reference = nil
+        -- 「自動」（含沒選過）優先播伺服器語音包；那個名稱播不出來（回 0）才退回內建語音。
+        -- 玩家明確選的語言或原提示音不受伺服器影響。
+        if code == "auto" and serverVoiceAvailable() then
+            reference = manager:playUISound(Core.SERVER_VOICE_SOUND)
         end
-        local voice = VOICE_SOUNDS[code]
-        local reference = manager:playUISound(voice
-            and voice .. VOICE_ACTOR_SUFFIX[Options.voiceActor()] or NOTIFY_SOUND)
+        if reference == nil or reference == 0 then
+            if code == "auto" then
+                code = Translator.getLanguage():name()
+                if VOICE_SOUNDS[code] == nil then
+                    code = "EN"
+                end
+            end
+            local voice = VOICE_SOUNDS[code]
+            reference = manager:playUISound(voice
+                and voice .. VOICE_ACTOR_SUFFIX[Options.voiceActor()] or NOTIFY_SOUND)
+        end
         if reference == nil or reference == 0 then return false end
         local emitter = manager:getUIEmitter()
         if volume < 1 then emitter:setVolume(reference, volume) end

@@ -7,6 +7,7 @@
   "IGUI_MinidoracatNB_VoiceLanguage": "Voice",
   "IGUI_MinidoracatNB_Voice_chime": "Original sound (no voice)",
   "IGUI_MinidoracatNB_Voice_auto": "Auto (game language; English for other languages)",
+  "IGUI_MinidoracatNB_Voice_auto_server": "Auto (server voice)",
   "IGUI_MinidoracatNB_Voice_CH": "Chinese",
   "IGUI_MinidoracatNB_Voice_EN": "English",
   "IGUI_MinidoracatNB_Voice_JP": "Japanese",

@@ -608,13 +608,32 @@ NoticeBoard/<語系>/20_rules/30_server_rules.only.txt
 `.ogg`／`.wav`；**mp3 不能直接用**，請先自行轉檔。素材若不是自己做的，公開發布前請自行確認授權
 ——商業作品（動畫、遊戲）的音效通常不允許再散布。
 
+## 伺服器語音包（可選）
+
+想讓新公告播你們自己錄的語音（例如「歡迎來到某某伺服器，有新公告喔」），做一個只放音檔的小 MOD，
+上傳 Workshop 後加進伺服器的 `Mods=` 與 `WorkshopItems=`，玩家進服會自動下載。範本在本 repo 的
+[`PACKS/NoticeBoardVoicePackExample/`](https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/tree/main/PACKS/NoticeBoardVoicePackExample)；
+做法（複製到哪裡、改 id、換音檔、預覽圖規格、單機測試、上傳、加進伺服器、之後怎麼換）只寫在範本裡的
+`README.txt`（中英日四語），這裡不重複。
+
+- **為什麼不能像圖片那樣丟進伺服器資料夾**：遊戲只播放啟動或載入 MOD 時掃到的音檔，伺服器運行中傳給玩家的檔案
+  播不出來（`ZomboidFileSystem.getAbsolutePath` 只查 `activeFileMap`）；圖片用的是另一條可以讀絕對路徑的載入方式。
+- **誰會聽到**：語音設定是「自動」（預設值）的玩家。語音包啟用時，「語音」選單的自動那一項會顯示
+  「自動（使用伺服器語音）」；明確選了某個語言或「原提示音」的玩家維持原選擇。語音包的音檔播不出來時退回內建語音。
+- **怎麼偵測**：客戶端看音效 `MinidoracatNBVoiceServer` 有沒有對應到語音包裡的 `media/sound/MinidoracatNBVoiceServer.ogg`
+  或 `.wav`（`GameSounds.getSound(...):getRandomClip():getFile()`），不需要真的播放。
+- **範本 id 提醒**：伺服器啟用的 MOD 裡有 `NoticeBoardVoicePackExample` 時，`server-console.txt` 會出現
+  `voice pack id NoticeBoardVoicePackExample is the template's example id` 一行，提醒改成自己的 id。
+  不同服主沿用同一個 id 上傳時，同時訂閱兩個包的玩家只會載入其中一個，另一台伺服器就會播錯語音。
+- **之後換語音**：替換音檔、更新 Workshop 項目並重啟伺服器，玩家下次進服就會拿到新語音。
+
 ## 玩家自己的音效設定
 
 面板工具列的「語音」按鈕可直接切換通知聲音，不需要修改音檔。選單列出語言，最後一項「聲音：目前的聲音 >」滑過去會展開聲音子選單：
 
 - **原提示音**：沿用上節的 `MinidoracatNBNotify.wav`，不播語音。
 - **中文／English／日本語**：播放各自的公告語音；繁體與簡體中文共用中文聲音。
-- **自動（預設）**：跟隨遊戲語系，非中／英／日語系使用英文；不跟隨面板的公告文字語系。
+- **自動（預設）**：伺服器有語音包時播伺服器語音（見上節，選單顯示「自動（使用伺服器語音）」）；沒有時跟隨遊戲語系，非中／英／日語系使用英文；不跟隨面板的公告文字語系。
 - **聲音 > Stacy（甜美，預設）／Yui（溫柔）／經典（舊版語音）**：語音用哪一個聲音，三種都有中、英、日。語言與聲音各自一個勾，分在主選單與子選單。
   明選「原提示音」之後再選聲音，會一併切回「自動」，選了就聽得到。
 

@@ -2412,6 +2412,22 @@ function NBServer.refresh(reason, forceAll)
     return refreshSnapshot(reason or "manual", forceAll == true)
 end
 
+-- 範本語音包沒改 id 就上傳時提醒服主：不同服主的包同 id，玩家同時訂閱兩個只會載入其中一個，
+-- 另一台伺服器就播錯語音。getActivatedMods() 是 ZomboidFileSystem.getModIDs()（LuaManager.java:7458-7463），
+-- 回本場實際載入的 id（不帶 B42 的反斜線前綴）。只提醒、不擋：伺服器照常運作。
+local function warnExampleVoicePack()
+    local ok, active = pcall(function()
+        local mods = getActivatedMods()
+        return mods ~= nil and mods:contains(Core.VOICE_PACK_EXAMPLE_ID)
+    end)
+    if not (ok and active) then
+        return false
+    end
+    logLine("voice pack id " .. Core.VOICE_PACK_EXAMPLE_ID .. " is the template's example id; give the pack"
+        .. " its own id before uploading it, or players subscribed to two packs with this id get only one of them")
+    return true
+end
+
 function NBServer.onServerStarted()
     local state = NBServer.state
     -- state.started 一律最後才設 true。曾經踩過：這行放在最前面時，中途任何例外都會讓
@@ -2469,6 +2485,7 @@ function NBServer.onServerStarted()
     ensureCategoriesFile()
     bootstrapIfEmpty()
     ensureImagesReadme()
+    warnExampleVoicePack()
     refreshSnapshot("startup", true)
     state.lastPollMs = getTimestampMs()
     rebuildOnlinePlayers()
@@ -2530,6 +2547,8 @@ NBServer.ensureCategoriesFile = ensureCategoriesFile
 -- 同上：唯有實跑一次完整編碼才能釘住 entry.pb（原地覆蓋比對的基準）確實來自
 -- 開檔時的 available()，而不是實際讀到的位元組數——兩者在 short-read 時會分岔。
 NBServer.pumpImageEncode = pumpImageEncode
+-- 同上：範本 id 提醒只在真的有啟用該 id 時寫 log，光讀碼看不出 getActivatedMods 的回傳格式是否對得上。
+NBServer.warnExampleVoicePack = warnExampleVoicePack
 
 if not NBServer._eventsInstalled then
     Events.OnServerStarted.Add(function()

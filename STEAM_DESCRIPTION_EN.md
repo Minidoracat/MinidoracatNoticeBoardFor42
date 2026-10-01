@@ -23,7 +23,7 @@ An in-game server notice board: server owners write notices as Markdown files, a
 [list]
 [*] [b]Markdown notices[/b]: laid out in game; bold and italic are shown as colors
 [*] [b]Edit and it updates[/b]: no server restart; admins can reload with one click
-[*] [b]Voice alerts[/b]: new notices are announced by Stacy or Yui, in Chinese, English or Japanese
+[*] [b]Voice alerts[/b]: new notices are announced by Stacy or Yui, in Chinese, English or Japanese; server owners can swap in their own recorded line (see the full guide)
 [*] [b]Document tree and custom categories[/b]: one notice per file in a collapsible sidebar with expand-all / collapse-all
 [*] [b]Multilingual notices[/b]: offer as many languages as you like; players follow their game language or switch manually
 [*] [b]Images in notices[/b]: PNGs sync to players automatically, with no texture-pack mod needed

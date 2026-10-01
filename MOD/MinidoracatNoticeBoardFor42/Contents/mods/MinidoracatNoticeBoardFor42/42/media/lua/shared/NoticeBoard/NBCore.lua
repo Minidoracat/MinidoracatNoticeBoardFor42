@@ -74,6 +74,14 @@ NBCore.MAX_LANGUAGE_LIST = 32
 -- 正好累積 1e6 次切換，不可能發生。同時它也是接收端的信任邊界上界。
 NBCore.MAX_LANGUAGE_SEQ = 1000000
 
+-- 伺服器語音包的約定（範本在 repo 的 PACKS/NoticeBoardVoicePackExample）。服主的包把
+-- media/sound/<SERVER_VOICE_SOUND>.ogg 或 .wav 放進自己的 Workshop 項目；音效名＝檔名去掉副檔名
+-- （GameSounds.getOrCreateSound 對 media/sound 的 fallback）。client 播放與範本一致性測試都讀這裡。
+NBCore.SERVER_VOICE_SOUND = "MinidoracatNBVoiceServer"
+-- 範本包的 id。服主沿用它上傳時，玩家同時訂閱兩個同 id 的包只會載入其中一個（另一台伺服器就播錯語音），
+-- 所以伺服器啟用的 MOD 裡有這個 id 時，NBServer 會在 log 提醒服主改 id。
+NBCore.VOICE_PACK_EXAMPLE_ID = "NoticeBoardVoicePackExample"
+
 -- Kahlua 的 table.sort 是遞迴 quicksort，跑在 coroutine 堆疊上（MAX_STACK_SIZE=3000，
 -- Coroutine.java:16）；輸入已接近排序時退化成 O(n) 遞迴深度，數百筆即堆疊溢位
 -- （Cleaner 0.1.1 正式服實際炸過）。本 MOD 的排序輸入多為檔案清單（目錄列舉常已排序）

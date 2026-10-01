@@ -1,0 +1,4 @@
+name=Notice Board Voice Pack (Example)
+id=NoticeBoardVoicePackExample
+description=Server voice for Minidoracat Notice Board. Put your own MinidoracatNBVoiceServer.ogg or .wav in media/sound, and give the pack your own id before uploading.
+versionMin=42.0.0

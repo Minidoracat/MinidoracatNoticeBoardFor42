@@ -1719,6 +1719,87 @@ end)()
     _G.SandboxVars = {}
 end)()
 
+-- 伺服器語音包：「自動」（含沒選過）優先播服主包裡的 NBCore.SERVER_VOICE_SOUND；
+-- 那個名稱播不出來（回 0）退回內建語音；玩家明確選的語言與原提示音不受影響；
+-- 選單的「自動」標示跟著包在不在切換。偵測走 GameSounds 的 clip 檔名，不必真的播。
+;(function()
+    local sounds, failing = {}, {}
+    _G.getSoundManager = function()
+        return {
+            playUISound = function(_, name)
+                sounds[#sounds + 1] = name
+                return failing[name] and 0 or 4242
+            end,
+            getUIEmitter = function()
+                return { setVolume = function() end, stopSoundLocal = function() end }
+            end,
+        }
+    end
+    local packFile = "media/sound/" .. NBCore.SERVER_VOICE_SOUND .. ".wav"
+    _G.GameSounds = { getSound = function(name)
+        return { getRandomClip = function()
+            return { getFile = function()
+                if name == NBCore.SERVER_VOICE_SOUND then return packFile end
+                return nil
+            end }
+        end }
+    end }
+    local savedTranslator = _G.Translator
+    _G.Translator = { getLanguage = function() return { name = function() return "EN" end } end }
+    local realToastShow = NBToast.show
+    NBToast.show = function() end
+    local unread = _G.NBClient.isUnread
+    _G.NBClient.isUnread = function() return true end
+    _G.SandboxVars = {}
+    local snapshot = { files = { { id = "a.md", title = "A", h = "1111" } } }
+
+    VOICE_PREFERENCE.value, VOICE_ACTOR.value = "auto", "stacy"
+    NBPanel.notifyUnread(snapshot, nil)
+    checkEqual(table.concat(sounds, ","), NBCore.SERVER_VOICE_SOUND,
+        "auto plays only the server voice pack when the server ships one")
+
+    sounds, failing = {}, { [NBCore.SERVER_VOICE_SOUND] = true }
+    NBPanel.notifyUnread(snapshot, nil)
+    checkEqual(table.concat(sounds, ","), NBCore.SERVER_VOICE_SOUND .. ",MinidoracatNBVoiceENStacy",
+        "a server voice that cannot play (ref 0) falls back to the built-in auto voice")
+    failing = {}
+
+    local explicit = { CH = "MinidoracatNBVoiceCHStacy", EN = "MinidoracatNBVoiceENStacy",
+        JP = "MinidoracatNBVoiceJPStacy", chime = "MinidoracatNBNotify" }
+    for pref, expected in pairs(explicit) do
+        VOICE_PREFERENCE.value, sounds = pref, {}
+        NBPanel.notifyUnread(snapshot, nil)
+        checkEqual(table.concat(sounds, ","), expected,
+            "an explicit choice (" .. pref .. ") keeps its own sound over the server voice")
+    end
+
+    VOICE_PREFERENCE.value = "auto"
+    local panel = NBPanel:new()
+    panel:createChildren()
+    panel.voiceButton.onclick(panel, panel.voiceButton)
+    local menu = CONTEXT_MENUS.list[#CONTEXT_MENUS.list]
+    checkEqual(menu.options[2].param, "auto", "auto stays the second voice choice")
+    checkEqual(menu.options[2].title, "[IGUI_MinidoracatNB_Voice_auto_server]",
+        "auto names the server voice while the server ships one")
+
+    packFile = nil
+    sounds = {}
+    NBPanel.notifyUnread(snapshot, nil)
+    checkEqual(table.concat(sounds, ","), "MinidoracatNBVoiceENStacy",
+        "without a server voice pack, auto keeps the built-in voice")
+    panel.voiceButton.onclick(panel, panel.voiceButton)
+    menu = CONTEXT_MENUS.list[#CONTEXT_MENUS.list]
+    checkEqual(menu.options[2].title, "[IGUI_MinidoracatNB_Voice_auto]",
+        "auto keeps its usual label without a server voice pack")
+
+    VOICE_PREFERENCE.value, VOICE_ACTOR.value = "chime", "stacy"
+    _G.Translator = savedTranslator
+    _G.NBClient.isUnread = unread
+    NBToast.show = realToastShow
+    _G.GameSounds = nil
+    _G.getSoundManager = nil
+end)()
+
 -- findLinkAt 吃**內容座標**：兩個呼叫端（getMouseX/Y 與 onMouseUp 參數）給的座標
 -- 都已扣掉捲動（ISUIElement.lua:339-350、UIElement.java:1311-1321），這裡不得再加
 -- getYScroll() 補償。踩過：加了一次 → 捲動後判定區上移，「要在連結上方才觸發」。
