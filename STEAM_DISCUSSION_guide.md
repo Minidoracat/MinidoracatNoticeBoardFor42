@@ -70,7 +70,7 @@
 [*] 同一個選單最後一項「聲音」可選 Stacy（甜美，預設）、Yui（溫柔）或經典（改版前的語音），三種都有中英日。
 [*] 旁邊的音量滑桿可拖曳或用滑鼠滾輪調整（每格 5%），放開或捲動後會試聽一次。它和「選項 → MODS」裡的音量是同一份設定，那裡也能關掉提示音。
 [*] 伺服器可用沙盒選項「新公告播放提示音」整台關閉。
-[*] [b]伺服器語音包（服主選用）[/b]：想讓新公告播你們自己錄的語音，可以做一個只放音檔的小 MOD 上傳 Workshop，再加進伺服器的 Mods= 與 WorkshopItems=。語音設定是「自動」的玩家會改播這段語音，選單顯示「自動（使用伺服器語音）」。範本與四語做法說明：[url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/tree/main/PACKS/NoticeBoardVoicePackExample]NoticeBoardVoicePackExample[/url]。上傳前務必把範本 id 改成自己的。
+[*] [b]伺服器語音包（服主選用）[/b]：想讓新公告播你們自己錄的語音，可以做一個只放音檔的小 MOD 上傳 Workshop，再加進伺服器的 Mods= 與 WorkshopItems=。語音設定是「自動」的玩家會改播這段語音，選單顯示「自動（使用伺服器語音）」。範本下載：[url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/releases/latest/download/NoticeBoardVoicePackExample.zip]NoticeBoardVoicePackExample.zip[/url]，解開後照裡面的 README.txt（中英日四語）做。上傳前務必把範本 id 改成自己的。
 [/list]
 
 [h2]🛠️ 管理員工具[/h2]

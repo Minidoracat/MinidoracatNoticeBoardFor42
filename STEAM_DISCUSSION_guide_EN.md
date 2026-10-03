@@ -68,7 +68,7 @@ New or updated notices play one sound per batch, set per player at the top of th
 [list]
 [*] [b]Voice[/b] menu: Auto (default; matches a Chinese or Japanese game, else English), Chinese, English, Japanese or "Original sound (no voice)". Its last item, "Voice: …", picks the speaker: Stacy (default), Yui or Classic.
 [*] The volume slider takes a drag or the mouse wheel (5% per notch) and plays a preview. It is the same setting as Options → MODS.
-[*] [b]Server voice pack (optional, for server owners)[/b]: to play your own recorded line for new notices, make a small MOD that only holds the audio file, upload it to the Workshop and add it to the server's Mods= and WorkshopItems=. Players whose voice setting is Auto hear that line, and the menu shows "Auto (server voice)". Template and instructions in four languages: [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/tree/main/PACKS/NoticeBoardVoicePackExample]NoticeBoardVoicePackExample[/url]. Give the pack its own id before uploading.
+[*] [b]Server voice pack (optional, for server owners)[/b]: to play your own recorded line for new notices, make a small MOD that only holds the audio file, upload it to the Workshop and add it to the server's Mods= and WorkshopItems=. Players whose voice setting is Auto hear that line, and the menu shows "Auto (server voice)". Template download: [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/releases/latest/download/NoticeBoardVoicePackExample.zip]NoticeBoardVoicePackExample.zip[/url], then follow the README.txt inside (four languages). Give the pack its own id before uploading.
 [/list]
 
 [h2]🛠️ Admin tools[/h2]
