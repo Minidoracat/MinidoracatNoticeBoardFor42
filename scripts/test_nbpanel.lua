@@ -1310,6 +1310,8 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     check(button ~= nil, "wrapper 經框架 FloatButton 建立浮鈕")
     check(button:getX() == 640 and button:getY() == 480,
         "建立當下就套用 layout.ini 裡本解析度的位置（回呼掛錯位置就會留在預設槽位）")
+    checkEqual(button.getTooltipText(button), "[IGUI_MinidoracatNB_PanelTitle]",
+        "退回浮鈕 hover 提示 = 面板名稱（純圖示控制項要有名稱）")
     button.unread = true
     button:setPosition(10, 20)
     local buttonScaled = {}
@@ -1425,6 +1427,73 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     check(NBFloatButton.ensureInstance() == button
         and button:getX() == 555 and button:getY() == 222,
         "重複 ensureInstance 不新建浮鈕，也不把拖曳位置重設回預設槽位")
+
+    -- 家族工具列（Dock，框架 API rev 13）：有能力就登記一個入口、不建浮鈕；
+    -- register 回 false 退回浮鈕。框架 Dock 本體由框架 harness 驗，這裡只錄 consumer 給的 spec。
+    do
+        local ui = MinidoracatUI.v1
+        local FW = ui.FloatButton
+        local savedNew, savedDock, savedCap = FW.new, ui.Dock, ui.CAPABILITIES.dock
+        local savedUnreadIds, savedToggleFn, savedPanel = NBClient.getUnreadIds, NBPanel.toggle, NBPanel.instance
+        local created, specs, refreshes, accept = 0, {}, 0, false
+        FW.new = function(opts)
+            created = created + 1
+            return savedNew(opts)
+        end
+        ui.CAPABILITIES.dock = true
+        ui.Dock = {
+            register = function(spec)
+                specs[#specs + 1] = spec
+                return accept
+            end,
+            refresh = function() refreshes = refreshes + 1 end,
+        }
+
+        NBFloatButton.instance = nil
+        check(NBFloatButton.ensureInstance() ~= nil and created == 1 and #specs == 1,
+            "Dock register 回 false：退回建立浮鈕")
+
+        NBFloatButton.instance = nil
+        accept = true
+        NBClient.getUnreadIds = function() return { "a" } end
+        check(NBFloatButton.ensureInstance() == nil, "Dock 登記成功：ensureInstance 不回浮鈕")
+        NBFloatButton.ensureInstance()
+        checkEqual(created, 1, "Dock 登記成功：不建立獨立浮鈕")
+        checkEqual(#specs, 2, "Dock 只登記一次（重複 ensureInstance 不重登）")
+        checkEqual(refreshes, 2, "每次 ensureInstance 都要求 Dock 重算")
+        local spec = specs[2]
+        check(spec.id == "noticeboard" and spec.order == 20
+            and spec.icon == "media/ui/NoticeBoard/nb_megaphone.png", "Dock 入口 id／排序／圖示")
+        checkEqual(spec.label(), "[IGUI_MinidoracatNB_PanelTitle]", "Dock 名稱 = 面板標題")
+        checkEqual(spec.isAvailable, nil, "遊戲中一律可用（同浮鈕：沒有隱藏選項）")
+        checkEqual(spec.getBadge(), -1, "有未讀：Dock 紅點")
+        checkEqual(spec.getStatus(), "[IGUI_MinidoracatNB_DockUnread]", "有未讀：Dock 提示列出未讀")
+
+        NBClient.getUnreadIds = function() return {} end
+        local before = refreshes
+        NBFloatButton.onUnreadChanged({})
+        check(spec.getBadge() == 0 and spec.getStatus() == nil and refreshes > before,
+            "未讀清空：Dock 徽章與狀態消失，且要求 Dock 重算")
+        before = refreshes
+        NBFloatButton.setUnread(true)
+        check(spec.getBadge() == -1 and refreshes == before + 1, "setUnread：Dock 紅點並要求重算")
+
+        NBPanel.instance = nil
+        check(spec.isActive() == false, "面板未建立：不亮開啟中")
+        local visible = true
+        NBPanel.instance = { getIsVisible = function() return visible end }
+        check(spec.isActive() == true, "面板可見：開啟中")
+        visible = false
+        check(spec.isActive() == false, "面板關閉：不亮開啟中")
+        local toggles = 0
+        NBPanel.toggle = function() toggles = toggles + 1 end
+        spec.onClick(spec)
+        checkEqual(toggles, 1, "Dock 點擊綁 NBPanel.toggle")
+
+        FW.new, ui.Dock, ui.CAPABILITIES.dock = savedNew, savedDock, savedCap
+        NBClient.getUnreadIds, NBPanel.toggle, NBPanel.instance = savedUnreadIds, savedToggleFn, savedPanel
+        NBFloatButton.instance = button
+    end
     _G.getSpecificPlayer = savedGetPlayer
 
     -- Toast：wrapper 轉發（標題＋色票），動畫落點與換皮前逐位相同

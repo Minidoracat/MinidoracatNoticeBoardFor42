@@ -1,5 +1,6 @@
 {
   "IGUI_MinidoracatNB_PanelTitle": "Server Notice Board",
+  "IGUI_MinidoracatNB_DockUnread": "You have unread notices.",
   "IGUI_MinidoracatNB_Reload": "Reload",
   "IGUI_MinidoracatNB_Examples": "Rebuild examples",
   "IGUI_MinidoracatNB_ResetSize": "Reset size",

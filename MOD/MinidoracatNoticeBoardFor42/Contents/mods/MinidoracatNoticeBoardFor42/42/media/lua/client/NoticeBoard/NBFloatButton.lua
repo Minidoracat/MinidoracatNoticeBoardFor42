@@ -11,7 +11,10 @@
 --   4. 解析度變更：重套當前解析度的紀錄（原版只在 RegisterWindow 時 TryRestore）
 --   5. 未讀事件（MinidoracatNB_UnreadChanged）→ setUnread
 --
--- 【退回】框架 FloatButton 能力缺席時不建浮鈕（degraded：無浮動入口，
+-- 【家族工具列】框架有 Dock（CAPABILITIES.dock，API rev 13）時，第一次 ensureInstance
+-- 登記成 Dock 入口、不建浮鈕；之後未讀變動改呼叫 Dock.refresh()。登記失敗或框架沒有
+-- Dock 才走下面的浮鈕。
+-- 【退回】框架 FloatButton 能力也缺席時不建浮鈕（degraded：無浮動入口，
 -- 面板仍可由重新載入鈕／其他入口開啟）；不自帶降級實作。
 
 require "ISUI/ISLayoutManager"
@@ -60,6 +63,49 @@ local function frameworkFloatButton()
     return nil
 end
 
+-- 未讀狀態：浮鈕紅點與 Dock 徽章共用（事件時更新，Dock 每幀讀它不必配置 table）
+local unread = false
+local dock = nil -- 登記成功後的 UI.Dock
+
+local function panelTitle() return getText("IGUI_MinidoracatNB_PanelTitle") end
+local function togglePanel() NBPanel.toggle() end -- 呼叫時查表（測試與重載會換掉）
+
+-- Dock 回呼每幀可能被呼叫：只讀現成狀態，不建 table、不拋錯
+local DOCK_SPEC = {
+    id = "noticeboard",
+    order = 20,
+    label = panelTitle,
+    icon = ICON_PATH,
+    onClick = togglePanel,
+    isActive = function()
+        local panel = NBPanel.instance
+        return panel ~= nil and panel:getIsVisible() == true
+    end,
+    getBadge = function()
+        if unread then return -1 end
+        return 0
+    end,
+    getStatus = function()
+        if unread then return getText("IGUI_MinidoracatNB_DockUnread") end
+        return nil
+    end,
+    -- 不給 isAvailable：浮鈕在遊戲中一律顯示（ensureInstance 每次 setVisible(true)），
+    -- 遊戲外／沒有玩家時的隱藏由 Dock 自己處理，與框架浮鈕的自我隱藏相同。
+}
+
+-- 只登記一次；能力缺席或 register 回 false → 回 nil，呼叫端走浮鈕。
+local function dockApi()
+    if dock then
+        return dock
+    end
+    local ui = MinidoracatUI and MinidoracatUI.v1
+    if ui and ui.CAPABILITIES and ui.CAPABILITIES.dock and ui.Dock
+        and ui.Dock.register(DOCK_SPEC) == true then
+        dock = ui.Dock
+    end
+    return dock
+end
+
 -- 內容繪製（框架畫完皮膚後回呼）：置中喇叭圖標＋未讀點
 -- 圖標在建立時載入一次（btn.icon）；載不到就退回文字，per-frame 不重試貼圖
 local function drawContent(btn)
@@ -104,18 +150,28 @@ function NBFloatButton.SaveLayout(button, name, layout)
     layout.visible = nil -- 不再持久化可見性
 end
 
-function NBFloatButton.setUnread(unread)
+function NBFloatButton.setUnread(value)
+    unread = value == true
     local btn = NBFloatButton.instance
     if btn then
-        btn.unread = unread == true
+        btn.unread = unread
+    elseif dock then
+        dock.refresh()
     end
 end
 
 function NBFloatButton.ensureInstance()
+    unread = #Client.getUnreadIds() > 0
     if NBFloatButton.instance then
         NBFloatButton.instance:setVisible(true)
-        NBFloatButton.instance.unread = #Client.getUnreadIds() > 0
+        NBFloatButton.instance.unread = unread
         return NBFloatButton.instance
+    end
+
+    local Dock = dockApi()
+    if Dock then
+        Dock.refresh()
+        return nil -- 已收進家族工具列：不建浮鈕
     end
 
     local FW = frameworkFloatButton()
@@ -134,11 +190,12 @@ function NBFloatButton.ensureInstance()
             border = COLORS.BORDER,
         },
         drawContent = drawContent,
-        onClick = function() NBPanel.toggle() end,
+        onClick = togglePanel,
+        getTooltip = panelTitle, -- 純圖示控制項要有名稱（原版側欄每顆都有，ISEquippedItem.lua:751）
         -- 只保存版面，不廣播會觸發其他 listener 的存檔事件。
         onMoved = ISLayoutManager.OnPostSave,
     })
-    button.unread = #Client.getUnreadIds() > 0
+    button.unread = unread
 
     -- 圖標載入一次就好（`getTexture` 走 `Texture.getSharedTexture`，本身有快取；
     -- 但仍不放在 drawContent 裡以免每幀查表）。dedicated 端回 null
@@ -167,10 +224,8 @@ function NBFloatButton.onResolutionChange()
 end
 
 function NBFloatButton.onUnreadChanged(unreadIds)
-    local button = NBFloatButton.ensureInstance()
-    if button then
-        button.unread = type(unreadIds) == "table" and #unreadIds > 0
-    end
+    NBFloatButton.ensureInstance()
+    NBFloatButton.setUnread(type(unreadIds) == "table" and #unreadIds > 0)
 end
 
 if not NBFloatButton._eventsInstalled then

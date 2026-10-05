@@ -1,5 +1,6 @@
 {
   "IGUI_MinidoracatNB_PanelTitle": "サーバー掲示板",
+  "IGUI_MinidoracatNB_DockUnread": "未読のお知らせがあります",
   "IGUI_MinidoracatNB_Reload": "再読み込み",
   "IGUI_MinidoracatNB_Examples": "サンプル再生成",
   "IGUI_MinidoracatNB_ResetSize": "サイズ初期化",

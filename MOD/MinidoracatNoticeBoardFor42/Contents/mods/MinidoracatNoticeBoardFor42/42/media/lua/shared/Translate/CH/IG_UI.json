@@ -1,5 +1,6 @@
 {
   "IGUI_MinidoracatNB_PanelTitle": "伺服器公告欄",
+  "IGUI_MinidoracatNB_DockUnread": "有未讀公告",
   "IGUI_MinidoracatNB_Reload": "重新載入",
   "IGUI_MinidoracatNB_Examples": "重建範例",
   "IGUI_MinidoracatNB_ResetSize": "重設大小",
