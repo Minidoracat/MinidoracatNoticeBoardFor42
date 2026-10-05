@@ -12,7 +12,7 @@
 [*] Enable the mod and start the server (or a singleplayer game) once. If there are no notices yet, EN and CH starter examples are created.
 [*] Open the notice folder (below) and edit the examples or add your own .md / .txt notices.
 [*] Save: online players get it with a new-notice alert within one polling interval (default 60s), or at once when an admin presses Reload on the panel.
-[*] Players click the floating speaker icon to open or close the board. A red dot means unread notices.
+[*] Players click the speaker icon in the family toolbar to open or close the board. A red dot means unread notices, and hovering it shows "You have unread notices." If the UI Library hasn't been updated yet, a draggable floating speaker icon is used instead.
 [/olist]
 
 [h2]📁 Where notices live[/h2]
@@ -82,7 +82,7 @@ On the notice panel, admins only (the server re-checks permissions).
 
 [h2]⚙️ Sandbox options (Minidoracat Notice Board)[/h2]
 [list]
-[*] [b]Automatic popup mode[/b]: Always / Unread notices only (default) / Never. The floating icon always opens the board.
+[*] [b]Automatic popup mode[/b]: Always / Unread notices only (default) / Never. The toolbar speaker icon always opens the board.
 [*] [b]Notice polling interval[/b]: 60s default, 10–3600.
 [*] [b]Default notice language[/b]: the baseline language, default EN.
 [*] [b]Play a sound for new notices[/b]: server-wide switch for the notice sound and voice.
