@@ -346,6 +346,8 @@ _G.NBOptions = {
         return true
     end,
     voiceActor = function() return VOICE_ACTOR.value end,
+    -- 入口顯示選項預設開；入口那段測試會換掉它模擬玩家關掉
+    showButton = function() return true end,
     setVoiceActor = function(actor)
         VOICE_ACTOR.value = actor
         VOICE_ACTOR.saves = VOICE_ACTOR.saves + 1
@@ -1428,6 +1430,50 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         and button:getX() == 555 and button:getY() == 222,
         "重複 ensureInstance 不新建浮鈕，也不把拖曳位置重設回預設槽位")
 
+    -- 入口顯示選項（玩家在「選項 > MODS」關掉按鈕）：浮鈕的可見性只聽選項，既有的
+    -- 強制顯示路徑（進場、重生、新未讀、換解析度）都不得把玩家藏起來的浮鈕叫回來。
+    do
+        local savedShow, savedUnreadIds = NBOptions.showButton, NBClient.getUnreadIds
+        local shown = false
+        NBOptions.showButton = function() return shown end
+        local tipOpen = true
+        button._tooltipUI = {
+            getIsVisible = function() return tipOpen end,
+            setVisible = function(_, value) tipOpen = value end,
+            removeFromUIManager = function() end,
+        }
+        NBFloatButton.onOptionsApplied()
+        check(button:getIsVisible() == false and tipOpen == false,
+            "選項關＋套用：浮鈕立即隱藏，滑鼠提示一併收掉")
+        NBClient.getUnreadIds = function() return { "a" } end
+        NBFloatButton.onGameStart()
+        local createHandlers = Events.OnCreatePlayer.handlers
+        for index = 1, #createHandlers do createHandlers[index](0) end
+        NBFloatButton.onUnreadChanged({ "a" })
+        NBFloatButton.onResolutionChange()
+        check(button:getIsVisible() == false and button.unread == true,
+            "選項關：進場、重生、新未讀、換解析度都不把浮鈕叫回來（未讀紅點照記）")
+        shown = true
+        NBFloatButton.onOptionsApplied()
+        check(button:getIsVisible() == true, "選項開＋套用：浮鈕立即恢復")
+
+        shown = false
+        NBFloatButton.instance = nil
+        check(NBFloatButton.ensureInstance() == nil and NBFloatButton.instance == nil,
+            "選項關：進場時不建浮鈕")
+        shown = true
+        _G.getSpecificPlayer = function() return nil end
+        NBFloatButton.onOptionsApplied()
+        check(NBFloatButton.instance == nil, "主選單（沒有玩家 0）按套用：不建浮鈕")
+        _G.getSpecificPlayer = function() return {} end
+        NBFloatButton.onOptionsApplied()
+        check(NBFloatButton.instance ~= nil, "遊戲中把選項打開：立即建出浮鈕")
+
+        NBFloatButton.instance = button
+        button._tooltipUI = nil
+        NBOptions.showButton, NBClient.getUnreadIds = savedShow, savedUnreadIds
+    end
+
     -- 家族工具列（Dock，框架 API rev 13）：有能力就登記一個入口、不建浮鈕；
     -- register 回 false 退回浮鈕。框架 Dock 本體由框架 harness 驗，這裡只錄 consumer 給的 spec。
     do
@@ -1465,7 +1511,18 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         check(spec.id == "noticeboard" and spec.order == 20
             and spec.icon == "media/ui/NoticeBoard/nb_megaphone.png", "Dock 入口 id／排序／圖示")
         checkEqual(spec.label(), "[IGUI_MinidoracatNB_PanelTitle]", "Dock 名稱 = 面板標題")
-        checkEqual(spec.isAvailable, nil, "遊戲中一律可用（同浮鈕：沒有隱藏選項）")
+        local savedShow = NBOptions.showButton
+        local shown = true
+        NBOptions.showButton = function() return shown end
+        check(spec.isAvailable() == true, "選項開（預設）：Dock 顯示公告欄入口")
+        shown = false
+        check(spec.isAvailable() == false, "選項關：Dock 不顯示公告欄入口")
+        local beforeApply = refreshes
+        NBFloatButton.onOptionsApplied()
+        check(refreshes == beforeApply + 1 and created == 1,
+            "已登記 Dock 時套用選項：請 Dock 立即重算，不另建浮鈕")
+        shown = true
+        check(spec.isAvailable() == true, "選項開回來：Dock 入口恢復")
         checkEqual(spec.getBadge(), -1, "有未讀：Dock 紅點")
         checkEqual(spec.getStatus(), "[IGUI_MinidoracatNB_DockUnread]", "有未讀：Dock 提示列出未讀")
 
@@ -1489,6 +1546,62 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         NBPanel.toggle = function() toggles = toggles + 1 end
         spec.onClick(spec)
         checkEqual(toggles, 1, "Dock 點擊綁 NBPanel.toggle")
+
+        -- 快捷鍵：OnGameBoot 把區段標題與綁定登記進原版 keyBinding 表（MainOptions 從這裡建
+        -- 按鍵設定），Dock 的 bind 必須是同一個綁定名，提示才帶得出快捷鍵；兩個名稱在按鍵
+        -- 設定畫面都查 UI_optionscreen_binding_<名稱>，四語 UI.json 都要有。
+        local savedKeyBinding, savedKeyboard, savedCore = rawget(_G, "keyBinding"), rawget(_G, "Keyboard"), _G.getCore
+        _G.keyBinding, _G.Keyboard = {}, { KEY_INSERT = 210 }
+        local bootHandlers = Events.OnGameBoot.handlers
+        for index = 1, #bootHandlers do bootHandlers[index]() end
+        local binds = _G.keyBinding
+        check(#binds == 2 and string.sub(binds[1].value, 1, 1) == "[" and binds[1].key == nil
+            and binds[2].value == spec.bind and type(binds[2].key) == "number",
+            "OnGameBoot 登記區段標題與綁定；Dock 的 bind 就是那個綁定名")
+        for _, lang in ipairs({ "EN", "CH", "CN", "JP" }) do
+            local fh = io.open(MEDIA_LUA .. "shared/Translate/" .. lang .. "/UI.json", "r")
+            local text = fh and fh:read("*a") or ""
+            if fh then fh:close() end
+            for _, bind in ipairs(binds) do
+                local name = string.gsub(bind.value, "[%[%]]", "")
+                check(contains(text, '"UI_optionscreen_binding_' .. name .. '"'),
+                    lang .. "/UI.json 有按鍵設定名稱 " .. name)
+            end
+        end
+
+        -- 按鍵：綁定鍵＋有玩家 0 才開關；鍵碼 0（綁定清空時 getKey 也回 0）與其他鍵不動。
+        local boundKey = 210
+        _G.getCore = function()
+            local core = savedCore()
+            core.getKey = function(_, name)
+                if name == spec.bind then return boundKey end
+                return 0
+            end
+            return core
+        end
+        local presses = 0
+        NBPanel.toggle = function() presses = presses + 1 end
+        local keyHandlers = Events.OnKeyPressed.handlers
+        local function press(key)
+            for index = 1, #keyHandlers do keyHandlers[index](key) end
+        end
+        press(210)
+        checkEqual(presses, 1, "按綁定鍵：開關公告欄")
+        press(30)
+        checkEqual(presses, 1, "按其他鍵：不動")
+        boundKey = 0
+        press(0)
+        checkEqual(presses, 1, "綁定清空（getKey 回 0）時鍵碼 0 不觸發")
+        boundKey = 210
+        _G.getSpecificPlayer = function() return nil end
+        press(210)
+        checkEqual(presses, 1, "沒有玩家 0（主選單）：不開面板")
+        _G.getSpecificPlayer = function() return {} end
+        shown = false
+        press(210)
+        checkEqual(presses, 2, "藏起按鈕時快捷鍵照樣開關公告欄")
+        _G.keyBinding, _G.Keyboard, _G.getCore = savedKeyBinding, savedKeyboard, savedCore
+        NBOptions.showButton = savedShow
 
         FW.new, ui.Dock, ui.CAPABILITIES.dock = savedNew, savedDock, savedCap
         NBClient.getUnreadIds, NBPanel.toggle, NBPanel.instance = savedUnreadIds, savedToggleFn, savedPanel
@@ -3228,6 +3341,18 @@ end)()
     check(NBOptions.setVolumePercent(200, true), "out-of-range volume is clamped")
     checkEqual(NBOptions.volumePercent(), 100, "volume cannot exceed 100 percent")
 
+    -- 入口顯示選項：ini 沒有這一行＝顯示；套用時讀值立即更新並通知入口。
+    checkEqual(NBOptions.showButton(), true, "ini 沒有 show_button：預設顯示")
+    local savedFloat, applied = NBFloatButton, 0
+    _G.NBFloatButton = { onOptionsApplied = function() applied = applied + 1 end }
+    NBOptions._options:getOption(NBOptions.SHOW_BUTTON):setValue(false)
+    NBOptions._options:apply()
+    check(NBOptions.showButton() == false and applied == 1, "選項關＋套用：讀值立即變 false 並通知入口")
+    NBOptions._options:getOption(NBOptions.SHOW_BUTTON):setValue(true)
+    NBOptions._options:apply()
+    check(NBOptions.showButton() == true and applied == 2, "選項開＋套用：讀值恢復並通知入口")
+    _G.NBFloatButton = savedFloat
+
     -- Voice actor combo: index order is the persistence contract; missing/bad values mean Stacy.
     local combo = NBOptions._options:getOption(NBOptions.VOICE_ACTOR)
     checkEqual(table.concat(combo.values, ","), "[IGUI_MinidoracatNB_VoiceActor_stacy],"
@@ -3258,6 +3383,51 @@ end)()
     failReads = false
     check(NBOptions.setVolumePercent(35, true), "user can retry after an initial load failure")
     checkEqual(NBOptions.volumePercent(), 35, "retry restores editable volume")
+
+    -- show_button 寫在 ini：重進遊戲（新的 ModOptions 註冊）讀回隱藏；讀不到 ini 一律顯示。
+    disk = disk .. "tickbox|MinidoracatNoticeBoard|show_button|false\n"
+    dofile(VANILLA_LUA .. "/client/PZAPI/ModOptions.lua")
+    _G.NBOptions = nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBOptions.lua")
+    checkEqual(NBOptions.showButton(), false, "ini 存了 false：讀回隱藏")
+    failReads = true
+    dofile(VANILLA_LUA .. "/client/PZAPI/ModOptions.lua")
+    _G.NBOptions = nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBOptions.lua")
+    checkEqual(NBOptions.showButton(), true, "讀不到 ModOptions.ini：入口照樣顯示")
+    failReads = false
+
+    -- 回歸：這次啟動還沒讀過值，就在選項畫面按套用（MainOptions.lua:3760-3766：畫面值寫回
+    -- option → 逐頁 options:apply() → save）。apply 不得觸發全域 load，否則所有 MOD 頁剛套用
+    -- 的值被 ini 舊值蓋回、再被 save 寫回去，玩家的改動全部消失。
+    disk = "tickbox|Other|enabled|false\n"
+        .. "tickbox|MinidoracatNoticeBoard|show_button|false\n"
+        .. "slider|MinidoracatNoticeBoard|sound_volume|60\n"
+    dofile(VANILLA_LUA .. "/client/PZAPI/ModOptions.lua")
+    local otherPage = PZAPI.ModOptions:create("Other", "Other")
+    otherPage:addTickBox("enabled", "Enabled", true)
+    _G.NBOptions = nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBOptions.lua")
+    PZAPI.ModOptions:load() -- MainOptions:addModOptionsPanel 建頁時那一次（MainOptions.lua:2796）
+    local loads, realLoad = 0, PZAPI.ModOptions.load
+    PZAPI.ModOptions.load = function(...)
+        loads = loads + 1
+        return realLoad(...)
+    end
+    otherPage:getOption("enabled"):setValue(true)
+    NBOptions._options:getOption(NBOptions.SHOW_BUTTON):setValue(true)
+    NBOptions._options:getOption(NBOptions.SOUND_VOLUME):setValue(15)
+    local savedFloatButton = NBFloatButton
+    _G.NBFloatButton = nil
+    for _, page in ipairs(PZAPI.ModOptions.Data) do page:apply() end
+    PZAPI.ModOptions:save()
+    _G.NBFloatButton = savedFloatButton
+    checkEqual(loads, 0, "還沒讀過值時套用：apply 不觸發 ModOptions:load()")
+    check(contains(disk, "tickbox|Other|enabled|true")
+        and contains(disk, "tickbox|MinidoracatNoticeBoard|show_button|true")
+        and contains(disk, "slider|MinidoracatNoticeBoard|sound_volume|15"),
+        "套用的值（含別的 MOD 頁）原樣寫進 ini，不被 ini 舊值蓋回")
+    checkEqual(NBOptions.showButton(), true, "套用後入口讀值＝剛套用的值")
     _G.NBOptions, _G.PZAPI = savedOptions, savedAPI
     _G.getFileReader, _G.getFileWriter, luautils.split = savedReader, savedWriter, savedSplit
 end)()

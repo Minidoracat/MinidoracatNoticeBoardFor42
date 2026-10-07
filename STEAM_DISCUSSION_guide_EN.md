@@ -12,7 +12,7 @@
 [*] Enable the mod and start the server (or a singleplayer game) once. If there are no notices yet, EN and CH starter examples are created.
 [*] Open the notice folder (below) and edit the examples or add your own .md / .txt notices.
 [*] Save: online players get it with a new-notice alert within one polling interval (default 60s), or at once when an admin presses Reload on the panel.
-[*] Players click the speaker icon in the family toolbar to open or close the board. A red dot means unread notices, and hovering it shows "You have unread notices." If the UI Library hasn't been updated yet, a draggable floating speaker icon is used instead.
+[*] Players click the speaker icon in the family toolbar to open or close the board. A red dot means unread notices, and hovering it shows "You have unread notices." If the UI Library hasn't been updated yet, a draggable floating speaker icon is used instead. Insert also opens or closes the board (change it under Options → Key Bindings); to hide the button, untick "Show Server Notice Board button" under Options → MODS.
 [/olist]
 
 [h2]📁 Where notices live[/h2]

@@ -65,5 +65,7 @@
   "IGUI_MinidoracatNB_OptSoundVolume": "公告提示音音量（0-100）",
   "IGUI_MinidoracatNB_OptSoundVolumeTip": "提示音的音量，0 = 靜音。這顆音效是 MOD 自帶的，不受遊戲內建的音效音量影響，所以只能在這裡調整。",
   "IGUI_MinidoracatNB_OptVoiceActor": "公告語音聲音",
-  "IGUI_MinidoracatNB_OptVoiceActorTip": "語音公告用哪一個聲音，中文／英文／日文都有。Stacy 與 Yui 是新錄的語音；經典是改版前的舊語音。公告欄的「語音」選單也能切換；選「原提示音（無語音）」時不會用到。"
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "語音公告用哪一個聲音，中文／英文／日文都有。Stacy 與 Yui 是新錄的語音；經典是改版前的舊語音。公告欄的「語音」選單也能切換；選「原提示音（無語音）」時不會用到。",
+  "IGUI_MinidoracatNB_OptShowButton": "顯示伺服器公告欄按鈕",
+  "IGUI_MinidoracatNB_OptShowButtonTip": "畫面上的伺服器公告欄按鈕，點擊開關公告欄。有家族工具列時它在工具列裡，沒有時是可拖曳的浮動按鈕。隱藏後可用快捷鍵開關公告欄（在「選項 ￫ 按鍵綁定 ￫ Minidoracat 公告欄」設定）；有新公告時仍會依伺服器設定自動彈出。"
 }

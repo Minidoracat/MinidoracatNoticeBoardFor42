@@ -65,5 +65,7 @@
   "IGUI_MinidoracatNB_OptSoundVolume": "お知らせ通知音の音量（0-100）",
   "IGUI_MinidoracatNB_OptSoundVolumeTip": "通知音の音量です（0 = 無音）。この音は MOD 同梱のため、ゲーム側のサウンド音量設定では変更できず、ここでのみ調整できます。",
   "IGUI_MinidoracatNB_OptVoiceActor": "お知らせ音声の声",
-  "IGUI_MinidoracatNB_OptVoiceActorTip": "お知らせを読み上げる声です。中国語・英語・日本語に対応しています。Stacy と Yui は新しい音声、クラシックは以前のバージョンの音声です。お知らせボードの「音声」メニューからも切り替えられます。「元の通知音（音声なし）」のときは使われません。"
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "お知らせを読み上げる声です。中国語・英語・日本語に対応しています。Stacy と Yui は新しい音声、クラシックは以前のバージョンの音声です。お知らせボードの「音声」メニューからも切り替えられます。「元の通知音（音声なし）」のときは使われません。",
+  "IGUI_MinidoracatNB_OptShowButton": "サーバー掲示板ボタンを表示",
+  "IGUI_MinidoracatNB_OptShowButtonTip": "画面上のサーバー掲示板ボタンです。クリックで掲示板を開閉します。ファミリーツールバーがあるときはツールバーの中に、ないときはドラッグできるフローティングボタンとして表示されます。非表示にしても、ショートカットキーで掲示板を開閉できます（「オプション ￫ キーバインド ￫ Minidoracat 掲示板」で設定）。新しいお知らせはサーバー設定に従って引き続き自動で表示されます。"
 }

@@ -23,6 +23,8 @@ local VOLUME_STEP = 5
 NBOptions.SOUND_ENABLED = "sound_enabled"
 NBOptions.SOUND_VOLUME = "sound_volume"
 NBOptions.VOICE_ACTOR = "voice_actor"
+-- 公告欄入口（家族工具列那一格，或沒有工具列時的浮動喇叭鈕）要不要顯示；預設顯示。
+NBOptions.SHOW_BUTTON = "show_button"
 -- 語音聲音（同 AutoDrive 的 MDAD_Voice.lua:64-68）：Stacy／Yui 是 ElevenLabs 的聲音，
 -- classic＝改版前的 Fish Audio 語音。combo 存的是 index（ModOptions.lua:272-273、:319-320），
 -- 所以這份順序是持久化契約：index 1（Stacy）為預設，新聲音一律接在尾端。
@@ -53,6 +55,9 @@ local function registerOptions()
     for index = 1, #NBOptions.VOICE_ACTORS do
         actor:addItem("IGUI_MinidoracatNB_VoiceActor_" .. NBOptions.VOICE_ACTORS[index], index == 1)
     end
+    options:addTickBox(NBOptions.SHOW_BUTTON,
+        getText("IGUI_MinidoracatNB_OptShowButton"), true,
+        getText("IGUI_MinidoracatNB_OptShowButtonTip"))
     return options
 end
 
@@ -195,6 +200,41 @@ function NBOptions.soundVolume()
         return 0
     end
     return NBOptions.volumePercent() / 100
+end
+
+-- 入口顯示與否：Dock 每次輪詢都會問（框架允許每幀），而 optionValue 每次都建 closure，
+-- 所以快取成布林——第一次讀（順便補 load）與玩家按套用時才重讀。ini 沒值、壞值或讀不到
+-- 一律當顯示（只有明確的 false 才藏）。
+local showButton = true
+local showButtonRead = false
+
+local function readShowButton()
+    showButton = optionValue(NBOptions.SHOW_BUTTON, true) ~= false
+    showButtonRead = true
+end
+
+function NBOptions.showButton()
+    if not showButtonRead then
+        readShowButton()
+    end
+    return showButton
+end
+
+-- 玩家按「套用」：MainOptions 先把畫面上的值寫回 option（gameOptions:apply，MainOptions.lua:3760），
+-- 再逐頁呼叫 options:apply()（:3761-3763；原生是空函式，PZAPI/ModOptions.lua:21-22），最後
+-- PZAPI.ModOptions:save()（:3766）。所以這裡**只讀 option 身上的值，不得經 optionValue**：
+-- 這次啟動還沒讀過值時，optionValue 的 ensureLoaded 會在 apply 中途呼叫全域 load，把所有 MOD
+-- 頁剛套用的值蓋回 ini 舊值，緊接的 save 再寫回去——玩家這次的改動全部消失。
+-- 入口在這裡立即跟上；NBFloatButton 呼叫時查表（載入序在本檔之後）。
+if registered then
+    function registered:apply()
+        local option = self:getOption(NBOptions.SHOW_BUTTON)
+        showButton = option == nil or option:getValue() ~= false
+        showButtonRead = true
+        if NBFloatButton and NBFloatButton.onOptionsApplied then
+            NBFloatButton.onOptionsApplied()
+        end
+    end
 end
 
 return NBOptions

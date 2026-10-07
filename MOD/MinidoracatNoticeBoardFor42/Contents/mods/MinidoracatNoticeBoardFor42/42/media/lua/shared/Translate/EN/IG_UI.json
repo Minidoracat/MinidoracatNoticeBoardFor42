@@ -65,5 +65,7 @@
   "IGUI_MinidoracatNB_OptSoundVolume": "Notice sound volume (0-100)",
   "IGUI_MinidoracatNB_OptSoundVolumeTip": "Volume of the notice chime, 0 = silent. The mod ships its own sound file, which is not affected by the game's sound volume slider, so this is the only way to turn it down.",
   "IGUI_MinidoracatNB_OptVoiceActor": "Announcement voice actor",
-  "IGUI_MinidoracatNB_OptVoiceActorTip": "Which voice reads the announcements, in Chinese, English and Japanese. Stacy and Yui are the new voices; Classic is the voice from earlier versions. You can also switch it from the notice board's Voice menu. Not used while the voice is set to the original sound."
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "Which voice reads the announcements, in Chinese, English and Japanese. Stacy and Yui are the new voices; Classic is the voice from earlier versions. You can also switch it from the notice board's Voice menu. Not used while the voice is set to the original sound.",
+  "IGUI_MinidoracatNB_OptShowButton": "Show Server Notice Board button",
+  "IGUI_MinidoracatNB_OptShowButtonTip": "The Server Notice Board button on screen; click it to open or close the notice board. With the family toolbar it is a slot in the toolbar, otherwise it is a draggable floating button. When hidden, open the board with its shortcut (set it under Options › Key Bindings › Minidoracat Notice Board). New notices still open the board automatically, depending on the server settings."
 }

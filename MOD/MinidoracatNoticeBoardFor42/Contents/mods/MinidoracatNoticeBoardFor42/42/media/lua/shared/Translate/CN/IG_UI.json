@@ -65,5 +65,7 @@
   "IGUI_MinidoracatNB_OptSoundVolume": "公告提示音音量（0-100）",
   "IGUI_MinidoracatNB_OptSoundVolumeTip": "提示音的音量，0 = 静音。这颗音效是 MOD 自带的，不受游戏内置的音效音量影响，所以只能在这里调整。",
   "IGUI_MinidoracatNB_OptVoiceActor": "公告语音声音",
-  "IGUI_MinidoracatNB_OptVoiceActorTip": "语音公告用哪一个声音，中文／英文／日文都有。Stacy 与 Yui 是新录制的语音；经典是改版前的旧语音。公告栏的「语音」菜单也能切换；选择「原提示音（无语音）」时不会用到。"
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "语音公告用哪一个声音，中文／英文／日文都有。Stacy 与 Yui 是新录制的语音；经典是改版前的旧语音。公告栏的「语音」菜单也能切换；选择「原提示音（无语音）」时不会用到。",
+  "IGUI_MinidoracatNB_OptShowButton": "显示服务器公告栏按钮",
+  "IGUI_MinidoracatNB_OptShowButtonTip": "画面上的服务器公告栏按钮，点击开关公告栏。有家族工具栏时它在工具栏里，没有时是可拖动的浮动按钮。隐藏后可用快捷键开关公告栏（在「选项 ￫ 按键设置 ￫ Minidoracat 公告栏」设置）；有新公告时仍会依服务器设置自动弹出。"
 }

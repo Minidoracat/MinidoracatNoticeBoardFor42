@@ -16,7 +16,7 @@ An in-game server notice board: server owners write notices as Markdown files, a
 [olist]
 [*] Server owners: enable the mod and start the server once; the notice folder and starter examples are created automatically
 [*] Edit the examples or add notice files; saved changes are pushed to online players automatically
-[*] Players: click the speaker icon in the family toolbar to open or close the board; a red dot means unread notices
+[*] Players: click the speaker icon in the family toolbar or press Insert to open or close the board; a red dot means unread notices. Hide the icon under Options → MODS and change the key under Options → Key Bindings
 [/olist]
 
 [h2]✨ Features[/h2]

@@ -10,12 +10,14 @@
 --      拖曳放開即存（onMoved），不等遊戲存檔時機
 --   4. 解析度變更：重套當前解析度的紀錄（原版只在 RegisterWindow 時 TryRestore）
 --   5. 未讀事件（MinidoracatNB_UnreadChanged）→ setUnread
+--   6. 入口顯示選項（「選項 → MODS」的 show_button，NBOptions.showButton）：Dock 入口與浮鈕共用
+--   7. 快捷鍵 MinidoracatNoticeBoard_Toggle（選項 → 按鍵綁定）= NBPanel.toggle()
 --
 -- 【家族工具列】框架有 Dock（CAPABILITIES.dock，API rev 13）時，第一次 ensureInstance
 -- 登記成 Dock 入口、不建浮鈕；之後未讀變動改呼叫 Dock.refresh()。登記失敗或框架沒有
 -- Dock 才走下面的浮鈕。
 -- 【退回】框架 FloatButton 能力也缺席時不建浮鈕（degraded：無浮動入口，
--- 面板仍可由重新載入鈕／其他入口開啟）；不自帶降級實作。
+-- 面板仍可由快捷鍵與自動彈出開啟）；不自帶降級實作。
 
 require "ISUI/ISLayoutManager"
 
@@ -28,10 +30,13 @@ end
 if not NBSkin then
     require "NoticeBoard/NBSkin"
 end
+if not NBOptions then
+    require "NoticeBoard/NBOptions"
+end
 
 local Client = NBClient
 local Skin = NBSkin
-if not Client or not NBPanel or not Skin then
+if not Client or not NBPanel or not Skin or not NBOptions then
     error("NoticeBoard floating button dependencies failed to load")
 end
 
@@ -42,6 +47,8 @@ local COLORS = Skin.COLORS
 local BUTTON_SIZE = 40
 local RIGHT_MARGIN = 16
 local LAYOUT_NAME = "MinidoracatNBFloatButton"
+-- 快捷鍵綁定名：keyBinding 登記與 Dock 的 bind（提示顯示「名稱（快捷鍵 X）」）共用，避免拼錯
+local TOGGLE_BIND = "MinidoracatNoticeBoard_Toggle"
 
 -- 喇叭圖標（MOD 自帶）。資產存 48px、顯示 24px：2:1 縮放在 GL_LINEAR 下最銳利
 -- （貼圖 flags=0/4 → GL_LINEAR，`TextureID.java:423-424`）。
@@ -89,8 +96,10 @@ local DOCK_SPEC = {
         if unread then return getText("IGUI_MinidoracatNB_DockUnread") end
         return nil
     end,
-    -- 不給 isAvailable：浮鈕在遊戲中一律顯示（ensureInstance 每次 setVisible(true)），
+    -- 玩家選項關掉就不顯示（NBOptions.showButton 讀快取布林，不配置）；
     -- 遊戲外／沒有玩家時的隱藏由 Dock 自己處理，與框架浮鈕的自我隱藏相同。
+    isAvailable = function() return NBOptions.showButton() end,
+    bind = TOGGLE_BIND,
 }
 
 -- 只登記一次；能力缺席或 register 回 false → 回 nil，呼叫端走浮鈕。
@@ -135,7 +144,7 @@ local function coord(value)
 end
 
 -- ISLayoutManager 回呼（原版：`funcs.RestoreLayout(target, name, layout)`）。
--- 只管座標：可見性是本 MOD 自己的政策（ensureInstance／未讀事件），layout 不得插手，
+-- 只管座標：可見性是本 MOD 自己的政策（玩家選項，經 ensureInstance 收斂），layout 不得插手，
 -- 否則玩家藏起來的浮鈕會在還原時被強開回來。
 function NBFloatButton.RestoreLayout(button, name, layout)
     local x, y = coord(layout.x), coord(layout.y)
@@ -160,18 +169,30 @@ function NBFloatButton.setUnread(value)
     end
 end
 
+-- OnGameStart、OnCreatePlayer(0)、未讀事件與選項套用共用的收斂點：可見性一律照玩家選項，
+-- 所以任何事件都不會把玩家藏起來的浮鈕叫回來。
 function NBFloatButton.ensureInstance()
     unread = #Client.getUnreadIds() > 0
-    if NBFloatButton.instance then
-        NBFloatButton.instance:setVisible(true)
-        NBFloatButton.instance.unread = unread
-        return NBFloatButton.instance
+    local show = NBOptions.showButton()
+    local existing = NBFloatButton.instance
+    if existing then
+        existing.unread = unread
+        if show then
+            existing:setVisible(true)
+        else
+            existing:hideTooltip() -- 隱藏後 prerender 停跑，提示要在這裡收（框架方法）
+            existing:setVisible(false)
+        end
+        return existing
     end
 
     local Dock = dockApi()
     if Dock then
         Dock.refresh()
         return nil -- 已收進家族工具列：不建浮鈕
+    end
+    if not show then
+        return nil -- 玩家關掉入口：不建，打開時由 onOptionsApplied 建
     end
 
     local FW = frameworkFloatButton()
@@ -228,7 +249,40 @@ function NBFloatButton.onUnreadChanged(unreadIds)
     NBFloatButton.setUnread(type(unreadIds) == "table" and #unreadIds > 0)
 end
 
+-- NBOptions 的 options:apply（玩家按套用）呼叫：已登記 Dock 就請它重算 isAvailable；
+-- 否則只在遊戲中（有玩家 0）建立或收起浮鈕，主選單按套用不建任何東西。
+function NBFloatButton.onOptionsApplied()
+    if dock then
+        dock.refresh()
+    elseif getSpecificPlayer(0) then
+        NBFloatButton.ensureInstance()
+    end
+end
+
+-- 快捷鍵（選項 → 按鍵綁定 → [MinidoracatNoticeBoard] 可改鍵），寫法同 MiniMap 的 initBinds。
+-- 預設 Insert（Keyboard.KEY_INSERT = 210）：原版 shared/keyBinding.lua（42.21.0）未綁；原版 Lua
+-- 全樹 0 次（KEY_INSERT 與裸 210）；反編譯 Java 只出現在鍵碼對照表
+-- （org/lwjglx/input/KeyCodes.java 210 <-> GLFW 260），沒有遊戲邏輯直接讀；家族 MOD 未用；
+-- 本機 Workshop 424 個項目只有預設關閉的開發工具（PZIceAndFireComplete AttachmentTweaker），
+-- 以及 KI5 兩台車（91range、87toyotaMR2）寫死 key == 210 開關天窗、只在坐進該車時作用。
+-- 按鍵設定畫面顯示「INSERT」。
+function NBFloatButton.onGameBoot()
+    table.insert(keyBinding, { value = "[MinidoracatNoticeBoard]" })
+    table.insert(keyBinding, { value = TOGGLE_BIND, key = Keyboard.KEY_INSERT })
+end
+
+-- OnKeyPressed 在放開時觸發、文字輸入中不派送（GameKeyboard.java:43-52）；綁定被清空或
+-- 不存在時 getKey 回 0（Core.java:2812-2821），所以先擋 0。主選單沒有玩家 0：不開面板。
+-- 與入口顯示選項無關：藏起按鈕的玩家靠它開公告欄。
+function NBFloatButton.onKeyPressed(key)
+    if key ~= 0 and key == getCore():getKey(TOGGLE_BIND) and getSpecificPlayer(0) then
+        NBPanel.toggle() -- 呼叫時查表（測試與重載會換掉）
+    end
+end
+
 if not NBFloatButton._eventsInstalled then
+    Events.OnGameBoot.Add(NBFloatButton.onGameBoot)
+    Events.OnKeyPressed.Add(NBFloatButton.onKeyPressed)
     Events.OnGameStart.Add(NBFloatButton.onGameStart)
     Events.OnCreatePlayer.Add(function(playerNum)
         if playerNum == 0 then NBFloatButton.ensureInstance() end
