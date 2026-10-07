@@ -12,7 +12,7 @@
 [*] Enable the mod and start the server (or a singleplayer game) once. If there are no notices yet, EN and CH starter examples are created.
 [*] Open the notice folder (below) and edit the examples or add your own .md / .txt notices.
 [*] Save: online players get it with a new-notice alert within one polling interval (default 60s), or at once when an admin presses Reload on the panel.
-[*] Players click the speaker icon in the family toolbar to open or close the board. A red dot means unread notices, and hovering it shows "You have unread notices." If the UI Library hasn't been updated yet, a draggable floating speaker icon is used instead. Insert also opens or closes the board (change it under Options → Key Bindings); to hide the button, untick "Show Server Notice Board button" under Options → MODS.
+[*] Players click the speaker icon in the family toolbar to open or close the board. A red dot means unread notices, and hovering it shows "You have unread notices." If the UI Library hasn't been updated yet, a draggable floating speaker icon is used instead. Insert also opens or closes the board, and the button can be hidden; see "Board button & shortcut" below.
 [/olist]
 
 [h2]📁 Where notices live[/h2]
@@ -67,8 +67,16 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 New or updated notices play one sound per batch, set per player at the top of the panel:
 [list]
 [*] [b]Voice[/b] menu: Auto (default; matches a Chinese or Japanese game, else English), Chinese, English, Japanese or "Original sound (no voice)". Its last item, "Voice: …", picks the speaker: Stacy (default), Yui or Classic.
-[*] The volume slider takes a drag or the mouse wheel (5% per notch) and plays a preview. It is the same setting as Options → MODS.
+[*] The volume slider takes a drag or the mouse wheel (5% per notch) and plays a preview. It is the same setting as Options → MODS, where the sound can also be turned off.
 [*] [b]Server voice pack (optional, for server owners)[/b]: to play your own recorded line for new notices, make a small MOD that only holds the audio file, upload it to the Workshop and add it to the server's Mods= and WorkshopItems=. Players whose voice setting is Auto hear that line, and the menu shows "Auto (server voice)". Template download: [url=https://github.com/Minidoracat/MinidoracatNoticeBoardFor42/releases/latest/download/NoticeBoardVoicePackExample.zip]NoticeBoardVoicePackExample.zip[/url], then follow the README.txt inside (four languages). Give the pack its own id before uploading.
+[/list]
+
+[h2]🎛️ Board button & shortcut[/h2]
+[list]
+[*] The board button is shown by default: the speaker icon in the family toolbar, or a draggable floating speaker button when there is no toolbar.
+[*] [b]Hide it[/b]: in the notice board settings under Options → MODS, untick "Show Server Notice Board button" and press Apply; it takes effect at once. New notices don't bring the button back, and the board still pops up following the server's popup mode.
+[*] [b]Open the board while hidden[/b]: press Insert (it also works while the button is shown). To change the key, go to Options → Key Bindings, "Minidoracat Notice Board", "Toggle notice board".
+[*] To get the button back, tick the same option again.
 [/list]
 
 [h2]🛠️ Admin tools[/h2]
@@ -82,7 +90,7 @@ On the notice panel, admins only (the server re-checks permissions).
 
 [h2]⚙️ Sandbox options (Minidoracat Notice Board)[/h2]
 [list]
-[*] [b]Automatic popup mode[/b]: Always / Unread notices only (default) / Never. The toolbar speaker icon always opens the board.
+[*] [b]Automatic popup mode[/b]: Always / Unread notices only (default) / Never. Players can always open the board with the toolbar speaker icon or Insert.
 [*] [b]Notice polling interval[/b]: 60s default, 10–3600.
 [*] [b]Default notice language[/b]: the baseline language, default EN.
 [*] [b]Play a sound for new notices[/b]: server-wide switch for the notice sound and voice.
@@ -110,6 +118,9 @@ The game's text panel has no bold or italic fonts, so some styles become colors.
 [h2]❓ FAQ[/h2]
 [b]Q: I edited a notice but players don't see it.[/b]
 A: Wait one polling interval or press Reload. Then check the file is in Zomboid/Lua/NoticeBoard/ (not the mod folder), the language folder is uppercase, the category is declared and the name is ASCII. Server log lines tagged [MinidoracatNoticeBoardFor42] say why a file was skipped.
+
+[b]Q: The notice board button is gone.[/b]
+A: It was probably hidden: tick "Show Server Notice Board button" under Options → MODS to bring it back, or just press Insert to open the board.
 
 [b]Q: Images show only a [caption] placeholder.[/b]
 A: It's still syncing right after you add an image or join. If it never appears, check it's a PNG with a valid name, the path is right and the limits aren't exceeded.
