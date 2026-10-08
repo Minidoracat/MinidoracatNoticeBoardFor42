@@ -49,6 +49,7 @@ function NBToast.show(message)
         title = getText("IGUI_MinidoracatNB_PanelTitle"),
         message = message,
         colors = TOAST_COLORS,
+        maxLines = 3, -- 長訊息（失敗原因、範例寫入結果、各語言較長的譯文）換行顯示，不再截成一行
     })
 end
 
