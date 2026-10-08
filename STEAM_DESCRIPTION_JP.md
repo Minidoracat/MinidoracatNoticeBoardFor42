@@ -10,6 +10,8 @@
 [*] 必須：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]（Required Items に表示されます。ないと読み込まれません）
 [*] シングル・マルチ両対応です。マルチではサーバー側で本 MOD を有効にしてください
 [*] 対応バージョン: Build 42.20.2+
+[*] [b]途中追加・削除：[/b]どちらも可能
+[*] [b]対応言語：[/b]繁體中文、简体中文、English、日本語
 [/list]
 
 [h2]🚀 クイックスタート[/h2]
