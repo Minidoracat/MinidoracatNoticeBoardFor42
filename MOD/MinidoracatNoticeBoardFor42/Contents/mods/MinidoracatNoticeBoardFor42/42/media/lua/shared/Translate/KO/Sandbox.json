@@ -16,7 +16,7 @@
   "Sandbox_MinidoracatNB_MaxImageCount": "최대 이미지 개수",
   "Sandbox_MinidoracatNB_MaxImageCount_tooltip": "서버가 NoticeBoard/images/에서 동기화하는 PNG 파일 수입니다. 기본값 20. 파일은 이름순으로 정렬되며, 한도를 넘는 파일은 건너뛰고 img-count로 로그에 남습니다. 값을 올리면 모든 플레이어가 받아야 할 양이 그만큼 늘어나고 첫 접속이 오래 걸립니다.",
   "Sandbox_MinidoracatNB_MaxImageTotalKB": "최대 이미지 전체 크기 (KB)",
-  "Sandbox_MinidoracatNB_MaxImageTotalKB_tooltip": "동기화되는 모든 이미지의 합계 크기입니다. 기본값 4096 KB (4 MB). 한도를 넘는 이미지는 건너뛰고 img-total로 로그에 남습니다. 값을 올리면 모든 플레이어가 받아야 할 양이 그만큼 늘어납니다. 최대값 16384 KB에서는 첫 접속 때 백그라운드 동기화에 몇 분이 걸립니다. 플레이어마다 캐시 쓰기 한도가 따로 있으며, 서버 설정으로는 올릴 수 없습니다.",
+  "Sandbox_MinidoracatNB_MaxImageTotalKB_tooltip": "동기화되는 모든 이미지의 합계 크기입니다. 기본값 4096 KB (4 MB). 한도를 넘는 이미지는 건너뛰고 img-total로 로그에 남습니다. 값을 올리면 모든 플레이어가 받아야 할 양이 그만큼 늘어납니다. 최댓값 16384 KB에서는 첫 접속 때 백그라운드 동기화에 몇 분이 걸립니다. 플레이어마다 캐시 쓰기 한도가 따로 있으며, 서버 설정으로는 올릴 수 없습니다.",
   "Sandbox_MinidoracatNB_DefaultLanguage_option1": "AR",
   "Sandbox_MinidoracatNB_DefaultLanguage_option2": "CA",
   "Sandbox_MinidoracatNB_DefaultLanguage_option3": "CH",

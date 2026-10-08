@@ -24,7 +24,7 @@
   "IGUI_MinidoracatNB_Volume": "Громкость",
   "IGUI_MinidoracatNB_VolumeSaveFailed": "Не удалось сохранить громкость. Сдвиньте ползунок ещё раз, чтобы повторить.",
   "IGUI_MinidoracatNB_PreviewMuted": "Прослушивание без звука. Проверьте громкость, ваш переключатель звука уведомлений и настройки сервера.",
-  "IGUI_MinidoracatNB_PreviewFailed": "Не удалось воспроизвести прослушивание. Проверьте аудиоустройство и звуковые файлы мода.",
+  "IGUI_MinidoracatNB_PreviewFailed": "Не удалось запустить прослушивание. Проверьте аудиоустройство и звуковые файлы мода.",
   "IGUI_MinidoracatNB_Sidebar": "Содержание",
   "IGUI_MinidoracatNB_ExpandAll": "Развернуть все",
   "IGUI_MinidoracatNB_CollapseAll": "Свернуть все",

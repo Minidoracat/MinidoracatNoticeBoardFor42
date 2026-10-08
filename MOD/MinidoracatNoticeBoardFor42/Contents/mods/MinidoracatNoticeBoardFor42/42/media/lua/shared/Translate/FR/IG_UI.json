@@ -65,7 +65,7 @@
   "IGUI_MinidoracatNB_OptSoundVolume": "Volume du son des annonces (0-100)",
   "IGUI_MinidoracatNB_OptSoundVolumeTip": "Volume du son des annonces, 0 = muet. Le mod utilise son propre fichier son, qui n'est pas affecté par le curseur de volume des sons du jeu : c'est donc le seul moyen de le baisser.",
   "IGUI_MinidoracatNB_OptVoiceActor": "Timbre des annonces",
-  "IGUI_MinidoracatNB_OptVoiceActorTip": "La voix qui lit les annonces, en chinois, anglais et japonais. Stacy et Yui sont les nouvelles voix ; Classique est la voix des versions précédentes. Vous pouvez aussi la changer depuis le menu Voix du tableau d'affichage. Inutilisé lorsque la voix est réglée sur le son d'origine.",
+  "IGUI_MinidoracatNB_OptVoiceActorTip": "La voix qui lit les annonces, en chinois, anglais et japonais. Stacy et Yui sont les nouvelles voix ; Classique est la voix des versions précédentes. Vous pouvez aussi la changer depuis le menu Timbre du tableau d'affichage. Inutilisé lorsque la voix est réglée sur le son d'origine.",
   "IGUI_MinidoracatNB_OptShowButton": "Afficher le bouton du tableau d'affichage",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Le bouton du tableau d'affichage du serveur à l'écran ; cliquez dessus pour ouvrir ou fermer le tableau. Avec la barre d'outils de la famille, c'est un emplacement de la barre ; sinon, c'est un bouton flottant déplaçable. Lorsqu'il est masqué, ouvrez le tableau avec son raccourci (à définir dans Options > Configuration des touches > Minidoracat Notice Board). Les nouvelles annonces ouvrent toujours le tableau automatiquement, selon les paramètres du serveur."
 }
