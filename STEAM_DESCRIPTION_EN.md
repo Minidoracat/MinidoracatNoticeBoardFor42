@@ -11,7 +11,7 @@ An in-game server notice board: server owners write notices as Markdown files, a
 [*] Works in singleplayer and multiplayer; in multiplayer the server must enable this mod
 [*] Supported version: Build 42.20.2+
 [*] [b]Add/remove mid-save:[/b] safe either way
-[*] [b]Languages:[/b] 繁體中文, 简体中文, English, 日本語, 한국어, Русский, Español, Português, Türkçe, Français, Polski, Deutsch (languages other than Chinese, English and Japanese are AI-translated; corrections welcome)
+[*] [b]Languages:[/b] 繁體中文, 简体中文, English, 日本語, 한국어, Русский, Español, Português, Türkçe, Français, Polski, Deutsch (please report any translation issues)
 [/list]
 
 [h2]🚀 Quick start[/h2]
