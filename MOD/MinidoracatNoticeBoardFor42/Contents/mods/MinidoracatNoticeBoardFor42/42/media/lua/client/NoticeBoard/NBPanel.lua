@@ -1,6 +1,7 @@
 require "ISUI/ISCollapsableWindowJoypad"
 require "ISUI/ISRichTextPanel"
 require "ISUI/ISButton"
+require "ISUI/ISTextEntryBox"
 require "ISUI/ISContextMenu"
 require "ISUI/ISLayoutManager"
 require "ISUI/ISScrollingListBox"
@@ -49,11 +50,17 @@ local COLORS = Skin.COLORS
 -- 綁定時機安全：NBSkin 在它的檔頭已經 pcall(require, "MinidoracatUI/V1")，而本檔 require
 -- 了 NBSkin，所以這裡讀到的全域已是最終狀態。
 local Icons = nil
+-- 框架的公開斷行（API v1 rev>=16、能力 textWrap）。缺席時搜尋的空狀態改成單行截斷，查詢字本身仍在輸入框裡。
+local TextWrap = nil
 do
     local ui = MinidoracatUI and MinidoracatUI.v1
     if ui and ui.API_MAJOR == 1 and ui.API_REVISION >= 2
         and ui.CAPABILITIES and ui.CAPABILITIES.icons and ui.Icons then
         Icons = ui.Icons
+    end
+    if ui and ui.API_MAJOR == 1 and ui.API_REVISION >= 16 and ui.CAPABILITIES
+        and ui.CAPABILITIES.textWrap and ui.Text and type(ui.Text.wrap) == "function" then
+        TextWrap = ui.Text.wrap
     end
 end
 
@@ -129,6 +136,13 @@ local TREE_MARKER_COLLAPSED = "+"
 local ROOT_CATEGORY = ""
 local SCROLLBAR_WIDTH = 13
 local LINK_TOOLTIP_PAD = 6
+-- 側欄搜尋列：輸入框與工具列按鈕同高（toolbarHeight - 2），四周留 SEARCH_PAD，放大鏡與輸入框之間
+-- SEARCH_ICON_GAP。搜尋中輸入框下方多一行狀態字（本篇第幾筆），上下各留 SEARCH_STATUS_PAD。
+local SEARCH_PAD = 4
+local SEARCH_ICON_GAP = 4
+local SEARCH_STATUS_PAD = 2
+-- 輸入框聚焦時，Core 把 Esc 交給它的 onOtherKey 並吃掉這一鍵（Core.java:2022-2024，LWJGL2 鍵碼 1）
+local KEY_ESCAPE = 1
 local POPUP_WAIT_MS = 10000
 local POPUP_ALWAYS = 1
 local POPUP_UNREAD = 2
@@ -204,6 +218,29 @@ local OFFICIAL_URL_ROOTS = {
 local function trim(text)
     text = string.gsub(text or "", "^%s+", "")
     return string.gsub(text, "%s+$", "")
+end
+
+-- 搜尋比對一律在正規化後的字串上做：小寫（Kahlua string.lower 是 Java toLowerCase，StringLib.java:690-695，
+-- 各語系的大小寫都對）、NBSP 當一般空白、連續空白收成一個。索引與查詢走同一條，比對才一致；
+-- 查詢字另外去掉頭尾空白。
+local function normalizeSearchText(text)
+    text = string.lower(text or "")
+    text = string.gsub(text, Parser.NBSP, " ")
+    return (string.gsub(text, "[ \t]+", " "))
+end
+
+local function normalizeSearchQuery(text)
+    return (trim(normalizeSearchText(text)))
+end
+
+-- 輸入框打字時 isShiftKeyDown／isKeyDown 一律回 false（GameKeyboard.java:122-130），要問 GLFW 本身：
+-- Lua 拿得到的 org.lwjglx Keyboard（LuaManager.java:2496 暴露，Keyboard.java:232-240）。
+-- 測試環境沒有這個全域，pcall 失敗就當沒按。
+local function shiftHeld()
+    local ok, down = pcall(function()
+        return Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) or Keyboard.isKeyDown(Keyboard.KEY_RSHIFT)
+    end)
+    return ok and down == true
 end
 
 -- 依像素寬度截斷並補省略號。標準 Lua 測試字串是 UTF-8 bytes；Kahlua 字串則以
@@ -334,6 +371,8 @@ function NBLinkRichTextPanel:paginate()
 
     if self.owner then
         self.owner:rebuildLinkHitRegions()
+        -- 搜尋命中的座標同樣是排版的產物：每次 paginate（換公告、換寬度、onResize）都重算
+        self.owner:rebuildSearchHits()
     end
     return true, nil
 end
@@ -408,6 +447,11 @@ function NBLinkRichTextPanel:render()
             }
             self.rgb[lineIndex] = COLORS.LINK_HOVER
         end
+    end
+
+    -- 搜尋命中底色畫在字的下面：引擎接著才畫文字（ISRichTextPanel.lua:603-677）。
+    if self.owner then
+        self.owner:drawSearchHits()
     end
 
     local ok, renderError = pcall(function()
@@ -649,6 +693,10 @@ function NBDocTree:doDrawItem(y, item, alt)
     if entry.fitWidth ~= available then
         entry.fitWidth = available
         entry.fitText = truncateToWidth(entry.label, self.font, available)
+        -- 被截斷的列把完整名稱交給原生清單的提示框：ISScrollingListBox:prerender 畫完各列後呼叫
+        -- updateTooltip，依 items[row].tooltip 顯示（ISScrollingListBox.lua:391-437、:551）。
+        -- 分類沒有內文可開，截掉的名稱除此之外無處可看。
+        item.tooltip = entry.fitText ~= entry.label and entry.label or nil
     end
     self:drawText(entry.fitText, textX, textY,
         textColor.r, textColor.g, textColor.b, textColor.a, self.font)
@@ -877,6 +925,37 @@ function NBPanel:createChildren()
     self:addChild(self.docTree)
     self.docTree:addScrollBars()
 
+    -- 側欄頂端的搜尋列。輸入框用原生 ISTextEntryBox：清除鈕與提示字都是原版功能
+    -- （ISTextEntryBox.lua:101-127），外觀與工具列的原生按鈕同一套，框架缺席也能用。
+    -- 幾何由 updateLayout 管（同文件樹）；這裡只決定列高與左側放大鏡（缺圖示退成文字標籤）的寬。
+    self.searchRowHeight = self.toolbarHeight - 2 + SEARCH_PAD * 2
+    self.searchStatusHeight = getTextManager():getFontHeight(UIFont.NewSmall) + SEARCH_STATUS_PAD * 2
+    self.searchLabel = getText("IGUI_MinidoracatNB_SearchLabel")
+    self.searchIconAvailable = Icons ~= nil and Icons.get("search") ~= nil
+    if self.searchIconAvailable then
+        self.searchLeadWidth = TOOLBAR_ICON_SIZE
+    else
+        self.searchLeadWidth = getTextManager():MeasureStringX(UIFont.Small, self.searchLabel)
+    end
+    local panel = self
+    local searchEntry = ISTextEntryBox:new("", 0, contentY + SEARCH_PAD,
+        math.max(1, sidebarWidth), self.toolbarHeight - 2)
+    searchEntry:initialise()
+    searchEntry:instantiate()
+    searchEntry:setClearButton(true)
+    searchEntry:setPlaceholderText(getText("IGUI_MinidoracatNB_SearchPlaceholder"))
+    searchEntry:setTooltip(getText("IGUI_MinidoracatNB_SearchTooltip"))
+    -- 單行輸入框按 Enter 只呼叫 onCommandEntered、不會失焦（UITextBox2.java:1051-1081），
+    -- 所以連按 Enter 會一直留在輸入框裡逐筆往下走。Esc 見 onSearchOtherKey。
+    searchEntry.onCommandEntered = function()
+        panel:onSearchEnter()
+    end
+    searchEntry.onOtherKey = function(_, key)
+        panel:onSearchOtherKey(key)
+    end
+    self:addChild(searchEntry)
+    self.searchEntry = searchEntry
+
     self.richText = NBLinkRichTextPanel:new(sidebarWidth, contentY,
         self.width - sidebarWidth, contentHeight, self)
     self.richText:initialise()
@@ -926,25 +1005,50 @@ function NBPanel:sidebarWidth()
     return width
 end
 
--- 幾何唯一的落地點。每幀從 prerender 呼叫一次，靠三個值的比對早退——縮放視窗、
--- 切換側欄、強制收合切線都會落在這裡，不必各自記得要重排一次版面。
+-- 幾何唯一的落地點。每幀從 prerender 呼叫一次，靠比對早退——縮放視窗、切換側欄、強制收合切線、
+-- 搜尋開始／結束（側欄多一行狀態字）都會落在這裡，不必各自記得要重排一次版面。
 function NBPanel:updateLayout()
     local sidebarWidth = self:sidebarWidth()
     local height = self:contentHeight()
-    if self.layoutWidth == self.width and self.layoutHeight == self.height
-        and self.layoutSidebarWidth == sidebarWidth then
+    local searching = self:isSearching()
+    -- 搜尋沒有任何命中時文件樹整個藏起來，空狀態改由 drawSidebarSearch 畫在原處：
+    -- 面板在子元件之後畫到文件樹範圍內的東西看不到（2026-10-09 實機；ISScrollingListBox:prerender
+    -- 收尾只 clearStencilRect、文件樹沒開 doRepaintStencil，:541-543，推論是那塊 stencil 沒回填）。
+    local noResults = searching and #self.searchOrder == 0
+    local contentChanged = self.layoutWidth ~= self.width or self.layoutHeight ~= self.height
+        or self.layoutSidebarWidth ~= sidebarWidth
+    if not contentChanged and self.layoutSearching == searching
+        and self.layoutNoResults == noResults then
         return false
     end
     self.layoutWidth = self.width
     self.layoutHeight = self.height
     self.layoutSidebarWidth = sidebarWidth
+    self.layoutSearching = searching
+    self.layoutNoResults = noResults
 
-    -- 兩個子元件都是 createChildren 建的，updateLayout 只可能在那之後跑。
+    -- 側欄由上而下：搜尋列 ->（搜尋中）狀態行 -> 文件樹。子元件都是 createChildren 建的，
+    -- updateLayout 只可能在那之後跑。
+    local sidebarVisible = sidebarWidth > 0
+    local treeTop = self.searchRowHeight + (searching and self.searchStatusHeight or 0)
+    self.searchEntry:setVisible(sidebarVisible)
+    if sidebarVisible then
+        local entryX = SEARCH_PAD + self.searchLeadWidth + SEARCH_ICON_GAP
+        self.searchEntry:setX(entryX)
+        self.searchEntry:setY(self.contentY + SEARCH_PAD)
+        self.searchEntry:setWidth(math.max(1, sidebarWidth - entryX - SEARCH_PAD))
+    else
+        -- 側欄收起（玩家收或視窗太窄）時輸入框跟著藏；藏起來的框若還聚焦，遊戲按鍵會一直被擋
+        self:releaseSearchFocus()
+    end
     self.docTree:setX(0)
-    self.docTree:setY(self.contentY)
+    self.docTree:setY(self.contentY + treeTop)
     self.docTree:setWidth(sidebarWidth)
-    self.docTree:setHeight(height)
-    self.docTree:setVisible(sidebarWidth > 0)
+    self.docTree:setHeight(math.max(0, height - treeTop))
+    self.docTree:setVisible(sidebarVisible and not noResults)
+    if not contentChanged then
+        return true
+    end
 
     self.richText:setX(sidebarWidth)
     self.richText:setY(self.contentY)
@@ -1206,6 +1310,8 @@ function NBPanel:onRichTextFailure(renderError)
     self.contentState = "error"
     self.contentError = tostring(renderError or "")
     self.linkHitRegions = {}
+    self.searchHits = {}
+    self.searchHitIndex = 0
     if self.richText then
         self.richText:setVisible(false)
     end
@@ -1387,6 +1493,8 @@ function NBPanel:renderSelected(markRead)
         self.contentState = "empty"
         self.currentParsed = nil
         self.linkHitRegions = {}
+        self.searchHits = {}
+        self.searchHitIndex = 0
         self.richText:setVisible(false)
         return
     end
@@ -1409,6 +1517,10 @@ function NBPanel:renderSelected(markRead)
             error(pageError)
         end
         self.lastRenderedFileId = entry.id
+        -- 換了公告：paginate 已經依新內容重算命中（rebuildSearchHits），捲到第一筆
+        if resetScroll then
+            self:scrollToSearchHit()
+        end
     end)
 
     if not ok then
@@ -1423,7 +1535,7 @@ function NBPanel:renderSelected(markRead)
     end
 end
 
--- 每個非空 chunk 的內容座標框（boxes[chunkIndex] = {x1, x2, y1, y2}）。
+-- 每個非空 chunk 的內容座標框（boxes[chunkIndex] = {x1, x2, y1, y2, font}）。
 -- 座標照 render 的算法（ISRichTextPanel.lua:604-665）：font／orient 跨 chunk 沿用；
 -- 置中的位移是整行（同一 lineY 的所有 chunk 寬度總和）在 render 當下才算出來的，
 -- 這裡照樣算一次；靠右同理。
@@ -1454,6 +1566,7 @@ function NBPanel:collectChunkBoxes()
                 lineX = richText.lineX[index] or 0,
                 height = getTextManager():getFontHeight(font),
                 orientation = orientation,
+                font = font,
             }
         end
     end
@@ -1476,6 +1589,7 @@ function NBPanel:collectChunkBoxes()
             x2 = x1 + part.width,
             y1 = part.y + richText.marginTop,
             y2 = part.y + richText.marginTop + part.height,
+            font = part.font,
         }
     end
     return boxes
@@ -1596,7 +1710,9 @@ function NBPanel:categoryHasUnread(key)
     end
     local index
     for index = 1, #bucket do
-        if Client.isUnread(bucket[index].id) then
+        local fileId = bucket[index].id
+        -- 搜尋中只算列得出來的公告，分類的紅點才對得上底下看得到的列
+        if self:fileMatchesSearch(fileId) and Client.isUnread(fileId) then
             return true
         end
     end
@@ -1696,42 +1812,70 @@ function NBPanel:rebuildCategories()
     self.expandedCategories = kept
 end
 
+-- 搜尋中看的是搜尋自己的收合表：預設全部攤開，玩家平常的展開狀態不被搜尋讀寫。
 function NBPanel:isCategoryExpanded(key)
+    if self:isSearching() then
+        return self.searchCollapsed[key] ~= true
+    end
     return self.expandedCategories[key] ~= false
 end
 
+-- 搜尋中的展開／收合只寫 searchCollapsed：清除搜尋後玩家原本的展開狀態原樣回來；
+-- 換關鍵字時那張表清空（setSearchQuery），新的命中一律攤開，不藏在上一輪收起來的分類裡。
+function NBPanel:setCategoryExpanded(key, expanded)
+    if self:isSearching() then
+        self.searchCollapsed[key] = (not expanded) or nil
+    else
+        self.expandedCategories[key] = expanded
+    end
+end
+
 -- 重建可見列。分類列一定在；它底下的公告列只有展開時才進 items。
+-- 搜尋中只列有命中的公告（applySearchFilter 算好的 searchMatches），沒有命中的分類整列不出現。
 function NBPanel:rebuildTree()
     local tree = self.docTree
     tree:clear()
 
+    local searching = self:isSearching()
     local order = self.categoryOrder
     local index
     for index = 1, #order do
         local key = order[index]
-        local bucket = self.categoryFiles[key]
-        local expanded = self:isCategoryExpanded(key)
-        local label = self:categoryLabel(key)
-        -- 第一個參數是原生 listbox 的 item.text（getIndexOf／contains 用）；
-        -- 實際繪製走 doDrawItem 覆寫，讀的是第二個參數那張表。
-        tree:addItem(label, {
-            kind = "category",
-            key = key,
-            label = label,
-            expanded = expanded,
-            unread = self:categoryHasUnread(key),
-        })
-        if expanded then
+        local files = self.categoryFiles[key]
+        if searching then
+            local matched = {}
             local fileIndex
-            for fileIndex = 1, #bucket do
-                local entry = bucket[fileIndex]
-                tree:addItem(entry.title, {
-                    kind = "file",
-                    id = entry.id,
-                    label = entry.title,
-                    category = key,
-                    unread = Client.isUnread(entry.id),
-                })
+            for fileIndex = 1, #files do
+                if self.searchMatches[files[fileIndex].id] then
+                    matched[#matched + 1] = files[fileIndex]
+                end
+            end
+            files = matched
+        end
+        if #files > 0 then
+            local expanded = self:isCategoryExpanded(key)
+            local label = self:categoryLabel(key)
+            -- 第一個參數是原生 listbox 的 item.text（getIndexOf／contains 用）；
+            -- 實際繪製走 doDrawItem 覆寫，讀的是第二個參數那張表。
+            tree:addItem(label, {
+                kind = "category",
+                key = key,
+                label = label,
+                expanded = expanded,
+                unread = self:categoryHasUnread(key),
+            })
+            if expanded then
+                local fileIndex
+                for fileIndex = 1, #files do
+                    local entry = files[fileIndex]
+                    tree:addItem(entry.title, {
+                        kind = "file",
+                        id = entry.id,
+                        label = entry.title,
+                        category = key,
+                        unread = Client.isUnread(entry.id),
+                    })
+                end
             end
         end
     end
@@ -1776,7 +1920,7 @@ function NBPanel:onTreeRowClicked(entry)
     end
     if entry.kind == "category" then
         -- entry.expanded 是這一列畫出來當下的狀態，取反就是玩家要的新狀態。
-        self.expandedCategories[entry.key] = not entry.expanded
+        self:setCategoryExpanded(entry.key, not entry.expanded)
         self:rebuildTree()
         return
     end
@@ -1791,7 +1935,7 @@ function NBPanel:setAllCategoriesExpanded(expanded)
     local value = expanded == true
     local order = self.categoryOrder
     for index = 1, #order do
-        self.expandedCategories[order[index]] = value
+        self:setCategoryExpanded(order[index], value)
     end
     self:rebuildTree()
 end
@@ -1837,7 +1981,7 @@ function NBPanel:revealFile(fileId, markRead)
     -- fileEntries 有這一份，fileCategory 就一定也有（同一個迴圈填的）。
     local key = self.fileCategory[fileId]
     if not self:isCategoryExpanded(key) then
-        self.expandedCategories[key] = true
+        self:setCategoryExpanded(key, true)
         self:rebuildTree()
     end
     return self:selectFile(fileId, markRead)
@@ -1850,6 +1994,426 @@ function NBPanel:firstFileId()
         return nil
     end
     return self.categoryFiles[key][1].id
+end
+
+-- ---------------------------------------------------------------------------
+-- 跨公告搜尋：側欄頂端的輸入框篩選目錄，內文標出命中並捲過去。
+-- 範圍是這個語系快照裡的全部公告——全文本來就在 client（NBReader.publishSnapshotIfComplete），
+-- 不經伺服器。比對的是畫面上看得到的字：目錄篩選用 MDParser.visibleText 建的索引，內文標示用
+-- 排好版的 chunk（findSearchHits），兩邊同一套正規化（normalizeSearchText）。
+-- ---------------------------------------------------------------------------
+
+function NBPanel:isSearching()
+    return self.searchQuery ~= ""
+end
+
+function NBPanel:fileMatchesSearch(fileId)
+    return not self:isSearching() or self.searchMatches[fileId] == true
+end
+
+-- 一份公告的索引文字：標題＋可見內文，正規化後依內容 hash 快取，換快照時只重算 hash 變了的。
+-- ponytail: 第一次搜尋時一次解析全部公告（每語系上限 NBReader.MAX_LANGUAGE_BYTES）；
+-- 實機量到卡頓再改成分 tick 建索引。
+function NBPanel:searchIndexText(entry)
+    local file = entry.file
+    local hash = rawget(file, "h")
+    local cached = self.searchIndex[entry.id]
+    if cached and cached.h == hash then
+        return cached.text
+    end
+    local parsed = Parser.safeParse(rawget(file, "content") or "")
+    local visible = parsed.ok and Parser.visibleText(parsed.richText) or ""
+    local text = normalizeSearchText(entry.title .. "\n" .. visible)
+    self.searchIndex[entry.id] = { h = hash, text = text }
+    return text
+end
+
+-- 依目錄順序算出命中的公告：searchMatches 給篩選，searchOrder 給 Enter 依序換公告。
+function NBPanel:applySearchFilter()
+    self.searchMatches = {}
+    self.searchOrder = {}
+    if not self:isSearching() then
+        return
+    end
+    local query = self.searchQuery
+    local order = self.categoryOrder
+    local index
+    for index = 1, #order do
+        local files = self.categoryFiles[order[index]]
+        local fileIndex
+        for fileIndex = 1, #files do
+            local entry = files[fileIndex]
+            if string.find(self:searchIndexText(entry), query, 1, true) then
+                self.searchMatches[entry.id] = true
+                self.searchOrder[#self.searchOrder + 1] = entry.id
+            end
+        end
+    end
+end
+
+-- 輸入框內容變了（打字、貼上、清除鈕、Esc）。正規化後沒變（例如只多打了空白）就不重算。
+-- 打字只篩選目錄、不換公告：換公告會標成已讀，玩家沒看到就被消掉未讀紅點。
+function NBPanel:setSearchQuery(text)
+    local query = normalizeSearchQuery(text)
+    self.searchDisplayQuery = (trim(text or ""))
+    if query == self.searchQuery then
+        return
+    end
+    self.searchQuery = query
+    self.searchCollapsed = {}
+    self:applySearchFilter()
+    self:rebuildTree()
+    self:updateLayout()
+    self.searchHitIndex = 1
+    self:rebuildSearchHits()
+    self:scrollToSearchHit()
+end
+
+-- 每幀比對輸入框內容，不靠 onTextChange：家族框架實測輸入法組字確定時不會觸發它
+-- （MinidoracatUIFor42 的 ui-dev api-sources.md「ISTextEntryBox」列）。只在面板看得到時跑（update）。
+function NBPanel:pollSearchText()
+    local entry = self.searchEntry
+    if not entry then
+        return
+    end
+    local text = entry:getInternalText() or ""
+    if text == self.searchRawText then
+        return
+    end
+    self.searchRawText = text
+    self:setSearchQuery(text)
+end
+
+-- 輸入框聚焦時遊戲按鍵全部被擋（GameKeyboard.java:32-85、:122-130），連開關公告欄的快捷鍵也是；
+-- 面板收起、側欄藏起時一定要放掉。滑鼠左鍵點任何地方，引擎會先自己放掉（UIManager.java:669-671）。
+function NBPanel:releaseSearchFocus()
+    local entry = self.searchEntry
+    if entry and entry:isFocused() then
+        entry:unfocus()
+    end
+end
+
+-- 引擎把 Esc 吃掉、只轉給聚焦輸入框的 onOtherKey（Core.java:2022-2024）；原版輸入框不處理，
+-- 不接的話按 Esc 毫無反應、遊戲按鍵繼續被擋。這裡清空搜尋並離開輸入框。
+function NBPanel:onSearchOtherKey(key)
+    if key ~= KEY_ESCAPE then
+        return
+    end
+    self.searchEntry:setText("")
+    self.searchEntry:unfocus()
+    self:pollSearchText()
+end
+
+-- Enter／Shift+Enter：在本篇命中之間前後移動；走到頭就換到目錄順序的下一份（上一份）命中公告，
+-- 最後一份之後回到第一份。換公告走 revealFile 並標成已讀：按 Enter 就是要看，和點目錄同一件事。
+function NBPanel:onSearchEnter()
+    if not self:isSearching() then
+        return
+    end
+    local step = shiftHeld() and -1 or 1
+    local target = self.searchHitIndex + step
+    if target >= 1 and target <= #self.searchHits then
+        self.searchHitIndex = target
+        self:scrollToSearchHit()
+        return
+    end
+    local order = self.searchOrder
+    if #order == 0 then
+        return
+    end
+    local position = 0
+    local index
+    for index = 1, #order do
+        if order[index] == self.selectedFileId then
+            position = index
+            break
+        end
+    end
+    local nextPosition
+    if position == 0 then
+        nextPosition = step > 0 and 1 or #order
+    else
+        nextPosition = (position - 1 + step) % #order + 1
+    end
+    local fileId = order[nextPosition]
+    if fileId ~= self.selectedFileId then
+        self:revealFile(fileId, self:getIsVisible())
+    end
+    if #self.searchHits > 0 then
+        self.searchHitIndex = step > 0 and 1 or #self.searchHits
+    end
+    self:scrollToSearchHit()
+end
+
+-- 本篇的命中位置。把排好版的非空 chunk 串成畫面文字流再找，命中可以跨 chunk（粗體邊界、自動折行）：
+--   同一列（lineY 相同）的相鄰 chunk 中間只隔 command，畫面上直接相接 -> 不插字；
+--   換列且中間的空 chunk 已經在新的一列（<LINE> 這類 command 換的列）-> 插 "\n"，不跨邏輯行比對；
+--   其他換列是自動折行，只會折在 token 之間的空白（ISRichTextPanel.lua:494-519）-> 插一個空白
+--   （邊界旁已經有 NBSP 換來的空白就不再插）。
+-- 流裡每個字都對得回 chunk 的同一個位置：NBSP 換空白、轉小寫都不改長度（小寫會改長度的罕見字，
+-- 例如土耳其文的 İ，那一段就不轉小寫）。
+-- ponytail: 服主手寫 <LINE> 後面直接接文字時中間沒有空 chunk，會被當成自動折行；要精確就在 processCommand 記下換行。
+function NBPanel:findSearchHits()
+    local richText = self.richText
+    local lines = richText.lines or {}
+    local lineY = richText.lineY or {}
+    local parts = {}
+    local pieces = {}
+    local length = 0
+    local previous = nil
+    local brokenLine = false
+    local index
+    for index = 1, #lines do
+        local text = lines[index] or ""
+        local y = lineY[index] or 0
+        if text == "" then
+            if previous and y > (lineY[previous] or 0) then
+                brokenLine = true
+            end
+        else
+            local piece = string.gsub(text, Parser.NBSP, " ")
+            local lowered = string.lower(piece)
+            if string.len(lowered) == string.len(piece) then
+                piece = lowered
+            end
+            local separator = ""
+            if previous then
+                if brokenLine then
+                    separator = "\n"
+                elseif y > (lineY[previous] or 0) and string.sub(parts[#parts], -1) ~= " "
+                    and string.sub(piece, 1, 1) ~= " " then
+                    separator = " "
+                end
+            end
+            if separator ~= "" then
+                parts[#parts + 1] = separator
+                length = length + string.len(separator)
+            end
+            parts[#parts + 1] = piece
+            pieces[#pieces + 1] = { chunk = index, first = length + 1, last = length + string.len(piece) }
+            length = length + string.len(piece)
+            previous = index
+            brokenLine = false
+        end
+    end
+
+    local hits = {}
+    if #pieces == 0 then
+        return hits
+    end
+    local flow = table.concat(parts)
+    local boxes = self:collectChunkBoxes()
+    local query = self.searchQuery
+    local from = 1
+    local cursor = 1
+    while true do
+        local first, last = string.find(flow, query, from, true)
+        if not first then
+            break
+        end
+        from = last + 1
+        -- 流的最後一個字一定屬於最後一個 piece，所以 cursor 不會跑出 pieces
+        while pieces[cursor].last < first do
+            cursor = cursor + 1
+        end
+        local segments = {}
+        local pieceIndex = cursor
+        while pieceIndex <= #pieces and pieces[pieceIndex].first <= last do
+            local piece = pieces[pieceIndex]
+            local segment = self:searchSegmentBox(boxes[piece.chunk], lines[piece.chunk],
+                math.max(first, piece.first) - piece.first + 1,
+                math.min(last, piece.last) - piece.first + 1)
+            if segment then
+                -- 同一列上相接的兩段（跨粗體邊界）合成一個方框：一筆命中只框一圈。
+                -- 間距放寬到 4px（前一段右緣是字形寬、後一段從 xadvance 起算）；隔著行內圖片的不合併。
+                local previousSegment = segments[#segments]
+                if previousSegment and previousSegment.y1 == segment.y1
+                    and segment.x1 - previousSegment.x2 <= 4 then
+                    previousSegment.x2 = math.max(previousSegment.x2, segment.x2)
+                else
+                    segments[#segments + 1] = segment
+                end
+            end
+            pieceIndex = pieceIndex + 1
+        end
+        if #segments > 0 then
+            hits[#hits + 1] = { segments = segments }
+        end
+    end
+    return hits
+end
+
+-- chunk 內第 first..last 個字的方框（內容座標）。左緣是前段文字之後的筆位：MeasureStringX 的最後一個字
+-- 只算字形寬，要補上 xadvance 的差（trailingAdvanceGap，同 processCommand）；右緣是命中最後一個字的字形右緣。
+function NBPanel:searchSegmentBox(box, text, first, last)
+    if not box then
+        return nil
+    end
+    local textManager = getTextManager()
+    local x1 = box.x1
+    if first > 1 then
+        local prefix = string.sub(text, 1, first - 1)
+        x1 = x1 + textManager:MeasureStringX(box.font, prefix) + trailingAdvanceGap(box.font, prefix)
+    end
+    local x2 = box.x1 + textManager:MeasureStringX(box.font, string.sub(text, 1, last))
+    return { x1 = x1, x2 = math.max(x2, x1 + 1), y1 = box.y1, y2 = box.y2 }
+end
+
+-- 依目前排版重算本篇命中（每次 paginate 都會叫，見 NBLinkRichTextPanel:paginate）。
+-- 同一份公告重排（換寬度）時保留第幾筆；換了公告從第一筆開始。
+function NBPanel:rebuildSearchHits()
+    local keep = 1
+    if self.searchHitsFileId == self.selectedFileId then
+        keep = math.max(self.searchHitIndex, 1)
+    end
+    self.searchHitsFileId = self.selectedFileId
+    if self:isSearching() and self.contentState == "ready" then
+        self.searchHits = self:findSearchHits()
+    else
+        self.searchHits = {}
+    end
+    self.searchHitIndex = math.min(keep, #self.searchHits)
+end
+
+-- 目前這一筆不在可視範圍時，把它捲到內容區上方約三分之一處（留一點上文）；已經看得到就不動。
+function NBPanel:scrollToSearchHit()
+    local hit = self.searchHits[self.searchHitIndex]
+    if not hit then
+        return
+    end
+    local segment = hit.segments[1]
+    local richText = self.richText
+    local scrollY = richText:getYScroll()
+    local height = richText:getHeight()
+    if segment.y1 + scrollY >= 0 and segment.y2 + scrollY <= height then
+        return
+    end
+    richText:setYScroll(math.floor(height / 3) - segment.y1)
+end
+
+-- 命中底色，畫在 richText 上、字的下面（NBLinkRichTextPanel:render 在引擎畫字之前呼叫）。
+-- 那時引擎的 stencil 還沒設（ISRichTextPanel.lua:590），所以每個方框自己夾在可視範圍內
+-- （內容座標，可視範圍是 -yScroll 到 -yScroll + 高）。命中依閱讀順序排列，碰到第一個在可視範圍下方的就停。
+-- 目前這一筆另畫琥珀外框：只靠底色深淺分不出哪一筆是「目前」，狀態行的「第幾筆」也是非顏色線索。
+function NBPanel:drawSearchHits()
+    local hits = self.searchHits
+    if #hits == 0 or self.contentState ~= "ready" then
+        return
+    end
+    local richText = self.richText
+    local top = -richText:getYScroll()
+    local bottom = top + richText:getHeight()
+    local right = richText:getWidth()
+    local fill = COLORS.SEARCH_HIT_FILL
+    local accent = COLORS.ACCENT_AMBER
+    local index
+    for index = 1, #hits do
+        local segments = hits[index].segments
+        local current = index == self.searchHitIndex
+        local segmentIndex
+        for segmentIndex = 1, #segments do
+            local segment = segments[segmentIndex]
+            if segment.y1 >= bottom then
+                return
+            end
+            local y1 = math.max(segment.y1, top)
+            local y2 = math.min(segment.y2, bottom)
+            local x1 = math.max(segment.x1, 0)
+            local x2 = math.min(segment.x2, right)
+            if y2 > y1 and x2 > x1 then
+                richText:drawRect(x1, y1, x2 - x1, y2 - y1, fill.a, fill.r, fill.g, fill.b)
+                if current then
+                    richText:drawRectBorder(x1, y1, x2 - x1, y2 - y1,
+                        accent.a, accent.r, accent.g, accent.b)
+                end
+            end
+        end
+    end
+end
+
+-- 側欄搜尋列：底色（同文件樹，看起來是同一條側欄）、左側放大鏡（缺圖示退成文字標籤），
+-- 搜尋中再加一行狀態字（本篇第幾筆／本篇沒有）；沒有任何命中時文件樹藏起來（updateLayout），
+-- 底色畫到側欄底、空狀態寫在原處。輸入框是原生子元件，自己畫框與提示字。
+-- 狀態字只在數字或寬度變了才重排，每幀不配置字串。
+function NBPanel:drawSidebarSearch()
+    local width = self:sidebarWidth()
+    if width <= 0 then
+        return
+    end
+    local top = self.contentY
+    local tray = COLORS.TAB_TRAY_BG
+    local noResults = self:isSearching() and #self.searchOrder == 0
+    local bandBottom = noResults and (top + self:contentHeight()) or self.docTree:getY()
+    self:drawRect(0, top, width, bandBottom - top, tray.a, tray.r, tray.g, tray.b)
+    local color = COLORS.TAB_TEXT_UNSELECTED
+    if self.searchIconAvailable then
+        drawIcon(self, "search", SEARCH_PAD,
+            top + math.floor((self.searchRowHeight - TOOLBAR_ICON_SIZE) / 2),
+            TOOLBAR_ICON_SIZE, color)
+    else
+        self:drawText(self.searchLabel, SEARCH_PAD,
+            top + math.floor((self.searchRowHeight - getTextManager():getFontHeight(UIFont.Small)) / 2),
+            color.r, color.g, color.b, color.a, UIFont.Small)
+    end
+    if not self:isSearching() then
+        return
+    end
+
+    local available = width - SEARCH_PAD * 2
+    local total = #self.searchHits
+    local matched = #self.searchOrder
+    local cache = self.searchStatusCache
+    if not cache or cache.index ~= self.searchHitIndex or cache.total ~= total
+        or cache.matched ~= matched or cache.width ~= available then
+        local text = ""
+        if matched > 0 and total > 0 then
+            text = getText("IGUI_MinidoracatNB_SearchHitPosition",
+                tostring(self.searchHitIndex), tostring(total))
+        elseif matched > 0 then
+            text = getText("IGUI_MinidoracatNB_SearchNoHitHere")
+        end
+        cache = {
+            index = self.searchHitIndex,
+            total = total,
+            matched = matched,
+            width = available,
+            fit = text ~= "" and truncateToWidth(text, UIFont.NewSmall, available) or "",
+        }
+        self.searchStatusCache = cache
+    end
+    if cache.fit ~= "" then
+        self:drawText(cache.fit, SEARCH_PAD, top + self.searchRowHeight + SEARCH_STATUS_PAD,
+            color.r, color.g, color.b, color.a, UIFont.NewSmall)
+    end
+    if noResults then
+        self:drawSearchEmptyState(available)
+    end
+end
+
+-- 搜尋沒有任何命中：在文件樹原本的位置寫出查詢字與出口（輸入框的清除鈕或 Esc）。句子可能比側欄寬，
+-- 框架有斷行（TextWrap）就分行，沒有就截成一行——查詢字本身仍在正上方的輸入框裡看得到。
+function NBPanel:drawSearchEmptyState(available)
+    local cache = self.searchEmptyCache
+    if not cache or cache.query ~= self.searchDisplayQuery or cache.width ~= available then
+        local message = getText("IGUI_MinidoracatNB_SearchNoResults", self.searchDisplayQuery)
+        local lines
+        if TextWrap then
+            lines = TextWrap(message, available, UIFont.NewSmall)
+        else
+            lines = { truncateToWidth(message, UIFont.NewSmall, available) }
+        end
+        cache = { query = self.searchDisplayQuery, width = available, lines = lines }
+        self.searchEmptyCache = cache
+    end
+    local color = COLORS.TAB_TEXT_UNSELECTED
+    local lineHeight = getTextManager():getFontHeight(UIFont.NewSmall)
+    local y = self.docTree:getY() + SEARCH_PAD * 2
+    local index
+    for index = 1, #cache.lines do
+        self:drawText(cache.lines[index], SEARCH_PAD, y, color.r, color.g, color.b, color.a,
+            UIFont.NewSmall)
+        y = y + lineHeight
+    end
 end
 
 -- 工具列的側欄開關。強制收合期間照樣記下偏好：玩家的意思是「我要目錄」，
@@ -1950,6 +2514,7 @@ function NBPanel:prerender()
     if not self.isCollapsed then
         self:drawToolbar()
         self:drawSidebarDivider()
+        self:drawSidebarSearch()
         self:drawContentPlaceholder()
     end
 end
@@ -2053,6 +2618,7 @@ function NBPanel:setSnapshot(snapshot, preferredId)
     local targetId = preferredId or self.selectedFileId
 
     self:rebuildCategories()
+    self:applySearchFilter()
     self.selectedFileId = nil
 
     if targetId == nil or self.fileEntries[targetId] == nil then
@@ -2084,7 +2650,15 @@ function NBPanel:update()
     ISCollapsableWindowJoypad.update(self)
     if not self:getIsVisible() or self.isCollapsed then
         self:finishVolumeInteraction()
+        -- 收合、或被 Toggle UI 直接藏起來時輸入框若還聚焦，遊戲按鍵會一直被擋；進入隱藏時放掉一次
+        if not self.searchFocusReleased then
+            self:releaseSearchFocus()
+            self.searchFocusReleased = true
+        end
+        return
     end
+    self.searchFocusReleased = false
+    self:pollSearchText()
 end
 
 function NBPanel:setVisible(visible)
@@ -2100,6 +2674,7 @@ function NBPanel:setVisible(visible)
         end
     else
         self:finishVolumeInteraction()
+        self:releaseSearchFocus()
     end
 end
 
@@ -2155,6 +2730,16 @@ function NBPanel:new()
     -- 這個值只由玩家操作（側欄開關、全部展開）改寫，不需要在每次 setSnapshot 再套一次。
     o.sidebarCollapsed = Client.getSidebarCollapsedPreference() == true
     o.linkHitRegions = {}
+    -- 搜尋狀態（側欄頂端的輸入框）。searchQuery 是正規化後的查詢字，"" = 沒有在搜尋。
+    o.searchQuery = ""
+    o.searchRawText = ""
+    o.searchDisplayQuery = ""
+    o.searchIndex = {}
+    o.searchMatches = {}
+    o.searchOrder = {}
+    o.searchCollapsed = {}
+    o.searchHits = {}
+    o.searchHitIndex = 0
     o.contentState = "syncing"
     return o
 end

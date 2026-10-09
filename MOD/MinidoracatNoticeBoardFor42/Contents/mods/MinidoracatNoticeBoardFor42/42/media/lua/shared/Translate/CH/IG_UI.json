@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "公告語音聲音",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "語音公告用哪一個聲音，中文／英文／日文都有。Stacy 與 Yui 是新錄的語音；經典是改版前的舊語音。公告欄的「語音」選單也能切換；選「原提示音（無語音）」時不會用到。",
   "IGUI_MinidoracatNB_OptShowButton": "顯示伺服器公告欄按鈕",
+  "IGUI_MinidoracatNB_SearchLabel": "搜尋",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "搜尋所有公告",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter 跳到下一筆，Shift+Enter 跳到上一筆，Esc 清除搜尋。",
+  "IGUI_MinidoracatNB_SearchHitPosition": "本篇第 %1 筆，共 %2 筆",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "本篇沒有符合的內容",
+  "IGUI_MinidoracatNB_SearchNoResults": "找不到符合「%1」的公告。按 Esc 或搜尋框右側的清除鈕可清除搜尋。",
   "IGUI_MinidoracatNB_OptShowButtonTip": "畫面上的伺服器公告欄按鈕，點擊開關公告欄。有家族工具列時它在工具列裡，沒有時是可拖曳的浮動按鈕。隱藏後可用快捷鍵開關公告欄（在「選項 ￫ 按鍵綁定 ￫ Minidoracat 公告欄」設定）；有新公告時仍會依伺服器設定自動彈出。"
 }

@@ -33,6 +33,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 | `ACCENT_AMBER` | 1 | 0.85 | 0.4 | 1.0 | 強調色（粗體、Toast 邊框、admin 按鈕圖示） | 與 MDParser 粗體映射 `<PUSHRGB:1,0.85,0.4>` 同值（ralplan 表格） |
 | `LINK` | 0.45 | 0.75 | 1.0 | 1.0 | 連結文字 | 自訂：與 amber/red 區隔的冷色，暗底上清楚可讀 |
 | `LINK_HOVER` | 0.65 | 0.85 | 1.0 | 1.0 | 連結 hover（加亮＋底線） | 自訂 |
+| `SEARCH_HIT_FILL` | 1 | 1 | 1 | 0.18 | 搜尋命中底色（畫在字的下面；目前這一筆另加 1px `ACCENT_AMBER` 外框） | 白色疊層族，比選中列的 `TAB_SELECTED_FILL`（0.12）深一階；不改字色——字色已帶粗體／連結／斜體／程式碼的語意。琥珀外框沿用選中列的「目前這一個」標記 |
 | `UNREAD_DOT` | 0.85 | 0.15 | 0.15 | 1.0 | 未讀紅點主色 | 自訂：PZ「壞/警示」語彙的飽和紅（對照 RichText `RED` 指令 `1,0,0`，此處降飽和避免過刺眼） |
 | `UNREAD_DOT_OUTLINE` | 0 | 0 | 0 | 0.6 | 未讀紅點描邊，確保任何背景下可辨識 | 自訂 |
 | `ERROR_BG` | 0.3 | 0.05 | 0.05 | 0.5 | 錯誤占位頁背景色塊 | 自訂，暗紅低飽和 |
@@ -58,6 +59,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 ├───────────────────────────────────────────────────────┤
 │ [側欄] [展開] [收合]   [語音][音量 ━━●━ 60%][語言][重設大小][重建範例][重新載入] │ 工具列
 ├──────────────────┬────────────────────────────────────┤
+│ 🔍[搜尋所有公告 ×]│                                    │
 │ ▾ 📁 一般公告   ●│                                    │
 │    📄 歡迎公告   │                                    │
 │ ▸ 📁 伺服器規則 ●│       ISRichTextPanel 內容區       │
@@ -71,6 +73,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 - **標題列**：高度與原生 `titleBarHeight()` 相同，疊 `TITLEBAR_FILL`、下緣 1px `BORDER`；標題 `IGUI_MinidoracatNB_PanelTitle` 置中。
 - **工具列**：高度 = `getTextManager():getFontHeight(UIFont.Small) + 6`，y = `titleBarHeight()`。左組由左到右為側欄開關、「全部展開」、「全部收合」；右組由左到右為語音、音量滑桿、語言、重設大小、重建範例（僅 admin）、重新載入（僅 admin）。**重新載入固定在最右**，非 admin 不建立兩顆管理按鈕，server 仍重新驗證權限。重建範例先開原生 `ISContextMenu`，CH／EN 選項各自明示「會覆寫 categories.txt」，選定才送請求，關閉選單零副作用。八顆按鈕各掛 14px 框架圖示：`sidebar`／`chevronDown`／`chevronRight`／`language`（語音與文字語系共用）／`resetSize`／`folder`／`reload`。沿用 `ISButton.iconTexture` ＋ `joypadTextureWH = 14`，原生圖示與標題間距為 5（`ISButton.lua:238-246`），有圖示時寬度多留 19px；缺圖示退純文字，不留空欄。minimumWidth 由左組最右的收合鈕與右組最左的語音鈕計算，包含音量滑桿寬度，避免群組互相覆蓋。語音選單與保存規則見 `ADMIN_GUIDE.md`「玩家自己的音效設定」。
 - **音量滑桿**：`NBVolumeSlider` 繼承原生 `ISSliderPanel` 的拖曳、框外放開、上下限與步進；「音量」標籤與百分比依實際字寬留位，軌道寬 120px。框架 rev≥3 的 `Skin.slider` 畫琥珀軌道與白色旋鈕，缺能力則退原生繪製，不另造拖曳模型。收合時不繪製；原生 Toggle UI 繞過 Lua setter，因此在既有 UI update 生命週期觀察實際可見狀態並收尾。保存與試聽時機見管理指南；本輪未新增公告面板的完整手把導覽。
+- **搜尋列**：側欄頂端一列，輸入框與工具列按鈕同高（`toolbarHeight - 2`），四周留 4px；左側是框架 `search` 圖示（缺圖示退成文字標籤「搜尋」）。輸入框是原生 `ISTextEntryBox`：清除鈕、提示字「搜尋所有公告」、滑鼠停留時的鍵盤說明都是原版功能，外觀與工具列的原生按鈕同一套，框架缺席也能用。搜尋中輸入框下方多一行狀態字，文件樹跟著往下移。側欄收起（玩家收或視窗太窄強制收合）時搜尋列一起藏起來，並放開鍵盤。搜尋行為見 1.5。
 - **文件樹**：原生 `ISScrollingListBox` 子類 `NBDocTree`，自繪分類與公告列，不畫原生每列外框。展開／收合時重建可見 items，讓 rowAt、捲動高度與 ensureVisible 全部沿用原生實作。
 - **內容區**：`ISRichTextPanel`＋`addScrollBars()`，`autosetheight=false`、`clip=true`、`doRepaintStencil=true`，左右 margin 都是 `10 + scrollbarWidth`，確保 `<H1>`／`<CENTRE>` 以內容區真正中心對齊。側欄寬度改變時 `updateLayout()` 手動調整兩個子元件，不同時使用 anchors。
 
@@ -80,6 +83,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 - **四張核心 tree icons（chevronDown／chevronRight／folder／document）必須全數可用才啟用圖示版面**；任一張缺失、框架 API rev < 2 或能力關閉時，整棵樹退回 ASCII `-`／`+`，分類文字回 x=18、公告文字回 x=26，不留下空圖示欄。分類標籤由 server snapshot 提供，語系根層使用 `IGUI_MinidoracatNB_CategoryRoot`。
 - 公告列比分類縮一層（圖示版 x=40、退回版 x=26）；選中時疊 `TAB_SELECTED_FILL`，左緣畫 2px `ACCENT_AMBER`。這是舊頁籤琥珀底線旋轉 90 度後的同一視覺語意。
 - Hover 疊 `TAB_HOVER_FILL`；過長標籤依實際字寬截斷並加 `...`，完整標題與內容資料不改。
+- 名稱被截斷的列（分類或公告）把完整名稱交給原生清單的提示框（`ISScrollingListBox` 的 `item.tooltip`），滑鼠停在列上就看得到全名；沒截斷的列不出提示框。分類沒有內文可開，這是看到完整分類名的唯一途徑。
 - 點分類只展開／收合，不選公告、不標已讀；點公告後立即顯示內容並寫入既有 ReadState。
 - snapshot 更新以裸檔名保存選取；目標位於收合分類時，先展開父分類再選中並 `ensureVisible()`。
 - 空分類不顯示。分類目錄以外的根層公告固定排第一組，其餘依 server 給的分類順序。
@@ -103,6 +107,17 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 | 偏好持久化 | `NoticeBoard/settings.ini` 的 `sidebar=true/false` | 強制收合不覆寫偏好；拉寬後恢復 |
 | 可縮放 | 是，沿用原生 `ISResizeWidget` | `updateLayout()` 每幀只在幾何改變時落地 |
 | 位置記憶 | 沿用 `ISLayoutManager` | 與原生視窗同套 `layout.ini` 機制 |
+
+### 1.5 搜尋
+
+- **範圍**：這個語系快照裡的全部公告（全文本來就在 client），不經伺服器。比對畫面上看得到的字：標題＋內文的可見文字；連結網址、圖片路徑與替代文字、markdown 記號都不算。大小寫不拘，連續空白視為一個。
+- **目錄**：有查詢字時只列有命中的公告，沒有命中的分類整列不出現；有命中的分類一律攤開。搜尋中的展開／收合另存一份，不改玩家平常的展開狀態，清除搜尋後原樣恢復；換關鍵字時新的命中一律攤開。分類紅點只看列出來的公告。
+- **打字不換公告**：輸入只篩選目錄，正在看的公告不變、也不標成已讀。點目錄裡的公告或按 Enter 才開啟，照常標成已讀。
+- **命中標示**：開著的公告裡所有命中畫 `SEARCH_HIT_FILL` 底色，目前這一筆另加 1px 琥珀外框；跨粗體邊界的命中合成一個方框，跨自動折行的分成兩段，分段（跨邏輯行）不算一筆。開啟公告時捲到第一筆（捲到內容區上方約三分之一處），之後換筆時只在那一筆不在畫面內才捲。
+- **狀態字**：輸入框下方「本篇第 N 筆，共 M 筆」；本篇沒有命中時「本篇沒有符合的內容」。
+- **鍵盤**：Enter 下一筆，走到本篇最後一筆就開目錄順序的下一份命中公告，最後一份之後回到第一份；Shift+Enter 反向。Esc 清空搜尋並離開輸入框（引擎會吃掉這一鍵，不會開暫停選單）。輸入框聚焦時遊戲按鍵全部停用，所以面板隱藏、收合或側欄收起時一律放開鍵盤；滑鼠點任何地方也會離開輸入框。
+- **沒有任何命中**：文件樹藏起來，側欄改寫「找不到符合「關鍵字」的公告。按 Esc 或搜尋框右側的清除鈕可清除搜尋。」，框架有斷行（rev≥16）就分行，沒有就截成一行。
+- **輸入法**：中日文用輸入法確定送出的字會進輸入框；引擎沒有組字預覽，組字中的字不會顯示在框內。面板每幀比對輸入框文字，不依賴 `onTextChange`。手把的原版螢幕鍵盤只有拉丁字母。
 
 ---
 
@@ -148,6 +163,8 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 |---|---|---|
 | 面板標題列 | `UIFont.Small` | `ISCollapsableWindow:new` 預設 `titleFont`（ISCollapsableWindow.lua:398） |
 | 文件樹分類／公告文字 | `UIFont.Small` | `ISScrollingListBox:setFont("Small", 3)`，列高由字高＋上下 padding 決定 |
+| 側欄搜尋框 | `UIFont.Small` | 原生 `ISTextEntryBox` 預設字型，與文件樹同字級 |
+| 搜尋狀態字、無結果說明 | `UIFont.NewSmall` | 與占位提示同級，屬說明文字 |
 | 內文本文（MDParser 一般段落／`<TEXT>`） | `UIFont.NewSmall` | `ISRichTextPanel` 預設 `defaultFont = UIFont.NewSmall`（ISRichTextPanel.lua:765），MD→RichText 映射沿用引擎原生行為，不覆寫 |
 | `# ` 一級標題（`<H1>`） | `UIFont.Large` | `ISRichTextPanel:processCommand` H1 指令固定映射（ISRichTextPanel.lua:35），已由 RichText 原生決定，非本 MOD 可調 |
 | `## ` 二級標題（`<H2>`） | `UIFont.Medium` | 同上 H2 指令（:44） |
@@ -210,6 +227,15 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
         ╰────╯
 ```
 
+### 6.6 搜尋沒有結果
+```
+🔍[ safezone      ×]
+                          （狀態行留白）
+找不到符合「safezone」的公告。按 Esc 或
+搜尋框右側的清除鈕可清除搜尋。
+```
+- 文件樹藏起來，側欄底色一路畫到底，說明文字寫在文件樹原本的位置（`TAB_TEXT_UNSELECTED`、`UIFont.NewSmall`）。
+
 ---
 
 ## 落地檢查清單（供 Step 4 實作對照）
@@ -220,3 +246,4 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 - [ ] 面板的關閉/釘選/收合鈕、縮放把手、位置記憶 100% 沿用 `ISCollapsableWindowJoypad` 原生行為；`prerender`／`render` 整段覆寫但版面數字（`titleBarHeight`／`resizeWidgetHeight`／richText rect／stencil）一個都不動。
 - [ ] H1/H2/本文字級與顏色完全交給 `ISRichTextPanel` 原生指令映射，MDParser 只負責產出對應 tag，不在 UI 層覆寫字級/顏色。
 - [ ] admin 工具列僅在 client 端判定 admin 時才 `addChild`；server 端 `reload` 與 `examples` 指令仍照網路協定表重新驗證 access level。`examples` 帶 `lang`，client 與 server 都只接受精確的 `CH`／`EN`（其他值零寫入、零冷卻消耗、節流 log、回 `failed`），另有 per-admin 10 秒冷卻與 `examplesResult` 回覆（`success`／`failed`／`cooldown`／`forbidden`），四種都要有面板提示。`success` 帶固定檔數 5 且伺服器已刷新快照——**玩家端畫面會跟著更新**（新公告、通知、未讀紅點），所以提示文案不能再說「畫面不會有變化」。
+- [ ] 搜尋框聚焦時遊戲按鍵全部停用：面板隱藏、收合、側欄收起都要放開鍵盤；Esc 由面板自己處理（引擎只轉給輸入框的 `onOtherKey`）。命中標示畫在 richText 的字下面、不改 RichText 字串。

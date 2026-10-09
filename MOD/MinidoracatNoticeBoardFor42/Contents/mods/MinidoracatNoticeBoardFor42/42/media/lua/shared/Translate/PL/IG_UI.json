@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Głos ogłoszeń",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "Który głos czyta ogłoszenia po chińsku, angielsku i japońsku. Stacy i Yui to nowe głosy; Klasyczny to głos z wcześniejszych wersji. Możesz go też zmienić w menu Lektor na tablicy ogłoszeń. Nieużywane, gdy lektor jest ustawiony na oryginalny dźwięk.",
   "IGUI_MinidoracatNB_OptShowButton": "Pokaż przycisk tablicy ogłoszeń",
+  "IGUI_MinidoracatNB_SearchLabel": "Szukaj",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Szukaj we wszystkich ogłoszeniach",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter: następny wynik. Shift+Enter: poprzedni wynik. Esc: wyczyść wyszukiwanie.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "%1 z %2 w tym ogłoszeniu",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "Brak wyników w tym ogłoszeniu",
+  "IGUI_MinidoracatNB_SearchNoResults": "Brak ogłoszeń pasujących do: %1. Naciśnij Esc lub przycisk czyszczenia w polu wyszukiwania, aby wyczyścić wyszukiwanie.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Przycisk tablicy ogłoszeń serwera na ekranie; kliknij go, aby otworzyć lub zamknąć tablicę. Z rodzinnym paskiem narzędzi jest to miejsce na pasku, w przeciwnym razie przeciągany pływający przycisk. Gdy jest ukryty, otwieraj tablicę skrótem (ustaw go w Opcje > Przypisanie klawiszy > Minidoracat Notice Board). Nowe ogłoszenia nadal otwierają tablicę automatycznie, zależnie od ustawień serwera."
 }

@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Stimme für Mitteilungen",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "Welche Stimme die Mitteilungen auf Chinesisch, Englisch und Japanisch vorliest. Stacy und Yui sind die neuen Stimmen; Klassisch ist die Stimme früherer Versionen. Du kannst sie auch im Menü Sprachausgabe des Schwarzen Bretts wechseln. Wird nicht verwendet, wenn die Sprachausgabe auf Originalton steht.",
   "IGUI_MinidoracatNB_OptShowButton": "Knopf für Schwarzes Brett anzeigen",
+  "IGUI_MinidoracatNB_SearchLabel": "Suchen",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Alle Mitteilungen durchsuchen",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter: nächster Treffer. Umschalt+Enter: vorheriger Treffer. Esc: Suche leeren.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "%1 von %2 in dieser Mitteilung",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "Keine Treffer in dieser Mitteilung",
+  "IGUI_MinidoracatNB_SearchNoResults": "Keine Mitteilung passt zu: %1. Drücke Esc oder die Löschen-Schaltfläche im Suchfeld, um die Suche zu leeren.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Der Knopf für das Schwarze Brett des Servers auf dem Bildschirm; klicke ihn an, um das Brett zu öffnen oder zu schließen. Mit der Familien-Werkzeugleiste ist er ein Platz in der Leiste, sonst ein verschiebbarer schwebender Knopf. Ist er ausgeblendet, öffne das Brett per Tastenkürzel (festlegen unter Einstellungen > Tastaturbelegung > Minidoracat Notice Board). Neue Mitteilungen öffnen das Brett je nach Servereinstellungen trotzdem automatisch."
 }

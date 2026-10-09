@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Voz de leitura dos avisos",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "Qual voz lê os avisos, em chinês, inglês e japonês. Stacy e Yui são as vozes novas; Clássica é a voz das versões anteriores. Você também pode trocá-la pelo menu Voz do mural de avisos. Não é usada quando a voz está definida como som original.",
   "IGUI_MinidoracatNB_OptShowButton": "Mostrar botão do mural de avisos",
+  "IGUI_MinidoracatNB_SearchLabel": "Pesquisar",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Pesquisar em todos os avisos",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter: próximo resultado. Shift+Enter: resultado anterior. Esc: limpar a pesquisa.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "%1 de %2 neste aviso",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "Nenhum resultado neste aviso",
+  "IGUI_MinidoracatNB_SearchNoResults": "Nenhum aviso corresponde a: %1. Pressione Esc ou o botão de limpar do campo de pesquisa para limpar a pesquisa.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "O botão do mural de avisos do servidor na tela; clique nele para abrir ou fechar o mural. Com a barra de ferramentas da família ele é um espaço na barra; caso contrário, é um botão flutuante que pode ser arrastado. Quando oculto, abra o mural pelo atalho (defina em Opções > Atribuição de teclas > Minidoracat Notice Board). Novos avisos ainda abrem o mural automaticamente, conforme as configurações do servidor."
 }

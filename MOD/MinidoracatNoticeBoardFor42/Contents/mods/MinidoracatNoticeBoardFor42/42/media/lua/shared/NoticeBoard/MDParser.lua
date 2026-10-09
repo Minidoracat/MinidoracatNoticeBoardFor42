@@ -1204,4 +1204,20 @@ function MDParser.safeParse(markdown)
     }
 end
 
+-- 搜尋索引用：把 parse 產出的 RichText 還原成畫面上看得到的文字。規則照引擎 paginate：
+-- tag 只是 token 分隔，兩側文字在畫面上直接相接（ISRichTextPanel.lua:468-486、:494-500），所以 tag
+-- 連同前後空白一起拿掉；<LINE>／<BR> 換成 "\n"，跨行的字不算連在一起；&lt;／&gt; 還原（:488-493）；
+-- NBSP 是畫面上的空白（padColoredEdges 補的），換成一般空白；連續空白收成一個（引擎以單一空白
+-- 重組 token，:497-499）。只認 [ \t]、不用 %s：%s 會把剛換上的 "\n" 跟著 tag 一起吃掉。
+-- 標準 Lua 測試裡 NBSP 是單一位元組，會撞上 CJK 的 UTF-8 續位元組（kahlua.md）；測試字樣要避開含 0xA0 的字。
+function MDParser.visibleText(richText)
+    local text = string.gsub(richText, "[ \t]*<LINE>[ \t]*", "\n")
+    text = string.gsub(text, "[ \t]*<BR>[ \t]*", "\n")
+    text = string.gsub(text, "[ \t]*<[A-Z][A-Z0-9_]*[^<>%s]*>[ \t]*", "")
+    text = string.gsub(text, "&lt;", "<")
+    text = string.gsub(text, "&gt;", ">")
+    text = string.gsub(text, MDParser.NBSP, " ")
+    return (string.gsub(text, "[ \t]+", " "))
+end
+
 return MDParser

@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Timbre des annonces",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "La voix qui lit les annonces, en chinois, anglais et japonais. Stacy et Yui sont les nouvelles voix ; Classique est la voix des versions précédentes. Vous pouvez aussi la changer depuis le menu Timbre du tableau d'affichage. Inutilisé lorsque la voix est réglée sur le son d'origine.",
   "IGUI_MinidoracatNB_OptShowButton": "Afficher le bouton du tableau d'affichage",
+  "IGUI_MinidoracatNB_SearchLabel": "Rechercher",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Rechercher dans les annonces",
+  "IGUI_MinidoracatNB_SearchTooltip": "Entrée : résultat suivant. Maj+Entrée : résultat précédent. Échap : effacer la recherche.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "%1 sur %2 dans cette annonce",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "Aucun résultat dans cette annonce",
+  "IGUI_MinidoracatNB_SearchNoResults": "Aucune annonce ne correspond à : %1. Appuyez sur Échap ou sur le bouton d'effacement du champ de recherche pour effacer la recherche.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Le bouton du tableau d'affichage du serveur à l'écran ; cliquez dessus pour ouvrir ou fermer le tableau. Avec la barre d'outils de la famille, c'est un emplacement de la barre ; sinon, c'est un bouton flottant déplaçable. Lorsqu'il est masqué, ouvrez le tableau avec son raccourci (à définir dans Options > Configuration des touches > Minidoracat Notice Board). Les nouvelles annonces ouvrent toujours le tableau automatiquement, selon les paramètres du serveur."
 }

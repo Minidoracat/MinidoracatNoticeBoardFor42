@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "公告语音声音",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "语音公告用哪一个声音，中文／英文／日文都有。Stacy 与 Yui 是新录制的语音；经典是改版前的旧语音。公告栏的「语音」菜单也能切换；选择「原提示音（无语音）」时不会用到。",
   "IGUI_MinidoracatNB_OptShowButton": "显示服务器公告栏按钮",
+  "IGUI_MinidoracatNB_SearchLabel": "搜索",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "搜索所有公告",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter 跳到下一处，Shift+Enter 跳到上一处，Esc 清除搜索。",
+  "IGUI_MinidoracatNB_SearchHitPosition": "本篇第 %1 处，共 %2 处",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "本篇没有匹配的内容",
+  "IGUI_MinidoracatNB_SearchNoResults": "找不到匹配「%1」的公告。按 Esc 或搜索框右侧的清除按钮可清除搜索。",
   "IGUI_MinidoracatNB_OptShowButtonTip": "画面上的服务器公告栏按钮，点击开关公告栏。有家族工具栏时它在工具栏里，没有时是可拖动的浮动按钮。隐藏后可用快捷键开关公告栏（在「选项 ￫ 按键设置 ￫ Minidoracat 公告栏」设置）；有新公告时仍会依服务器设置自动弹出。"
 }

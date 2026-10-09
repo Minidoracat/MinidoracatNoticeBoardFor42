@@ -1208,6 +1208,26 @@ checkEqual(#badInput.images, 0, "壞輸入不得留下 image")
 check(type(badInput.error) == "string", "壞輸入應保留可記錄的錯誤字串")
 
 -- ---------------------------------------------------------------------------
+-- 搜尋索引（MDParser.visibleText）：還原成畫面上看得到的字。目錄篩選靠它判斷哪份公告有命中，
+-- 多出看不到的字（網址、圖片路徑、markdown 記號）會把公告列進結果、內文卻找不到；
+-- 少了樣式邊界上的相接（插了空白）則會漏掉跨粗體的關鍵字。
+-- 測試字樣避開 UTF-8 含 0xA0 位元組的字（標準 Lua 的 NBSP 是單一位元組，見 kahlua.md）。
+-- ---------------------------------------------------------------------------
+do -- 主 chunk 的 local 已到 Lua 的 200 個上限，這段自己開作用域
+    local function visibleOf(markdown)
+        return MDParser.visibleText(MDParser.parse(markdown).richText)
+    end
+    checkEqual(visibleOf("安全**區**內"), "安全區內", "樣式邊界兩側在畫面上相接，索引不得插入空白")
+    checkEqual(visibleOf("一般 **重點** 結尾"), "一般 重點 結尾", "原文的空白（NBSP）在索引裡是一般空白")
+    checkEqual(visibleOf("見 [官方網站](https://example.com/rules) 說明"), "見 官方網站 說明",
+        "連結只留顯示文字，網址不是畫面上的字")
+    check(not contains(visibleOf("![地圖](images/map.png)"), "png"), "圖片路徑不是畫面上的字")
+    checkEqual(visibleOf("第一段\n\n第二段"), "第一段\n\n第二段", "段落之間是換行，跨段不算連續文字")
+    checkEqual(visibleOf("# 標題\n正文"), "標題\n正文", "標題文字也是可見文字，與正文分在兩行")
+    checkEqual(visibleOf("2 < 3 > 1"), "2 < 3 > 1", "轉義的角括號還原成原字")
+end
+
+-- ---------------------------------------------------------------------------
 -- CommonMark 補齊：期望值一律字面字串，且每個語法都再用 tokenizeLikeEngine 驗
 -- 「來源文字不會被引擎丟棄、且沒有 tag 洩漏成字面文字」。
 -- ---------------------------------------------------------------------------

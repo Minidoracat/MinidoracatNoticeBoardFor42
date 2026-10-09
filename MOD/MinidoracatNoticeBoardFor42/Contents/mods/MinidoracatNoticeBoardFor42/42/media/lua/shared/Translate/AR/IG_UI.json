@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Voz de lectura de los avisos",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "Qué voz lee los avisos, en chino, inglés y japonés. Stacy y Yui son las voces nuevas; Clásica es la voz de versiones anteriores. También puedes cambiarla desde el menú Voz del tablero de avisos. No se usa si la voz está configurada en el sonido original.",
   "IGUI_MinidoracatNB_OptShowButton": "Mostrar botón del tablero de avisos",
+  "IGUI_MinidoracatNB_SearchLabel": "Buscar",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Buscar en todos los avisos",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter: siguiente coincidencia. Mayús+Enter: coincidencia anterior. Esc: borrar la búsqueda.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "%1 de %2 en este aviso",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "Sin coincidencias en este aviso",
+  "IGUI_MinidoracatNB_SearchNoResults": "Ningún aviso coincide con: %1. Pulsa Esc o el botón de borrar del campo de búsqueda para borrar la búsqueda.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "El botón del tablero de avisos del servidor en pantalla; haz clic para abrir o cerrar el tablero. Con la barra de herramientas de la familia es una casilla de la barra; si no, es un botón flotante que se puede arrastrar. Si está oculto, abre el tablero con su atajo (configúralo en Opciones > Configuración de teclas > Minidoracat Notice Board). Los avisos nuevos siguen abriendo el tablero automáticamente, según la configuración del servidor."
 }

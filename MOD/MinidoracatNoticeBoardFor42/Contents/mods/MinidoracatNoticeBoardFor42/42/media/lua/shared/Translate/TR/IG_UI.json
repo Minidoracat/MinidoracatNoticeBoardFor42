@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Duyuru okuyan ses",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "Duyuruları Çince, İngilizce ve Japonca olarak hangi sesin okuyacağı. Stacy ve Yui yeni seslerdir; Klasik, önceki sürümlerdeki sestir. Duyuru panosunun Sesli okuma menüsünden de değiştirebilirsiniz. Sesli okuma orijinal sese ayarlıyken kullanılmaz.",
   "IGUI_MinidoracatNB_OptShowButton": "Duyuru Panosu düğmesini göster",
+  "IGUI_MinidoracatNB_SearchLabel": "Ara",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Tüm duyurularda ara",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter: sonraki eşleşme. Shift+Enter: önceki eşleşme. Esc: aramayı temizle.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "Bu duyuruda %2 eşleşmeden %1.",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "Bu duyuruda eşleşme yok",
+  "IGUI_MinidoracatNB_SearchNoResults": "Şununla eşleşen duyuru yok: %1. Aramayı temizlemek için Esc tuşuna veya arama alanındaki temizle düğmesine basın.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Ekrandaki Sunucu Duyuru Panosu düğmesi; panoyu açmak veya kapatmak için tıklayın. Aile araç çubuğu varsa araç çubuğunda bir yuvadır, yoksa sürüklenebilir bir yüzen düğmedir. Gizliyken panoyu kısayol tuşuyla açın (Ayarlar > Tuş Ayarları > Minidoracat Notice Board altından atayın). Sunucu ayarlarına bağlı olarak yeni duyurular panoyu yine otomatik açar."
 }

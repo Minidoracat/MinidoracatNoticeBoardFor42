@@ -371,6 +371,27 @@ function ISButton:new(x, y, width, height, title, target, onclick)
     instance.onclick = onclick
     return instance
 end
+-- 原生輸入框（側欄搜尋列）。引擎端的 UITextBox2 不在 harness 裡：只留面板用得到的面，
+-- 文字、焦點、可見度記在實例上給測試讀寫。面板靠每幀比對 getInternalText 接手文字變化
+-- （NBPanel:pollSearchText），所以 setText 不必模擬任何回呼。
+_G.ISTextEntryBox = Base:derive("ISTextEntryBox")
+function ISTextEntryBox:new(title, x, y, width, height)
+    local instance = Base.new(self, x, y, width, height)
+    instance.internalText = title or ""
+    instance.focused = false
+    instance.visible = true
+    return instance
+end
+function ISTextEntryBox:instantiate() end
+function ISTextEntryBox:setClearButton(value) self.clearButton = value end
+function ISTextEntryBox:setPlaceholderText(text) self.placeholderText = text end
+function ISTextEntryBox:setTooltip(text) self.tooltip = text end
+function ISTextEntryBox:getInternalText() return self.internalText end
+function ISTextEntryBox:setText(text) self.internalText = text or "" end
+function ISTextEntryBox:focus() self.focused = true end
+function ISTextEntryBox:unfocus() self.focused = false end
+function ISTextEntryBox:isFocused() return self.focused end
+function ISTextEntryBox:setVisible(visible) self.visible = visible end
 -- 原生 context menu。語系選單與重建範例選單都靠它，而「按下按鈕之後開出哪些選項、
 -- 選項接到誰、帶什麼參數」是那兩顆按鈕唯一的可觀察契約：ISContextMenu.get 在原生端
 -- 是可以回 nil 的（沒有這位玩家的 UI），所以 allow=false 那條路徑也必須驗。
@@ -479,6 +500,7 @@ do
         IGUI_MinidoracatNB_Sidebar = "Contents",
         IGUI_MinidoracatNB_ExpandAll = "Expand all",
         IGUI_MinidoracatNB_CollapseAll = "Collapse all",
+        IGUI_MinidoracatNB_SearchLabel = "Search",
     }
     _G.getText = function(key) return toolbarLabels[key] or "[" .. tostring(key) .. "]" end
 end
@@ -1066,7 +1088,8 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
 
     -- 版面回歸紅線：工具列與內容區的 rect／margins 逐像素釘死。
     -- 期望值全是字面數字（toolbarY 19 + toolbarHeight 18+6=24 → 43；950-43-14 → 893；
-    -- 側欄 clamp(180, floor(1382*0.26)=359, 300) → 300；內文寬 1382-300 → 1082；捲軸寬 13）。
+    -- 側欄 clamp(180, floor(1382*0.26)=359, 300) → 300；內文寬 1382-300 → 1082；捲軸寬 13；
+    -- 側欄頂端搜尋列 = 按鈕高 22 + 上下各 4 → 30，文件樹從 43+30=73 起、高 893-30=863）。
     checkEqual(panel.height, 950, "面板預設高（1080×0.88）")
     checkEqual(panel.toolbarY, 19, "工具列 y = titleBarHeight")
     checkEqual(panel.toolbarHeight, 24, "工具列高 = 字高 + 6")
@@ -1089,9 +1112,15 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     SCREEN_WIDTH, SCREEN_HEIGHT = savedScreenWidth, savedScreenHeight
     checkEqual(panel:sidebarWidth(), 300, "側欄寬吃上限 300（floor(1382*0.26)=359 被夾）")
     checkEqual(panel.docTree.x, 0, "文件樹貼齊內容區左緣")
-    checkEqual(panel.docTree.y, 43, "文件樹 y = contentY")
+    checkEqual(panel.docTree.y, 73, "文件樹 y = contentY + 搜尋列高 30")
     checkEqual(panel.docTree.width, 300, "文件樹寬 = 側欄寬")
-    checkEqual(panel.docTree.height, 893, "文件樹高 = 內容區高")
+    checkEqual(panel.docTree.height, 863, "文件樹高 = 內容區高 - 搜尋列高")
+    -- 搜尋框：左側是文字標籤 "Search"（此段圖示資產還沒註冊，6 字 x 8px = 48），
+    -- x = 4 + 48 + 4 = 56；寬 = 側欄 300 - 56 - 右邊留白 4 = 240；高同工具列按鈕 22
+    checkEqual(panel.searchEntry.x, 56, "搜尋框接在左側標籤之後")
+    checkEqual(panel.searchEntry.y, 47, "搜尋框 y = contentY + 4")
+    checkEqual(panel.searchEntry.width, 240, "搜尋框吃滿側欄剩下的寬")
+    checkEqual(panel.searchEntry.height, 22, "搜尋框與工具列按鈕同高")
     checkEqual(panel.docTree.itemheight, 24, "文件樹列高 = 字高 18 + padY 3 x 2")
     checkEqual(panel.sidebarButton.x, 6, "側欄開關獨立貼齊工具列左側")
     checkEqual(panel.richText.x, 300, "richText 從側欄右緣起算")
@@ -2466,6 +2495,7 @@ end)()
     check(accent ~= nil and accent.h == 23 and accent.r == 1 and accent.g == 0.85,
         "選中公告的左緣 2px 琥珀線（高 = 列高 24 - 1）")
     checkEqual(rowTexts[1].x, 26, "公告列的文字縮排在分類之下（x=26）")
+    checkEqual(tree.items[2].tooltip, nil, "沒被截斷的列不出提示框")
 
     drawRow(6) -- category:20_events（有未讀子項 party）
     checkEqual(rowTexts[1].text, "-", "展開中的分類記號是 ASCII 的 -")
@@ -2496,6 +2526,17 @@ end)()
     check(string.sub(rowTexts[1].text, -3) == "...", "截斷後補省略號")
     check(string.len(rowTexts[1].text) * 8 <= tree.width - 26 - 20,
         "截斷後寬度不超過側欄可用寬（width - 文字 x - 右側留白）")
+    checkEqual(tree.items[2].tooltip, string.rep("W", 200), "被截斷的列在提示框顯示完整標題")
+
+    -- 分類沒有內文可開：被截掉的分類名只能靠提示框看到全名
+    local longLabel = string.rep("C", 100)
+    panel = newSidebarPanel()
+    panel:setSnapshot({ sid = "s", categories = { { key = "10_long", label = longLabel } },
+        files = { file("inside", "Inside", "10_long") } }, nil)
+    tree = panel.docTree
+    tree.items[1].index = 1
+    tree:doDrawItem(0, tree.items[1], false)
+    checkEqual(tree.items[1].tooltip, longLabel, "被截斷的分類名在提示框顯示全名")
 
     local emoji = "😀"
     panel = newSidebarPanel()
@@ -2513,6 +2554,205 @@ end)()
     check(string.sub(fitted, -7, -4) == emoji,
         "標準 Lua 的 UTF-8 測試環境不得把 emoji 砍在續接位元組中間")
     UNREAD_IDS = {}
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 跨公告搜尋：側欄搜尋框篩選目錄、內文標出命中。驗玩家看得到的結果：列出哪些公告、
+-- 玩家的展開狀態有沒有被改掉、打字會不會換公告或消掉未讀、命中方框落在哪、Enter／Esc 的去向，
+-- 以及輸入框不會在面板或側欄藏起來後還吃著鍵盤（聚焦時遊戲按鍵全被擋）。
+-- ---------------------------------------------------------------------------
+;(function()
+    local function file(id, title, category, body)
+        return { id = id, title = title, category = category, h = id,
+            content = "# " .. title .. "\n\n" .. (body or "") }
+    end
+    local function kinds(panel)
+        local result = {}
+        local index
+        for index = 1, #panel.docTree.items do
+            local entry = panel.docTree.items[index].item
+            result[index] = entry.kind .. ":" .. (entry.kind == "category"
+                and entry.key or entry.id)
+        end
+        return table.concat(result, ",")
+    end
+    local function newPanel(snapshot)
+        local panel = NBPanel:new()
+        panel:createChildren()
+        panel:setSnapshot(snapshot, nil)
+        return panel
+    end
+    -- 輸入框文字變了之後，面板在下一幀的 update 比對到（pollSearchText）
+    local function typeQuery(panel, text)
+        panel.searchEntry:setText(text)
+        panel:update()
+    end
+
+    local snapshot = { sid = "s",
+        categories = {
+            { key = "10_rules", label = "Rules" },
+            { key = "20_events", label = "Events" },
+        },
+        files = {
+            file("welcome", "Welcome", "", "Hello survivors."),
+            file("rule1", "No griefing", "10_rules", "The safe zone is protected."),
+            file("rule2", "Base rules", "10_rules", "Build outside the Safe Zone."),
+            file("party", "Summer party", "20_events",
+                "Join us on [Discord](https://discord.gg/abc). ![poster](images/poster.png)"),
+        } }
+
+    -- 篩選：跨公告、不分大小寫、空白正規化；搜尋中攤開分類但不改寫玩家的展開狀態；
+    -- 打字不換公告、不標已讀。
+    UNREAD_IDS = { rule2 = true, party = true }
+    local panel = newPanel(snapshot)
+    panel:onTreeRowClicked(panel.docTree.items[3].item)
+    checkEqual(kinds(panel), "category:,file:welcome,category:10_rules,category:20_events,file:party",
+        "前提：玩家先把 Rules 收起來")
+    READ_MARKS = {}
+    typeQuery(panel, "  SAFE   zone ")
+    checkEqual(kinds(panel), "category:10_rules,file:rule1,file:rule2",
+        "只列命中的公告；大小寫與多餘空白不影響；收著的分類在搜尋中攤開")
+    checkEqual(panel.expandedCategories["10_rules"], false, "搜尋不得改寫玩家的展開狀態")
+    checkEqual(panel.selectedFileId, "welcome", "打字只篩選目錄、不換公告")
+    checkEqual(#READ_MARKS, 0, "打字不得把任何公告標成已讀")
+    checkEqual(panel.docTree.items[1].item.unread, true, "分類紅點照算列出來的公告（rule2 未讀）")
+    panel:onTreeRowClicked(panel.docTree.items[1].item)
+    checkEqual(kinds(panel), "category:10_rules", "搜尋中照樣能收合分類")
+    checkEqual(panel.expandedCategories["10_rules"], false, "搜尋中的收合也不寫進玩家的展開狀態")
+    typeQuery(panel, "safe zone is")
+    checkEqual(kinds(panel), "category:10_rules,file:rule1",
+        "換關鍵字後新的命中一律攤開，不藏在上一輪收起來的分類裡")
+
+    -- 只比對畫面上看得到的字：連結網址、圖片路徑與替代文字都不算
+    typeQuery(panel, "discord.gg")
+    checkEqual(kinds(panel), "", "只出現在連結網址裡的字不算命中")
+    typeQuery(panel, "poster")
+    checkEqual(kinds(panel), "", "圖片路徑與替代文字不算命中")
+    typeQuery(panel, "Discord")
+    checkEqual(kinds(panel), "category:20_events,file:party", "連結的顯示文字照樣搜得到")
+    UNREAD_IDS = { rule2 = true }
+    panel:refreshTreeUnread()
+    checkEqual(panel.docTree.items[1].item.unread, false,
+        "分類紅點只看列出來的公告：Events 列出的 party 已讀，就算別的分類有未讀也不亮")
+
+    typeQuery(panel, "")
+    checkEqual(kinds(panel), "category:,file:welcome,category:10_rules,category:20_events,file:party",
+        "清空搜尋：目錄回到原樣，玩家收起來的 Rules 仍收著")
+    UNREAD_IDS = {}
+
+    -- 內文命中：跨粗體邊界、跨自動折行都算連續文字（拆成兩段方框）；分段不算。
+    -- stub 字寬每字 8px，折行點用 richText 的可用寬算：filler + " safe" 剛好排滿一列，" zone" 折到下一列。
+    local probe = NBPanel:new()
+    probe:createChildren()
+    local available = probe.richText.width - probe.richText.marginLeft - probe.richText.marginRight
+    local perLine = math.floor(available / 8)
+    local filler = string.rep("x", perLine - 5)
+    local docPanel = newPanel({ sid = "s", files = {
+        file("doc", "Doc", "", "Danger: **safe** zone ahead\n\n" .. filler
+            .. " safe zone here\n\nsafe\n\nzone"),
+    } })
+    typeQuery(docPanel, "Safe Zone")
+    local hits = docPanel.searchHits
+    checkEqual(#hits, 2, "粗體邊界與自動折行都算連續文字；分段（跨邏輯行）不算")
+    checkEqual(#hits[1].segments, 1, "同一列跨粗體邊界的命中合成一個方框（一筆只框一圈）")
+    checkEqual(#hits[2].segments, 2, "跨自動折行的命中拆成兩段方框")
+    local boxes = docPanel:collectChunkBoxes()
+    local lines = docPanel.richText.lines
+    local boldChunk, wrapChunk
+    local chunkIndex
+    for chunkIndex = 1, #lines do
+        -- 第三段的單獨 "safe" 也是同樣的字：取第一個，才是粗體那段
+        if lines[chunkIndex] == "safe" and boldChunk == nil then
+            boldChunk = chunkIndex
+        elseif lines[chunkIndex] == filler .. " safe" then
+            wrapChunk = chunkIndex
+        end
+    end
+    check(boldChunk ~= nil and wrapChunk ~= nil, "前提：粗體與折行各自成一個 chunk")
+    checkEqual(hits[1].segments[1].x1, boxes[boldChunk].x1, "合併的方框從粗體 chunk 的左緣起")
+    checkEqual(hits[1].segments[1].x2 - hits[1].segments[1].x1, 72,
+        "合併的方框涵蓋粗體 safe（4 字）與後面的 NBSP+zone（5 字）")
+    checkEqual(hits[2].segments[1].x1, boxes[wrapChunk].x1 + (perLine - 4) * 8,
+        "折行前那段從 filler 與空白之後起算")
+    check(hits[2].segments[2].y1 > hits[2].segments[1].y1, "折行後那段在下一列")
+    checkEqual(docPanel.searchHitIndex, 1, "新的關鍵字從第一筆開始")
+
+    -- 命中底色只畫在可視範圍內（引擎的 stencil 那時還沒設）；外框只框目前這一筆。
+    local fills, borders = {}, {}
+    docPanel.richText.drawRect = function(_, x, y, w, h)
+        fills[#fills + 1] = { y1 = y, y2 = y + h }
+    end
+    docPanel.richText.drawRectBorder = function()
+        borders[#borders + 1] = true
+    end
+    docPanel.richText.getYScroll = function() return -(hits[1].segments[1].y1 + 4) end
+    docPanel:drawSearchHits()
+    local top = hits[1].segments[1].y1 + 4
+    local bottom = top + docPanel.richText:getHeight()
+    check(#fills >= 1, "可視範圍內的命中要畫")
+    local fillIndex
+    for fillIndex = 1, #fills do
+        check(fills[fillIndex].y1 >= top and fills[fillIndex].y2 <= bottom,
+            "命中方框不得畫出內容區（被夾在可視範圍內）")
+    end
+    checkEqual(#borders, 1, "目前這一筆只框一圈，其他命中只有底色")
+    docPanel.richText.getYScroll = nil
+    docPanel.richText.drawRect = nil
+    docPanel.richText.drawRectBorder = nil
+
+    -- Enter：本篇沒有命中時開下一份命中公告（標成已讀、捲到命中）；本篇之內逐筆往下，走到頭換下一份。
+    local body = {}
+    local lineIndex
+    for lineIndex = 1, 120 do
+        body[#body + 1] = "line " .. tostring(lineIndex)
+    end
+    body[#body + 1] = "needle one"
+    body[#body + 1] = ""
+    body[#body + 1] = "needle two"
+    local navPanel = newPanel({ sid = "s", files = {
+        file("top", "Top", "", "Nothing here."),
+        file("long", "Long", "", table.concat(body, "\n\n")),
+    } })
+    local scrolls = {}
+    navPanel.richText.setYScroll = function(_, value)
+        scrolls[#scrolls + 1] = value
+    end
+    READ_MARKS = {}
+    typeQuery(navPanel, "needle")
+    checkEqual(navPanel.selectedFileId, "top", "前提：打字後仍停在原本的公告")
+    checkEqual(#navPanel.searchHits, 0, "前提：目前這份沒有命中")
+    navPanel:onSearchEnter()
+    checkEqual(navPanel.selectedFileId, "long", "本篇沒有命中時 Enter 開下一份命中公告")
+    checkEqual(READ_MARKS[#READ_MARKS], "long", "Enter 開的公告照常標成已讀")
+    checkEqual(navPanel.searchHitIndex, 1, "換公告後停在第一筆")
+    local firstHit = navPanel.searchHits[1].segments[1]
+    checkEqual(scrolls[#scrolls], math.floor(navPanel.richText:getHeight() / 3) - firstHit.y1,
+        "第一筆在可視範圍外：捲到內容區上方約三分之一處")
+    navPanel:onSearchEnter()
+    checkEqual(navPanel.searchHitIndex, 2, "Enter 在本篇內往下一筆")
+    navPanel:onSearchEnter()
+    checkEqual(navPanel.selectedFileId, "long", "命中公告只有一份：走到頭留在這份")
+    checkEqual(navPanel.searchHitIndex, 1, "走到頭繞回第一筆")
+
+    -- Esc：清空搜尋、離開輸入框；其他交給 onOtherKey 的鍵（Tab）不動搜尋。
+    navPanel.searchEntry:focus()
+    navPanel:onSearchOtherKey(15)
+    checkEqual(navPanel.searchEntry:getInternalText(), "needle", "Esc 以外的鍵不動搜尋")
+    navPanel:onSearchOtherKey(1)
+    checkEqual(navPanel.searchEntry:getInternalText(), "", "Esc 清空搜尋框")
+    check(not navPanel.searchEntry:isFocused(), "Esc 離開輸入框，遊戲按鍵回來")
+    checkEqual(navPanel:isSearching(), false, "Esc 之後立刻回到一般目錄")
+    checkEqual(#navPanel.searchHits, 0, "Esc 之後內文不再標示命中")
+
+    -- 輸入框聚焦時遊戲按鍵全被擋：面板關掉、側欄收起時都要放開
+    navPanel.searchEntry:focus()
+    navPanel:setVisible(false)
+    check(not navPanel.searchEntry:isFocused(), "面板關掉時輸入框放開鍵盤")
+    navPanel.searchEntry:focus()
+    navPanel.width = 500
+    navPanel:updateLayout()
+    check(not navPanel.searchEntry:isFocused(), "側欄被強制收起時輸入框放開鍵盤")
+    checkEqual(navPanel.searchEntry.visible, false, "側欄收起時輸入框跟著藏起來")
 end)()
 
 -- ---------------------------------------------------------------------------

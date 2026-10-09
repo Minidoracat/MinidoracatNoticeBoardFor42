@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "お知らせ音声の声",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "お知らせを読み上げる声です。中国語・英語・日本語に対応しています。Stacy と Yui は新しい音声、クラシックは以前のバージョンの音声です。お知らせボードの「音声」メニューからも切り替えられます。「元の通知音（音声なし）」のときは使われません。",
   "IGUI_MinidoracatNB_OptShowButton": "サーバー掲示板ボタンを表示",
+  "IGUI_MinidoracatNB_SearchLabel": "検索",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "すべてのお知らせを検索",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter で次の一致、Shift+Enter で前の一致へ移動します。Esc で検索をクリアします。",
+  "IGUI_MinidoracatNB_SearchHitPosition": "このお知らせ内 %2 件中 %1 件目",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "このお知らせに一致する箇所はありません",
+  "IGUI_MinidoracatNB_SearchNoResults": "「%1」に一致するお知らせはありません。Esc か検索欄右側のクリアボタンで検索をクリアできます。",
   "IGUI_MinidoracatNB_OptShowButtonTip": "画面上のサーバー掲示板ボタンです。クリックで掲示板を開閉します。ファミリーツールバーがあるときはツールバーの中に、ないときはドラッグできるフローティングボタンとして表示されます。非表示にしても、ショートカットキーで掲示板を開閉できます（「オプション ￫ キーバインド ￫ Minidoracat 掲示板」で設定）。新しいお知らせはサーバー設定に従って引き続き自動で表示されます。"
 }

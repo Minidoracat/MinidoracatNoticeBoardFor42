@@ -40,6 +40,9 @@ NBSkin.COLORS = {
     LINK = { r = 0.45, g = 0.75, b = 1.0, a = 1.0 },
     -- 與 LINK 的落差刻意拉大：原本 (0.65,0.85,1.0) 只比 LINK 稍亮，玩家看不出游標在連結上
     LINK_HOVER = { r = 0.9, g = 0.97, b = 1.0, a = 1.0 },
+    -- 搜尋命中底色：與選中列（TAB_SELECTED_FILL）同屬白色疊層族，畫在字的下面，不改字色——
+    -- 字色已經帶著粗體／連結／斜體／程式碼的語意。目前這一筆另用 ACCENT_AMBER 外框（同選中列的琥珀標記）。
+    SEARCH_HIT_FILL = { r = 1, g = 1, b = 1, a = 0.18 },
     UNREAD_DOT = { r = 0.85, g = 0.15, b = 0.15, a = 1.0 },
     UNREAD_DOT_OUTLINE = { r = 0, g = 0, b = 0, a = 0.6 },
     ERROR_BG = { r = 0.3, g = 0.05, b = 0.05, a = 0.5 },

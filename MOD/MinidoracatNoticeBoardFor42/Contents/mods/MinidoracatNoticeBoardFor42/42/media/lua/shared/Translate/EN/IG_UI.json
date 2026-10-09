@@ -67,5 +67,11 @@
   "IGUI_MinidoracatNB_OptVoiceActor": "Announcement voice actor",
   "IGUI_MinidoracatNB_OptVoiceActorTip": "Which voice reads the announcements, in Chinese, English and Japanese. Stacy and Yui are the new voices; Classic is the voice from earlier versions. You can also switch it from the notice board's Voice menu. Not used while the voice is set to the original sound.",
   "IGUI_MinidoracatNB_OptShowButton": "Show Server Notice Board button",
+  "IGUI_MinidoracatNB_SearchLabel": "Search",
+  "IGUI_MinidoracatNB_SearchPlaceholder": "Search all notices",
+  "IGUI_MinidoracatNB_SearchTooltip": "Enter: next match. Shift+Enter: previous match. Esc: clear the search.",
+  "IGUI_MinidoracatNB_SearchHitPosition": "%1 of %2 in this notice",
+  "IGUI_MinidoracatNB_SearchNoHitHere": "No matches in this notice",
+  "IGUI_MinidoracatNB_SearchNoResults": "No notices match: %1. Press Esc or the clear button in the search box to clear the search.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "The Server Notice Board button on screen; click it to open or close the notice board. With the family toolbar it is a slot in the toolbar, otherwise it is a draggable floating button. When hidden, open the board with its shortcut (set it under Options › Key Bindings › Minidoracat Notice Board). New notices still open the board automatically, depending on the server settings."
 }
