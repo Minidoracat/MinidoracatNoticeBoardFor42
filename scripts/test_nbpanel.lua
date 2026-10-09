@@ -595,7 +595,7 @@ end
 
     -- 引擎自己算的那一次（marginTop + y + marginBottom）不含圖高；我們補的那一次才含。
     check(#scrolls >= 2,
-        "paginate 應先由引擎設一次捲動高度，再由 extendScrollHeightForImages 補一次")
+        "paginate 應先由引擎設一次捲動高度，再由 extendScrollHeightToContent 補一次")
     local engineHeight = scrolls[1]
     local finalHeight = scrolls[#scrolls]
     check(engineHeight < 1200,
@@ -632,21 +632,93 @@ end
     panel.imageY = { -100 }
     panel.imageH = { 900 }
     panel.marginTop, panel.marginBottom = 10, 5
-    panel:extendScrollHeightForImages()
+    panel:extendScrollHeightToContent()
     checkEqual(scrolls[1], 815, "捲動高度 = (imageY + imageH) + marginTop + marginBottom")
 
     -- 只加不減：引擎算的已經夠高（文字比圖長）就不要覆蓋掉
     scrolls = {}
     panel.getScrollHeight = function() return 5000 end
-    panel:extendScrollHeightForImages()
+    panel:extendScrollHeightToContent()
     checkEqual(#scrolls, 0, "引擎算的已經夠高時不得再設一次（文字比圖長的情形）")
 
-    -- 沒有圖片時完全不動作
+    -- 沒有圖片、也沒有文字時完全不動作
     scrolls = {}
     panel.images = {}
     panel.getScrollHeight = function() return 0 end
-    panel:extendScrollHeightForImages()
-    checkEqual(#scrolls, 0, "沒有圖片就不該碰捲動高度")
+    panel:extendScrollHeightToContent()
+    checkEqual(#scrolls, 0, "沒有內容就不該碰捲動高度")
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 最後一行以上色行內元素收尾（richText 最後是 <POPRGB>）時，末行同樣不在引擎的捲動範圍內：
+-- 引擎只在最後一個 chunk 有字時才加末行行高（ISRichTextPanel.lua:550-556），而 NBPanel 的
+-- marginBottom 是 0，捲到底整行看不到（2026-10-09 Workshop 回報）。收尾格式不該改變捲動範圍。
+-- ---------------------------------------------------------------------------
+;(function()
+    local function scrollHeights(markdown)
+        local calls = {}
+        local panel = newRichText()
+        panel.setScrollHeight = function(self, height)
+            calls[#calls + 1] = height
+            self.scrollHeight = height
+        end
+        panel.text = preflight(markdown)
+        check(panel:paginate(), "paginate 不得失敗：" .. markdown)
+        return calls[1], panel:getScrollHeight()
+    end
+    local _, plainHeight = scrollHeights("first line\n\nthe last line ends plain")
+    local engineHeight, boldHeight = scrollHeights("first line\n\nthe last line ends **bold**")
+    check(engineHeight < plainHeight, "前提：粗體收尾時引擎自己算的捲動高度少了末行（"
+        .. tostring(engineHeight) .. " < " .. tostring(plainHeight) .. "）")
+    checkEqual(boldHeight, plainHeight, "粗體收尾的捲動高度必須和純文字收尾一樣（末行要捲得到）")
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 樣式邊界不得改變字的落點。引擎量 chunk 用 AngelCodeFont.getWidth：最後一個字元只算字形寬，
+-- 其餘算 xadvance（AngelCodeFont.java:300-301）；command 開的新 chunk 接在這個寬度後面，
+-- 邊界上的 NBSP 就只剩字形寬（2026-10-09 Workshop 回報粗體／斜體前面的空白只剩一半）。
+-- 預設 stub（每字 8px）量不出差別，這裡換成照 getWidth 規則量寬的字型：每字 xadvance 8，
+-- 最後一個字元只算字形寬（一般字 6、NBSP 2）。每個 chunk 的起點都必須等於前面所有字元的
+-- xadvance 總和，也就是和整行連續排版時同一個位置。
+-- ---------------------------------------------------------------------------
+;(function()
+    local ADVANCE = 8
+    local realTextManager = _G.getTextManager
+    _G.getTextManager = function()
+        local manager = realTextManager()
+        manager.MeasureStringX = function(_, _, text)
+            local length = string.len(text or "")
+            if length == 0 then
+                return 0
+            end
+            local lastWidth = 6
+            if string.sub(text, length) == MDParser.NBSP then
+                lastWidth = 2
+            end
+            return (length - 1) * ADVANCE + lastWidth
+        end
+        return manager
+    end
+    local samples = {
+        "alpha **beta** gamma",
+        "**alpha** **beta** *gamma* [delta](https://a.example) end",
+        "- list **bold** and `code` end",
+    }
+    for _, markdown in ipairs(samples) do
+        local panel = paginate(preflight(markdown))
+        local start, consumed = nil, 0
+        local index
+        for index = 1, #panel.lines do
+            local text = panel.lines[index]
+            if text ~= "" then
+                start = start or panel.lineX[index]
+                checkEqual(panel.lineX[index] - start, consumed * ADVANCE,
+                    markdown .. "：chunk「" .. text .. "」的起點必須接在前面字元的 xadvance 之後")
+                consumed = consumed + string.len(text)
+            end
+        end
+    end
+    _G.getTextManager = realTextManager
 end)()
 
 -- render 實際會用的顏色：整行套用、未被覆寫的行沿用前一行（ISRichTextPanel.lua:613-617）

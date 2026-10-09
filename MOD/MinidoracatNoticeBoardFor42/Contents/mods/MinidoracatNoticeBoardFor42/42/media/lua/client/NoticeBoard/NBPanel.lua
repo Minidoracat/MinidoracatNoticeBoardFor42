@@ -320,16 +320,17 @@ function NBLinkRichTextPanel:paginate()
         return false, pageError
     end
 
-    -- 純圖片行的高度不會進捲動範圍，這裡補回去。
-    -- 引擎的 paginate 只在「這一行有非空文字」時才把 lineImageHeight 累進 y
-    -- （ISRichTextPanel.lua:550-556 的 `elseif self.lines[lines] and self.lines[lines] ~= ''`），
-    -- 而 `![圖](路徑)` 自己一行時該行只剩 image command、文字是空字串，於是整張圖的高度
-    -- 被丟棄，接著 setScrollHeight(marginTop + y + marginBottom)（:566）算出來的範圍
-    -- 就不含圖片——圖比內容區高時完全捲不動，圖下面的公告等於看不到。
-    -- 修法不動引擎：paginate 已經把每張圖的實際落點記在 imageY／imageH（:172-175，
-    -- render 用同一組座標畫圖 :594-595），拿它們算出真正的內容底部，比引擎算的高就補上。
-    -- 只加不減：文字比圖長時引擎算的才是對的。
-    self:extendScrollHeightForImages()
+    -- 公告以 command 收尾時，最後一行不會進捲動範圍，這裡補回去。
+    -- 引擎的 paginate 結束時只在「最後一個 chunk 有字」時才把末行的行高（含 lineImageHeight）
+    -- 累進 y（ISRichTextPanel.lua:550-556 的 `elseif self.lines[lines] and self.lines[lines] ~= ''`），
+    -- 接著 setScrollHeight(marginTop + y + marginBottom)（:566）。最後一個 token 是 command 時，
+    -- 它開的新 chunk 是空的，末行整行被丟掉：
+    --   `![圖](路徑)` 單獨成行收尾——圖比內容區高時完全捲不動，圖下面的公告等於看不到；
+    --   粗體／斜體／行內程式碼／連結收尾（最後是 <POPRGB>）——末行文字不在範圍內，而 marginBottom
+    --   是 0（createChildren 的 setMargins），捲到底整行看不到（2026-10-09 Workshop 回報）。
+    -- 修法不動引擎：paginate 已經把每段文字與每張圖的落點記在 lineY／imageY（render 用同一組
+    -- 座標畫），拿它們算出真正的內容底部，比引擎算的高就補上。只加不減：引擎算對時維持原樣。
+    self:extendScrollHeightToContent()
 
     if self.owner then
         self.owner:rebuildLinkHitRegions()
@@ -337,25 +338,33 @@ function NBLinkRichTextPanel:paginate()
     return true, nil
 end
 
--- 內容底部 = max(imageY + imageH) + 上下 margin。imageY 可能是負的
+-- 內容底部 = max(最後一段文字的底, 每張圖的底) + 上下 margin。imageY 可能是負的
 -- （:172 的 y+(lineHeight-lineImageHeight)/2 在圖比行高時為負），加上 imageH 之後仍是
 -- 該圖底部的相對位置，所以直接取最大值即可。
-function NBLinkRichTextPanel:extendScrollHeightForImages()
-    local images = self.images
-    if type(images) ~= "table" or #images == 0 then
-        return
+function NBLinkRichTextPanel:extendScrollHeightToContent()
+    local bottom = 0
+    -- 最後一段文字的行高要用它當下的字型：換字型的 command 只把字型記在它開的那個 chunk
+    -- （processCommand :36、:45、:55、:143），render 往後沿用（:603、:623-625），所以往回找最近的一筆。
+    local last = #self.lines
+    while last > 0 and self.lines[last] == "" do
+        last = last - 1
+    end
+    if last > 0 then
+        local fontIndex = last
+        while fontIndex > 0 and self.fonts[fontIndex] == nil do
+            fontIndex = fontIndex - 1
+        end
+        local font = self.fonts[fontIndex] or self.defaultFont
+        bottom = self.lineY[last] + getTextManager():getFontFromEnum(font):getLineHeight()
     end
 
-    local bottom = 0
+    local images = self.images or {}
     local index
     for index = 1, #images do
         local imageY = self.imageY and self.imageY[index] or nil
         local imageH = self.imageH and self.imageH[index] or nil
-        if type(imageY) == "number" and type(imageH) == "number" then
-            local candidate = imageY + imageH
-            if candidate > bottom then
-                bottom = candidate
-            end
+        if type(imageY) == "number" and type(imageH) == "number" and imageY + imageH > bottom then
+            bottom = imageY + imageH
         end
     end
     if bottom <= 0 then
@@ -436,10 +445,35 @@ function NBLinkRichTextPanel:render()
     end
 end
 
+-- 新 chunk 要接在前一段文字最後一個字元的 xadvance 之後，排法才和同一段連續文字一樣。
+-- 引擎在文字 token 之後把筆位設成 lineX + MeasureStringX(整段)（ISRichTextPanel.lua:501、:530），
+-- 下一個 command 開的新 chunk 就從這裡起算（:495）。但 MeasureStringX 走 AngelCodeFont.getWidth，
+-- 最後一個字元只算字形寬 width、不算 xadvance（TextManager.java:322、AngelCodeFont.java:300-301），
+-- 所以每個樣式邊界都少一截：MDParser 補在邊界的 NBSP 只剩字形寬（一般字型 2px、Dyslexic 3px，
+-- xadvance 卻是 3–8／10–27），粗體／斜體／連結前面的空白只剩一般空白的一半左右，`**甲** **乙**` 幾乎黏在一起
+-- （2026-10-09 Workshop 回報）。
+-- 回傳要補的寬度：最後一個字元後面接上 NBSP 再量，它就不是最後一個字元、量到的是 xadvance
+-- （各字型都沒有含 NBSP 的 kerning）。
+local function trailingAdvanceGap(font, text)
+    local last = string.sub(text, string.len(text))
+    local textManager = getTextManager()
+    return textManager:MeasureStringX(font, last .. Parser.NBSP)
+        - textManager:MeasureStringX(font, Parser.NBSP)
+        - textManager:MeasureStringX(font, last)
+end
+
 -- 伺服器同步來的圖以 <IMAGE:NBCACHE_<hash>> 進 RichText，真正的絕對路徑在這裡才換回去。
 -- 原因：paginate 以空白切 token（ISRichTextPanel.lua:459），玩家家目錄含空白時
 -- 直接把絕對路徑寫進標記會被切斷；到了 processCommand 這層已經不再經過 tokenizer，換路徑才安全。
 function NBLinkRichTextPanel:processCommand(command, x, y, lineImageHeight, lineHeight)
+    -- 前一個 chunk 是剛排完的文字時，先把筆位補到它最後一個字元的 xadvance（見 trailingAdvanceGap）。
+    -- 前一個 chunk 是空的（連續兩個 command）就不動：前一個 command 已經補過，或自己改過筆位。
+    -- 字型用 self.font：會換字型的是這個 command 本身，原生實作還沒跑。
+    local previous = self.lines[self.currentLine - 1]
+    if previous and previous ~= "" then
+        x = x + trailingAdvanceGap(self.font, previous)
+    end
+
     -- 連結標記 <NBLINK:n>／<NBLINKEND:n>（MDParser 的 link 分支產生）：引擎剛為這個
     -- command 開了新 chunk、self.currentLine 就是它的索引（ISRichTextPanel.lua:469-486）。
     -- 連結文字落在 (start, stop) 開區間內的非空 chunk——自動折行會拆成多個 chunk，
