@@ -31,7 +31,7 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 [list]
 [*] .md or .txt, named "number_name", e.g. 10_welcome.md. Use only ASCII letters, digits, _ and -; put other text inside the file.
 [*] Sorted by number prefix; leave gaps (10_, 20_, 30_) for later inserts.
-[*] The sidebar shows the first "# heading", or the file name if none.
+[*] The sidebar shows the first "# heading", or the file name if none. Hover a cut-off name to see it in full.
 [*] The file name is the notice ID: use the same name (with extension) in every language. Renaming makes it a new notice and notifies players again.
 [*] Limits: 200 KB per file; 200 notices and 512 KB per language. Past that, the highest prefixes are dropped.
 [/list]
@@ -77,6 +77,16 @@ New or updated notices play one sound per batch, set per player at the top of th
 [*] [b]Hide it[/b]: in the notice board settings under Options → MODS, untick "Show Server Notice Board button" and press Apply; it takes effect at once. New notices don't bring the button back, and the board still pops up following the server's popup mode.
 [*] [b]Open the board while hidden[/b]: press Insert (it also works while the button is shown). To change the key, go to Options → Key Bindings, "Minidoracat Notice Board", "Toggle notice board".
 [*] To get the button back, tick the same option again.
+[/list]
+
+[h2]🔎 Searching notices[/h2]
+The search box at the top of the sidebar searches every notice in the current notice language at once.
+[list]
+[*] Type a keyword and the list keeps only notices with matches, with every category expanded. Case and extra spaces don't matter. Typing never switches the open notice or marks anything as read.
+[*] Press Enter to open the first matching notice and scroll to the match: every match is highlighted, the current one also gets an outline, and the line under the box shows "N of M in this notice".
+[*] Press Enter again for the next match; after the last match in a notice it moves on to the next notice. Shift+Enter goes back.
+[*] Press Esc or the clear button in the search box to end the search; the list goes back to how you had it expanded.
+[*] Only text you can see counts: link addresses, image paths and Markdown symbols are ignored.
 [/list]
 
 [h2]🛠️ Admin tools[/h2]
