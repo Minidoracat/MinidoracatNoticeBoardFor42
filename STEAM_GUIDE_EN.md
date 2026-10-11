@@ -63,6 +63,7 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 [*] [b]Unique names[/b]: file names must be unique across a language's categories.
 [/list]
 === 🧰 Supported Markdown
+{{img:05-markdown-headings-en.jpg}}
 The game's text panel has no bold or italic fonts, so some styles become colors. Anything not listed shows as plain text; for what isn't supported, see "Known limitations".
 [h3]Blocks[/h3]
 [table]
@@ -77,6 +78,7 @@ The game's text panel has no bold or italic fonts, so some styles become colors.
 [tr][td]Rule: --- / *** / ___ on its own line[/td][td]A horizontal rule[/td][/tr]
 [tr][td]Code block: fence with ```[/td][td]Light blue, not parsed[/td][/tr]
 [/table]
+{{img:06-markdown-inline-and-images-en.jpg}}
 [h3]Inline[/h3]
 [table]
 [tr][th]Syntax[/th][th]Result[/th][/tr]
@@ -163,6 +165,7 @@ The sandbox options are on the "Minidoracat Notice Board" page.
 [tr][td]Max total image size (KB)[/td][td]4096[/td][td]Up to 16384[/td][/tr]
 [/table]
 === ⚠️ Known limitations
+{{img:07-richtext-and-emoji-limitations-en.jpg}}
 [list]
 [*] [b]No font fallback[/b]: text uses the font of the player's game language. The English font lacks Chinese and Japanese, the Chinese font lacks kana; missing characters show as ? or blanks.
 [*] [b]No bold or italic fonts[/b]: they become colors; see "Supported Markdown".
