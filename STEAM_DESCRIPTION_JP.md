@@ -32,7 +32,7 @@
 [*] [b]お知らせに画像を掲載[/b]：PNG はプレイヤーへ自動同期。テクスチャパック MOD は不要です
 [*] [b]サンプルのワンクリック再生成（管理者）[/b]：繁体字中国語または英語の完全なサンプル一式を書き込み、参考にできます
 [/list]
-📖 [b]フォルダーの場所、ファイル名の規則、分類、画像、Markdown 記法の一覧、よくある質問：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3789836823/586187095760095724/]Notice Board Guide: Server Owner Manual & Markdown[/url]（英語）
+📖 [b]フォルダーの場所、ファイル名の規則、分類、画像、Markdown 記法の一覧、よくある質問：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817843667]Notice Board Mod Guide: Server Owner Manual & Markdown[/url]（英語）
 
 [h2]🔗 Minidoracat の MOD 一覧[/h2]
 すべての MOD を[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全シリーズ コレクション[/url]にまとめています。必要なものを選んでサブスクライブしてください。

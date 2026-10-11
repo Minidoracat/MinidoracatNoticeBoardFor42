@@ -32,7 +32,7 @@
 [*] [b]公告可放圖片[/b]：PNG 圖片自動同步給玩家，不必另做圖包 MOD
 [*] [b]一鍵重建範例（管理員）[/b]：寫入一套完整的繁中或英文範例公告當參考
 [/list]
-📖 [b]公告放哪裡、檔名規則、分類、圖片、Markdown 語法表與常見問題：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3789836823/586187095760095709/]Notice Board 完整說明：服主手冊與 Markdown 語法[/url]
+📖 [b]公告放哪裡、檔名規則、分類、圖片、Markdown 語法表與常見問題：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817843626]公告板 Notice Board MOD 完整說明：服主手冊與 Markdown 語法[/url]
 
 [h2]🔗 Minidoracat 全系列[/h2]
 其他作品都在[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全系列收藏[/url]，依需求自選訂閱。

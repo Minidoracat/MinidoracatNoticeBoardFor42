@@ -32,7 +32,7 @@ An in-game server notice board: server owners write notices as Markdown files, a
 [*] [b]Images in notices[/b]: PNGs sync to players automatically, with no texture-pack mod needed
 [*] [b]One-click example rebuild (admins)[/b]: writes a full Traditional Chinese or English example set for reference
 [/list]
-📖 [b]Folder locations, file naming, categories, images, the Markdown syntax table and FAQ:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3789836823/586187095760095724/]Notice Board Guide: Server Owner Manual & Markdown[/url]
+📖 [b]Folder locations, file naming, categories, images, the Markdown syntax table and FAQ:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817843667]Notice Board Mod Guide: Server Owner Manual & Markdown[/url]
 
 [h2]🔗 More Minidoracat mods[/h2]
 All my mods are in the [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat Mods for B42 collection[/url] — pick what you need.
