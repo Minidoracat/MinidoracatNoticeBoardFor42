@@ -1,6 +1,6 @@
 version=1
 id=3789836823
-title=Minidoracat Notice Board for B42
+title=[B42] Minidoracat Notice Board
 description=[h1]📢 Minidoracat Notice Board for B42[/h1]
 description=[h3]By Minidoracat[/h3]
 description=
