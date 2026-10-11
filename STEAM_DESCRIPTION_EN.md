@@ -1,4 +1,4 @@
-[h1]📢 Minidoracat Notice Board for B42[/h1]
+[h1]📢 Minidoracat Notice Board[/h1]
 [h3]By Minidoracat[/h3]
 
 [hr][/hr]
@@ -7,7 +7,7 @@ An in-game server notice board: server owners write notices as Markdown files, a
 
 [h2]📦 Requirements[/h2]
 [list]
-[*] Required: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] (listed under Required Items; the mod won't load without it)
+[*] Required: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url] (listed under Required Items; the mod won't load without it)
 [*] Works in singleplayer and multiplayer; in multiplayer the server must enable this mod
 [*] Supported version: Build 42.20.2+
 [*] [b]Add/remove mid-save:[/b] safe either way

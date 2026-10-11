@@ -6,7 +6,7 @@
 
 [h2]🚀 Quick start[/h2]
 [list]
-[*] Requires Build 42.20.2+ and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]. In multiplayer the server must enable this mod.
+[*] Requires Build 42.20.2+ and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]. In multiplayer the server must enable this mod.
 [/list]
 [olist]
 [*] Enable the mod and start the server (or a singleplayer game) once. If there are no notices yet, EN and CH starter examples are created.

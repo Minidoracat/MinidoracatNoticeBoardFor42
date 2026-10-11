@@ -1,4 +1,4 @@
-# 服主指南 — Minidoracat Notice Board for B42
+# 服主指南 — Minidoracat Notice Board
 
 公告內容放在 Zomboid 的 `Lua/NoticeBoard/` 目錄，不放在 MOD 內。修改公告文字不需要重新發布 Workshop；MOD 會依 Sandbox 設定的輪詢間隔重新讀取檔案並推送給玩家。
 

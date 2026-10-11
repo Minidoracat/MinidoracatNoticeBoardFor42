@@ -1,4 +1,4 @@
-# Minidoracat Notice Board for B42
+# Minidoracat Notice Board
 
 遊戲內公告欄，直接編輯 Markdown 檔案即可更新（依伺服器輪詢間隔生效），多份檔案以可收合文件樹瀏覽，並支援自訂分類與多語公告；玩家可跟隨遊戲語系或自行切換伺服器提供的語系
 
@@ -39,7 +39,7 @@ Steam Workshop 用 JPG（≤280KB，Steamworks 預覽圖上傳上限）在 `docs
 ## 安裝
 
 - Steam Workshop：https://steamcommunity.com/sharedfiles/filedetails/?id=3789836823
-- **必要前置 MOD**：[Minidoracat UI Library for B42](https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701)（`require=MinidoracatUIFor42`；未訂閱時本 MOD 不會載入）
+- **必要前置 MOD**：[Minidoracat UI Library](https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701)（`require=MinidoracatUIFor42`；未訂閱時本 MOD 不會載入）
 - 手動安裝：把 `MOD/MinidoracatNoticeBoardFor42/Contents/mods/MinidoracatNoticeBoardFor42` 複製到 `%USERPROFILE%\Zomboid\mods\` 並將資料夾改名為 `MinidoracatNoticeBoardFor42`
 
 ## 開發

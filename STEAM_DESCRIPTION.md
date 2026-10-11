@@ -1,4 +1,4 @@
-[h1]📢 Minidoracat Notice Board for B42[/h1]
+[h1]📢 Minidoracat Notice Board[/h1]
 [h3]By Minidoracat[/h3]
 
 [hr][/hr]
@@ -7,7 +7,7 @@
 
 [h2]📦 需要安裝[/h2]
 [list]
-[*] 必裝：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]（Required Items 會一併列出，缺少會無法載入）
+[*] 必裝：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]（Required Items 會一併列出，缺少會無法載入）
 [*] 單人與多人皆可用；多人遊戲需要伺服器啟用本 MOD
 [*] 支援版本: Build 42.20.2+
 [*] [b]中途加入／移除：[/b]都可以
