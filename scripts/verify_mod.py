@@ -47,8 +47,8 @@
                            是硬需求）。原創備援音效由 scripts/gen_notify_sound.py 生成
  16. 封面資產             — Workshop preview 與遊戲 poster 必須是相同、可完整解碼的
                            512×512 RGB PNG；preview ≤1,024,000 bytes
- 17. Steam 介面預覽       — 固定清單的 JPG 必須可完整解碼、維持 1920×1032 RGB，
-                          且每張 ≤280,000 bytes（Steamworks AddItemPreviewFile 實測上限 274KB～314KB 之間）
+ 17. Steam 介面預覽       — docs/screenshots/steam/ 的 JPG（作品頁預覽圖兼 Steam 指南的圖）必須正好是固定清單、
+                          可完整解碼的 RGB JPEG，且每張 ≤280,000 bytes（Steamworks AddItemPreviewFile 實測上限 274KB～314KB 之間）；尺寸不限
  18. PACKS 使用者包範本    — PACKS/<Item>/ 是給服主自備素材後自行上傳的 MOD 形狀資料夾：
                           preview.png 256/512 正方形 PNG ≤1,024,000 bytes、Contents/ 只有
                           mods/、mod.info 行首 id= 等於資料夾名且非家族前綴、無 require=、
@@ -500,6 +500,9 @@ else:
         else ok(f"封面資產（512×512 RGB PNG，{len(_preview_asset['data']):,} bytes）")
 
 # ---- 17. Steam 詳情頁介面預覽 ----
+# 這個目錄是作品頁預覽圖（publish_workshop.py --mode screenshots／all 照目錄差分同步：多的追加、少的從作品頁移除），
+# 也是 Steam 指南的圖（家族 steam_guide.js 依裸檔名找）。檔名集合釘在這裡，誤刪一張時下一次同步才不會把作品頁那張也刪掉；
+# 增刪圖要一起改這份清單，同一張圖重拍沿用原檔名就不用改。尺寸不釘：重拍照家族 guide-shots 情境，大小跟著 E2E 視窗走。
 _steam_shot_names = {
     os.path.join("zh", "01-markdown-headings.jpg"),
     os.path.join("zh", "02-markdown-inline-and-images.jpg"),
@@ -509,6 +512,9 @@ _steam_shot_names = {
     os.path.join("en", "02-language-menu.jpg"),
     os.path.join("en", "03-server-language-folders.jpg"),
     os.path.join("en", "04-sandbox-options.jpg"),
+    os.path.join("en", "05-markdown-headings-en.jpg"),
+    os.path.join("en", "06-markdown-inline-and-images-en.jpg"),
+    os.path.join("en", "07-richtext-and-emoji-limitations-en.jpg"),
 }
 _steam_shot_root = os.path.join(REPO, "docs", "screenshots", "steam")
 _steam_shot_problems = []
@@ -532,21 +538,19 @@ else:
             with _CoverImage.open(_path) as _probe:
                 _format = _probe.format
                 _mode = _probe.mode
-                _size = _probe.size
                 _probe.verify()
             with _CoverImage.open(_path) as _decoded:
                 _decoded.load()
         except (OSError, SyntaxError, ValueError) as _error:
             _steam_shot_problems.append(f"{_name}: JPEG 解碼失敗（{_error}）")
             continue
-        if _format != "JPEG" or _mode != "RGB" or _size != (1920, 1032):
-            _steam_shot_problems.append(
-                f"{_name}: {_format}/{_mode}/{_size}，預期 JPEG/RGB/(1920, 1032)")
+        if _format != "JPEG" or _mode != "RGB":
+            _steam_shot_problems.append(f"{_name}: {_format}/{_mode}，預期 JPEG/RGB")
         if os.path.getsize(_path) > 280_000:
             _steam_shot_problems.append(
                 f"{_name}: {os.path.getsize(_path):,} bytes，超過 280,000（publish_workshop.py --mode screenshots 會被 Steam 拒絕）")
     fail("Steam 介面預覽圖", _steam_shot_problems) if _steam_shot_problems \
-        else ok(f"Steam 介面預覽圖（{len(_steam_shot_names)} 張 1920×1032 RGB JPG，皆 ≤280KB）")
+        else ok(f"Steam 介面預覽圖（{len(_steam_shot_names)} 張 RGB JPG，皆 ≤280KB）")
 
 # ---- 18. PACKS 使用者包範本 ----
 # PACKS/<Item>/ 是給服主複製、自備素材後自行上傳 Workshop 的 MOD 形狀資料夾（不是本 repo
