@@ -10,17 +10,19 @@ Project Zomboid Build 42 MOD。
 
 | | |
 |---|---|
-| ![Markdown 標題與段落](docs/screenshots/zh/01-markdown-headings.png) | ![行內語法與公告圖片](docs/screenshots/zh/02-markdown-inline-and-images.png) |
-| ![PZ RichText 標記與 emoji 限制](docs/screenshots/zh/03-richtext-and-emoji-limitations.png) | ![沙盒選項](docs/screenshots/zh/04-sandbox-options-zh.png) |
+| ![Markdown 標題與段落](docs/screenshots/steam/zh/01-markdown-headings.jpg) | ![行內語法與公告圖片](docs/screenshots/steam/zh/02-markdown-inline-and-images.jpg) |
+| ![PZ RichText 標記與 emoji 限制](docs/screenshots/steam/zh/03-richtext-and-emoji-limitations.jpg) | ![沙盒選項](docs/screenshots/steam/zh/04-sandbox-options-zh.jpg) |
 
 ### English
 
 | | |
 |---|---|
-| ![Notice board document tree and admin tools](docs/screenshots/en/01-panel-document-tree.png) | ![Language menu populated from server content](docs/screenshots/en/02-language-menu.png) |
-| ![Server NoticeBoard language folders](docs/screenshots/en/03-server-language-folders.png) | ![Sandbox options](docs/screenshots/en/04-sandbox-options.png) |
+| ![Notice board document tree and admin tools](docs/screenshots/steam/en/01-panel-document-tree.jpg) | ![Language menu populated from server content](docs/screenshots/steam/en/02-language-menu.jpg) |
+| ![Server NoticeBoard language folders](docs/screenshots/steam/en/03-server-language-folders.jpg) | ![Sandbox options](docs/screenshots/steam/en/04-sandbox-options.jpg) |
+| ![Markdown headings and paragraphs](docs/screenshots/steam/en/05-markdown-headings-en.jpg) | ![Inline Markdown and notice images](docs/screenshots/steam/en/06-markdown-inline-and-images-en.jpg) |
+| ![PZ RichText markup and emoji limitations](docs/screenshots/steam/en/07-richtext-and-emoji-limitations-en.jpg) | |
 
-Steam Workshop 用 JPG（≤280KB，Steamworks 預覽圖上傳上限）在 `docs/screenshots/steam/{zh,en}/`，編號與上表一致；`publish_workshop.py --mode screenshots` 會依英文→中文、檔名順序同步到作品頁。
+上面的圖就是上 Steam 的那批 JPG（`docs/screenshots/steam/{zh,en}/`，作品頁預覽圖與 Steam 指南共用，每張 ≤280KB，Steamworks 預覽圖上傳上限）；`publish_workshop.py --mode screenshots` 會依英文→中文、檔名順序同步到作品頁。
 
 ## 功能
 
