@@ -22,7 +22,7 @@ Project Zomboid Build 42 MOD。
 | ![Markdown headings and paragraphs](docs/screenshots/steam/en/05-markdown-headings-en.jpg) | ![Inline Markdown and notice images](docs/screenshots/steam/en/06-markdown-inline-and-images-en.jpg) |
 | ![PZ RichText markup and emoji limitations](docs/screenshots/steam/en/07-richtext-and-emoji-limitations-en.jpg) | |
 
-上面的圖就是上 Steam 的那批 JPG（`docs/screenshots/steam/{zh,en}/`，作品頁預覽圖與 Steam 指南共用，每張 ≤280KB，Steamworks 預覽圖上傳上限）；`publish_workshop.py --mode screenshots` 會依英文→中文、檔名順序同步到作品頁。
+上面的圖就是上 Steam 的那批 JPG（`docs/screenshots/steam/{zh,en}/`，作品頁預覽圖與 Steam 指南共用，每張 ≤280KB），作品頁依英文→中文、檔名順序排列。
 
 ## 功能
 
