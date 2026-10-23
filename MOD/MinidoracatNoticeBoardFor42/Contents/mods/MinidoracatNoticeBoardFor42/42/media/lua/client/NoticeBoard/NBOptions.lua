@@ -70,6 +70,21 @@ if not registerOk then
 end
 NBOptions._options = registered
 
+-- 原版缺陷：主選單沒有任何 MOD 建選項時按選項的「套用」，ModOptions.ini 會被清成 0 byte，
+-- 本 MOD 的設定進遊戲全部回預設。框架 rev 23 的 ModOptionsBackup 從自己的備份補回缺的行
+-- （UI 框架 docs/ARCHITECTURE.md §3.23）。必須在任何 load 之前：下面的 ensureLoaded 是第一次
+-- 讀值才 lazy load，所以註冊完立刻在檔案載入時呼叫。框架缺席或旗標不在就照原版存讀。
+if registered then
+    local UI = MinidoracatUI and MinidoracatUI.v1
+    if UI and UI.API_MAJOR == 1 and type(UI.API_REVISION) == "number" and UI.API_REVISION >= 23
+        and UI.CAPABILITIES and UI.CAPABILITIES.modOptionsBackup and UI.ModOptionsBackup then
+        local restored = UI.ModOptionsBackup.protect(registered)
+        if type(restored) == "number" and restored > 0 then
+            print("[MinidoracatNoticeBoardFor42] restored " .. restored .. " settings from the backup (ModOptions.ini was wiped)")
+        end
+    end
+end
+
 -- ModOptions.ini 的值只由 PZAPI.ModOptions:load() 讀回，而全庫唯一的呼叫點是
 -- MainOptions:addModOptionsPanel()（MainOptions.lua:2796）——也就是「有人建立過選項畫面」。
 -- 正常流程確實會走到（MainScreen 初始化就 MainOptions:new，MainScreen.lua:177），但把

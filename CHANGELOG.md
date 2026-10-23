@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [Unreleased]
+
+### 修正
+
+- **在主選單的選項按了套用之後，公告欄的設定進遊戲全部回到預設**：這是遊戲本身的問題，主選單沒有任何 MOD 建選項時按「套用」，會把所有 MOD 的設定清空，提示音開關、音量、語音聲音、入口按鈕顯示都跟著回到預設（多人玩家主選單常沒啟用 MOD，特別容易遇到）。現在本 MOD 會自動補回你上次的設定，不必重新設定。需要 Minidoracat UI Library 也更新後才生效，更新後重啟客戶端。
+
+> 技術要點：選項建好後、第一次讀值之前呼叫 UI 框架 API rev 23 的 `UI.ModOptionsBackup.protect`；框架較舊時照原版存讀。備份檔在 `Zomboid/Lua/MinidoracatUI/ModOptions_MinidoracatNoticeBoard.ini`，玩家想把設定重設回預設時，要連這個備份檔一起刪。
+
 ## [42.21.0-0.10.1] - 2026-10-21
 
 ### 變更
