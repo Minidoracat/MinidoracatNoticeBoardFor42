@@ -165,7 +165,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 | 文件樹分類／公告文字 | `UIFont.Small` | `ISScrollingListBox:setFont("Small", 3)`，列高由字高＋上下 padding 決定 |
 | 側欄搜尋框 | `UIFont.Small` | 原生 `ISTextEntryBox` 預設字型，與文件樹同字級 |
 | 搜尋狀態字、無結果說明 | `UIFont.NewSmall` | 與占位提示同級，屬說明文字 |
-| 內文本文（MDParser 一般段落／`<TEXT>`） | `UIFont.NewSmall` | `ISRichTextPanel` 預設 `defaultFont = UIFont.NewSmall`（ISRichTextPanel.lua:765），MD→RichText 映射沿用引擎原生行為，不覆寫 |
+| 內文本文（MDParser 一般段落／`<TEXT>`） | `UIFont.NewSmall` | `ISRichTextPanel` 預設 `defaultFont = UIFont.NewSmall`（ISRichTextPanel.lua:769），MD→RichText 映射沿用引擎原生行為，不覆寫 |
 | `# ` 一級標題（`<H1>`） | `UIFont.Large` | `ISRichTextPanel:processCommand` H1 指令固定映射（ISRichTextPanel.lua:35），已由 RichText 原生決定，非本 MOD 可調 |
 | `## ` 二級標題（`<H2>`） | `UIFont.Medium` | 同上 H2 指令（:44） |
 | admin 按鈕（重新載入／重建範例） | `UIFont.NewSmall` | 對照 `SurvivalGuide.closeButton:setFont(UIFont.NewSmall)`（SurvivalGuide.lua:88）；與其餘工具列按鈕同一字級 |

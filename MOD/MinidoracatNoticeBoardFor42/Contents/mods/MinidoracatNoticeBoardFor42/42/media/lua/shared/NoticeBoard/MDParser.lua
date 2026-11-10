@@ -10,14 +10,17 @@ end
 MDParser = MDParser or {}
 
 -- 【每個 tag 前後都必須有空白——這是硬性要求，不是排版偏好】
--- ISRichTextPanel:paginate 以空白切 token（:459）；只要一個 token 同時含 < 與 >，整個 token
--- 就被當成 command，只有 <> 之間的內容送 processCommand，**< 前面的文字直接被丟棄**（:468-486）。
--- 因此 `文字<TAG>` 會讓「文字」消失。而尾段若沒有後續空白，會走 :533-557 直接當字面文字印出。
+-- ISRichTextPanel:paginate 以空白切 token（:459）。42.21 以前，只要一個 token 同時含 < 與 >，整個 token
+-- 就被當成 command，只有 <> 之間的內容送 processCommand，**< 前面的文字直接被丟棄**（:472-490）。
+-- 因此 `文字<TAG>` 會讓「文字」消失。42.22 起原版先把 < 前面的文字切出來（:462-465），不再丟；
+-- 但 versionMin 還涵蓋舊版，整支覆寫 paginate 的 MOD 沒跟上這個修正時也照舊丟字，所以規則不變。
+-- 尾段若沒有後續空白，會走 :537-561 直接當字面文字印出。
 -- vanilla 自己也是這樣處理：`leftText:gsub("\n", " <LINE> ")`（:445），前後都補空白。
+-- 本 MOD 註解裡的 ISRichTextPanel.lua 行號對版於 42.22.2。
 MDParser.BOLD_PREFIX = " <PUSHRGB:1,0.85,0.4> "
 MDParser.BOLD_SUFFIX = " <POPRGB> "
 -- 斜體只能用顏色表示：ISRichTextPanel 的 <SIZE:> 只切換 UIFont 列舉（:122-144），
--- 沒有任何斜體或字重變體，drawText 也沒有樣式參數（:672）。
+-- 沒有任何斜體或字重變體，drawText 也沒有樣式參數（:676）。
 MDParser.ITALIC_PREFIX = " <PUSHRGB:0.6,0.9,0.6> "
 MDParser.ITALIC_SUFFIX = " <POPRGB> "
 -- 行內程式碼同理：引擎沒有等寬字型也沒有行內底色原語，只能換色。
@@ -35,7 +38,7 @@ MDParser.ERROR_PLACEHOLDER = "[Markdown parse error]"
 -- 也不能在 .lua 裡直接寫字面字元：Kahlua 載入原始碼時逐位元組截斷（見檔頭鐵則）。
 MDParser.NBSP = string.char(0xA0)
 
--- <LINE> 只換行；font/orient/rgb/indent 都跨行持續（processCommand:29-63、311、render:619-624），
+-- <LINE> 只換行；font/orient/rgb/indent 都跨行持續（processCommand:29-63、311、render:623-628），
 -- 故每個邏輯行的第一段必須自報樣式，否則標題後正文繼承大字置中、清單後正文持續縮排（AC5 會失敗）。
 MDParser.LINE_RESET = " <TEXT> <INDENT:0> "
 -- <H1>／<H2> 只寫 self.rgb[currentLine]，**不更新 self.rgbCurrent**（:29-46；<TEXT>:53、
@@ -46,14 +49,14 @@ MDParser.LINE_RESET = " <TEXT> <INDENT:0> "
 -- 畫面完全不變），H3-H6 本來就是這個形狀。
 MDParser.H1_PREFIX = " <H1> <RGB:1,1,1> <INDENT:0> "
 -- 含圖片的 `#` 標題改走這一條：<H1> 寫死的置中（:30）與圖片排版是**兩套座標系**。
--- render 的置中分支算 lineLength 時只累加 MeasureStringX（:644-648）——圖片寬度恆為 0；
--- 文字畫在 lineX + self.lineX[c]（:665），圖片卻在**另一個迴圈**用 imageX[c] + marginLeft
--- 畫（:595），兩者差一個置中位移，於是文字整段右移、圖片留在最左，圖不是壓在標題文字上
+-- render 的置中分支算 lineLength 時只累加 MeasureStringX（:648-652）——圖片寬度恆為 0；
+-- 文字畫在 lineX + self.lineX[c]（:669），圖片卻在**另一個迴圈**用 imageX[c] + marginLeft
+-- 畫（:599），兩者差一個置中位移，於是文字整段右移、圖片留在最左，圖不是壓在標題文字上
 -- 就是跑到文字左邊。<H2>（:39 orient=left）、H3-H6、一般本文行都沒有這個問題。
 -- 靠左之後兩者共用同一套座標，圖文回到同一行的正確相對位置。逐段理由（全部對照
 -- ISRichTextPanel.lua）：
---   <LEFT>（:61-63）**不可省略**：render 的 orient 是**跨行沿用**的——迴圈外 :604
---     `local orient = "left"`，迴圈內 :619 只有 self.orient[c] 非 nil 時才更新。省掉它，
+--   <LEFT>（:61-63）**不可省略**：render 的 orient 是**跨行沿用**的——迴圈外 :608
+--     `local orient = "left"`，迴圈內 :623 只有 self.orient[c] 非 nil 時才更新。省掉它，
 --     這一行的 orient 為 nil，會沿用前一行；前一行剛好是個 `#` 標題時仍然置中，等於沒修。
 --   <SIZE:large>（:122-144；:131 設 UIFont.Large、:143 寫 fonts[currentLine]）與 <H1>
 --     的 :35-36 是同一個字型。
@@ -63,7 +66,7 @@ MDParser.H1_PREFIX = " <H1> <RGB:1,1,1> <INDENT:0> "
 MDParser.H1_IMAGE_PREFIX = " <LEFT> <SIZE:large> <RGB:1,1,1> <INDENT:0> "
 MDParser.H2_PREFIX = " <H2> <RGB:0.8,0.8,0.8> <INDENT:0> "
 -- H3 之後沒有字級可用：<SIZE:> 只認 small/medium/large/intro/credits1/credits2（:122-144），
--- 而 small 就是本文預設的 UIFont.NewSmall（:765），intro/credits 是裝飾字型。
+-- 而 small 就是本文預設的 UIFont.NewSmall（:769），intro/credits 是裝飾字型。
 -- 所以 H3 與 H2 同字級只換色，H4-H6 一律本文字級、只能靠亮度階梯區分。
 MDParser.H3_PREFIX = " <TEXT> <SIZE:medium> <RGB:0.55,0.85,0.85> <INDENT:0> "
 MDParser.H4_PREFIX = " <TEXT> <RGB:1,0.97,0.88> <INDENT:0> "
@@ -87,7 +90,7 @@ local INDENT_TAG = {
     "<INDENT:0> ", "<INDENT:20> ", "<INDENT:40> ", "<INDENT:60> ", "<INDENT:80> ",
 }
 -- 程式碼區塊：把行首空白數換算成 <INDENT:>（processCommand:310-312），
--- 這是唯一能救回行首縮排的辦法——引擎會 trim 每個 token 再以單一空白重組（:497-499、513、542）。
+-- 這是唯一能救回行首縮排的辦法——引擎會 trim 每個 token 再以單一空白重組（:501-503、517、546）。
 local CODE_INDENT_TAG = {
     "<INDENT:20> ", "<INDENT:28> ", "<INDENT:36> ", "<INDENT:44> ",
     "<INDENT:52> ", "<INDENT:60> ", "<INDENT:68> ", "<INDENT:76> ",
@@ -97,7 +100,7 @@ local CODE_INDENT_TAG = {
 local CODE_COLOR = "<RGB:0.72,0.86,0.95> "
 local QUOTE_COLOR = "<RGB:0.6,0.6,0.6> "
 -- 引言記號刻意用 ASCII 直線而非 '>'：'>' 會被 escapeRichText 轉成 &gt;（NBCore.escapeRichText），
--- 雖然引擎會在 :492 還原，但多一層轉義就多一個出錯面。
+-- 雖然引擎會在 :496 還原，但多一層轉義就多一個出錯面。
 local QUOTE_MARK = "| "
 
 -- `%s+$` 的 gsub 在長空白 run 上退化成 O(n^2)：每個起點都會把整段空白吃完再逐格回溯。
@@ -187,7 +190,7 @@ end
 -- 還原分三種模式，因為同一個字元在三個位置要長成不同樣子：
 --   plain -> 原字元（link.text / image path 這種要與畫面可見文字比對的欄位）
 --   text  -> 已轉義字元（`\<` 必須還原成 &lt; 而不是 <，否則會在輸出裡塞回一個活的 <，
---            與後面的 > 在同一 token 內配對成 command，前面的文字被引擎丟棄 :462,468）
+--            與後面的 > 在同一 token 內配對成 command（:462-472），42.21 以前連前面的文字一起丟）
 --   code  -> 反斜線保留（CommonMark 規定程式碼內不做反斜線逸出）
 -- ---------------------------------------------------------------------------
 local SENTINEL_OPEN = string.char(1)
@@ -259,9 +262,9 @@ local SIZE_VALUE = {
 -- 帶參數 tag 的參數形狀。放行形狀不合的 tag 會讓引擎在 processCommand 內對 nil
 -- 做算術／字串操作而拋錯，pcall 在 paginate 那層接住 -> **整份公告**變成錯誤占位：
 --   <RGB:...> / <PUSHRGB:...>：引擎逐一 tonumber(rgb[1..3])（ISRichTextPanel.lua:70-74、82-86），
---     少一段就把 self.rgb[currentLine] 的分量設成 nil，render 再把它當顏色送進 drawText（:665、:672）。
+--     少一段就把 self.rgb[currentLine] 的分量設成 nil，render 再把它當顏色送進 drawText（:669、:676）。
 --   <INDENT:n>：self.indent = tonumber(string.sub(command, 8))（:311），非數字時 render 端
---     `x = self.indent`（:515）之後的加法（:519）直接對 nil 運算。
+--     `x = self.indent`（:519）之後的加法（:523）直接對 nil 運算。
 --   <SIZE:v>：v 完全不受限，而引擎對每條指令做的是**子字串**比對而非完整比對
 --     （:68-347 全是 string.find）。於是 <SIZE:INDENT:zz> 這種 tag 名合法、參數段藏著另一條
 --     指令觸發字樣的寫法會同時命中 SIZE 與 INDENT 兩個分支——與被擋下的 <INDENT:abc> 是
@@ -589,7 +592,7 @@ local INLINE_FINDER = {
 local INLINE_KIND_COUNT = #INLINE_FINDER
 -- 上色區的邊界要補 NBSP 的 token 種類（粗體／斜體／連結）。引擎在每個 command token
 -- 處開新 chunk、新 chunk 直接接前一個的右邊緣、文字 token 又一律 string.trim
--- （ISRichTextPanel.lua:468-474、:497-499、:530），所以 `甲 **乙** 丙` 畫出來是
+-- （ISRichTextPanel.lua:472-478、:501-503、:534），所以 `甲 **乙** 丙` 畫出來是
 -- 「甲乙丙」——原文的空白只有換成 U+00A0 才活得下來（Java String.trim 只剝 <= U+0020，
 -- StringLib.java:1405-1407）。只在原文真的有空白時才補：`(**粗**)` 這種零間距是
 -- CommonMark 合法寫法，不能多出空格。行內程式碼不在這張表：它無條件在內側墊 NBSP
@@ -687,7 +690,7 @@ renderInline = function(text, state, lineNumber)
                 -- 服主可以在同一份公告裡手寫一個與 markdown 圖片完全相同的 <IMAGE:路徑>，
                 -- NBPanel 若靠 tag 文字找 occurrence 就會把尺寸套到錯的那張身上
                 -- （`<IMAGE:a> ![x](a =100x50)` 會讓尺寸落到手寫的那張）。
-                -- token 的形狀要求：前後補空白、內部無空白（tokenizer :459-486）；
+                -- token 的形狀要求：前後補空白、內部無空白（tokenizer :459-490）；
                 -- NBIMG 不命中 processCommand 的任何比對分支（ISRichTextPanel.lua:17-352），
                 -- 萬一預檢沒接到也只是不畫東西，不會拋錯。服主自己寫的 <NBIMG:1> 不在
                 -- ALLOWED_PARAM_TAG 內，會被轉義成可見文字，不可能與這裡相撞。
@@ -714,11 +717,11 @@ renderInline = function(text, state, lineNumber)
             --
             -- 【為什麼上色區內側要墊 NBSP＋保留反引號】
             -- 引擎在 command token 處 `lines = lines + 1` 開新 chunk
-            -- （ISRichTextPanel.lua:462-470），新 chunk 的起點直接接前一個 chunk 的
-            -- 右邊緣（:529 `x = self.lineX[lines] + pixLen`），只有**同一** chunk 內的
-            -- token 之間才補單一空白（:498-500）。行內程式碼靠 PUSHRGB/POPRGB 上色，
+            -- （ISRichTextPanel.lua:472-478），新 chunk 的起點直接接前一個 chunk 的
+            -- 右邊緣（:534 `x = self.lineX[lines] + pixLen`），只有**同一** chunk 內的
+            -- token 之間才補單一空白（:502-504）。行內程式碼靠 PUSHRGB/POPRGB 上色，
             -- 於是兩側邊界一律零間距，CJK 接技術符號特別難讀（`顯示尺寸：=600x200`）。
-            -- markdown 裡打空格也沒用：token 進 chunk 前一律 string.trim（:497）。
+            -- markdown 裡打空格也沒用：token 進 chunk 前一律 string.trim（:501）。
             -- 唯一能存活的間距是不匹配 Lua `%s` 的空白 → U+00A0（NBSP）。
             --
             -- 【構造方式很關鍵】Kahlua 的 string.char 是 `sb.append((char) num)`
@@ -741,7 +744,7 @@ renderInline = function(text, state, lineNumber)
                 .. MDParser.NBSP .. "`" .. escapeCode(codeText) .. "`" .. MDParser.NBSP
                 .. MDParser.CODE_SUFFIX
         elseif best == KIND_STRIKE then
-            -- PZ RichText 沒有刪除線效果（drawText 無此參數，:672），只能吃掉標記顯示純文字
+            -- PZ RichText 沒有刪除線效果（drawText 無此參數，:676），只能吃掉標記顯示純文字
             result[#result + 1] = renderInline(cacheFirst[KIND_STRIKE], state, lineNumber)
         elseif best == KIND_LINK or best == KIND_AUTOLINK then
             -- 連結是一般行內元素（CommonMark），不獨占一行。<NBLINK:n>／<NBLINKEND:n> 是
@@ -1049,7 +1052,7 @@ function MDParser.parse(markdown)
 
     -- 段落累積器。CommonMark 的 soft break（段落內單一換行）要併回同一個邏輯行，
     -- 否則「行尾兩空格 = 強制換行」不會有任何可觀察差異（每個 \n 本來就變成 <LINE>），
-    -- 而且服主把段落斷在 80 欄時畫面會長成參差短行——引擎本來就會自動重排（:502）。
+    -- 而且服主把段落斷在 80 欄時畫面會長成參差短行——引擎本來就會自動重排（:506）。
     local pending = nil
     local listStack = {}
     local blockSerial = 0
@@ -1205,10 +1208,10 @@ function MDParser.safeParse(markdown)
 end
 
 -- 搜尋索引用：把 parse 產出的 RichText 還原成畫面上看得到的文字。規則照引擎 paginate：
--- tag 只是 token 分隔，兩側文字在畫面上直接相接（ISRichTextPanel.lua:468-486、:494-500），所以 tag
--- 連同前後空白一起拿掉；<LINE>／<BR> 換成 "\n"，跨行的字不算連在一起；&lt;／&gt; 還原（:488-493）；
+-- tag 只是 token 分隔，兩側文字在畫面上直接相接（ISRichTextPanel.lua:472-490、:498-504），所以 tag
+-- 連同前後空白一起拿掉；<LINE>／<BR> 換成 "\n"，跨行的字不算連在一起；&lt;／&gt; 還原（:492-497）；
 -- NBSP 是畫面上的空白（padColoredEdges 補的），換成一般空白；連續空白收成一個（引擎以單一空白
--- 重組 token，:497-499）。只認 [ \t]、不用 %s：%s 會把剛換上的 "\n" 跟著 tag 一起吃掉。
+-- 重組 token，:501-503）。只認 [ \t]、不用 %s：%s 會把剛換上的 "\n" 跟著 tag 一起吃掉。
 -- 標準 Lua 測試裡 NBSP 是單一位元組，會撞上 CJK 的 UTF-8 續位元組（kahlua.md）；測試字樣要避開含 0xA0 的字。
 function MDParser.visibleText(richText)
     local text = string.gsub(richText, "[ \t]*<LINE>[ \t]*", "\n")

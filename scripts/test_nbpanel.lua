@@ -5,7 +5,7 @@
 -- `else` 改回 `elseif requestedWidth ~= nil then`，整份 test_mdparser.lua 仍然全綠。
 -- 這裡直接 dofile 原版引擎與 NBPanel.lua 本體，用真的 paginate/processCommand 驗結果，
 -- 不移植、不重寫 paginate／processCommand（模擬器與實作一起錯的話兩邊都看不出來）。
--- **唯一的例外是 colorOf**：它手寫了 render() 的整行套色與顏色延續（:606-617），
+-- **唯一的例外是 colorOf**：它手寫了 render() 的整行套色與顏色延續（:610-621），
 -- 因為 render 要真的畫。改它等於改守門員，動之前先對照引擎那幾行。
 --
 -- 用法（在 repo 根目錄）：lua scripts/test_nbpanel.lua
@@ -131,9 +131,11 @@ _G.getCore = function()
         getGoodHighlitedColor = function() return colorStub(0.1, 0.9, 0.1) end,
         getBadHighlitedColor = function() return colorStub(0.9, 0.1, 0.1) end,
         getKey = function() return 1 end,
-        -- 原版 ISLayoutManager 每個函式開頭都問 game mode（Tutorial 一律早退，
-        -- 連 ini 都不讀）：回 Sandbox 才驗得到真正的讀寫路徑。
+        -- 原版 ISLayoutManager 每個函式開頭都問是不是 Tutorial（是就早退，連 ini 都不讀）：
+        -- 42.21 以前比 getGameMode() == "Tutorial"，42.22 起改呼叫 isTutorial()。
+        -- 兩個都回「不是」才驗得到真正的讀寫路徑。
         getGameMode = function() return "Sandbox" end,
+        isTutorial = function() return false end,
         getScreenWidth = function() return SCREEN_WIDTH end,
         getScreenHeight = function() return SCREEN_HEIGHT end,
         getOptionDoVideoEffects = function() return false end,
@@ -600,7 +602,7 @@ end
 -- ---------------------------------------------------------------------------
 -- 純圖片行必須進得了捲動範圍。
 -- 引擎的 paginate 只在「這一行有非空文字」時才把 lineImageHeight 累進 y
--- （ISRichTextPanel.lua:550-556），`![圖](路徑)` 自己一行時該行文字是空字串，整張圖的高度
+-- （ISRichTextPanel.lua:554-560），`![圖](路徑)` 自己一行時該行文字是空字串，整張圖的高度
 -- 因此被丟棄、setScrollHeight 不含圖片 -> 圖比內容區高時完全捲不動，圖下面的公告看不到。
 -- 這一段先端到端證明「引擎真的漏算」（否則修正就是無效的加工），再驗補算的算式。
 -- ---------------------------------------------------------------------------
@@ -673,7 +675,7 @@ end)()
 
 -- ---------------------------------------------------------------------------
 -- 最後一行以上色行內元素收尾（richText 最後是 <POPRGB>）時，末行同樣不在引擎的捲動範圍內：
--- 引擎只在最後一個 chunk 有字時才加末行行高（ISRichTextPanel.lua:550-556），而 NBPanel 的
+-- 引擎只在最後一個 chunk 有字時才加末行行高（ISRichTextPanel.lua:554-560），而 NBPanel 的
 -- marginBottom 是 0，捲到底整行看不到（2026-10-09 Workshop 回報）。收尾格式不該改變捲動範圍。
 -- ---------------------------------------------------------------------------
 ;(function()
@@ -743,7 +745,7 @@ end)()
     _G.getTextManager = realTextManager
 end)()
 
--- render 實際會用的顏色：整行套用、未被覆寫的行沿用前一行（ISRichTextPanel.lua:613-617）
+-- render 實際會用的顏色：整行套用、未被覆寫的行沿用前一行（ISRichTextPanel.lua:617-621）
 local function colorOf(panel, fragment)
     local carried = nil
     local index
@@ -864,9 +866,9 @@ checkEqual(colorOf(h2Panel, "標後"), "0.8,0.8,0.8", "H2 標題行內的圖片�
 -- F3：含圖片的 `#` 標題行，圖片與文字必須落在**同一套座標系**。
 --
 -- 這一段的斷言只有 render 驗得到：paginate 留下的是 lineX / imageX，置中位移是 render
--- 當下才加上去的——置中分支算 lineLength 時只累加 MeasureStringX（ISRichTextPanel.lua:644-648，
--- 圖片寬度恆為 0），文字畫在 lineX + self.lineX[c]（:665），圖片卻在**另一個迴圈**用
--- imageX[c] + marginLeft 畫（:595）。所以「richText 字串長得對」完全證明不了圖文不會錯開。
+-- 當下才加上去的——置中分支算 lineLength 時只累加 MeasureStringX（ISRichTextPanel.lua:648-652，
+-- 圖片寬度恆為 0），文字畫在 lineX + self.lineX[c]（:669），圖片卻在**另一個迴圈**用
+-- imageX[c] + marginLeft 畫（:599）。所以「richText 字串長得對」完全證明不了圖文不會錯開。
 --
 -- 期望值寫字面像素值（不引用被測模組的常數）。算法：
 --   圖片 x = imageX(0 + IMAGE_PAD 5) + marginLeft 20                       = 25
@@ -919,8 +921,8 @@ checkEqual(drawOf(plainH1Texts, "純文字大標").font, "Large", "不含圖片�
 local h2ImageTexts = renderDraws(paginate(preflight("## ![替代](media/textures/pack/head.png) 副標文字")))
 checkEqual(drawOf(h2ImageTexts, "副標文字").x, 130, "含圖 H2 的落點必須與含圖 H1 相同")
 
--- orient 跨行沿用：render 的 orient 只在 self.orient[c] 非 nil 時才更新（:604 迴圈外初值、
--- :619 迴圈內），所以前綴少了 <LEFT> 時，這一行會沿用上一行 <H1> 留下的 centre。
+-- orient 跨行沿用：render 的 orient 只在 self.orient[c] 非 nil 時才更新（:608 迴圈外初值、
+-- :623 迴圈內），所以前綴少了 <LEFT> 時，這一行會沿用上一行 <H1> 留下的 centre。
 -- 這一條就是釘住 <LEFT> 的那一條：拿掉它，第二個標題的文字會被推回置中位置。
 local carryTexts, carryImages = renderDraws(paginate(preflight(
     "# 純文字大標\n# ![替代](media/textures/pack/head.png) 含圖大標")))
@@ -1131,7 +1133,7 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     checkEqual(panel.richText.marginTop, 10, "richText marginTop 不得改變")
     checkEqual(panel.richText.marginRight, 23, "richText marginRight 不得改變（10 + 捲軸 13）")
     -- 置中不變式：ISRichTextPanel 的置中算在 [marginLeft, width-marginRight] 之間
-    -- （:649），左右不對稱時 `#` 標題與 <CENTRE> 會偏離視窗中心 (right-left)/2 像素，
+    -- （:653），左右不對稱時 `#` 標題與 <CENTRE> 會偏離視窗中心 (right-left)/2 像素，
     -- 與標題列的 drawTextCentre(title, width/2) 對不齊。這條比對兩個數字，
     -- 比事後從截圖看「有點歪」可靠得多。
     checkEqual(panel.richText.marginLeft, panel.richText.marginRight,
@@ -2138,7 +2140,7 @@ end)()
     check(owner:findLinkAt(30, 15) == nil, "同一行的前文不得命中（舊版整行判定會誤中）")
     check(owner:findLinkAt(130, 15) == nil, "同一行的後文不得命中")
     -- hover 變色只動連結文字的 chunk：多含一個空 chunk 會把它的 rgb 一起改掉，
-    -- render 的顏色延續（ISRichTextPanel.lua:613-617）會讓後文跟著變色
+    -- render 的顏色延續（ISRichTextPanel.lua:617-621）會讓後文跟著變色
     checkEqual(#region.indices, 1, "hover 索引只能含連結文字的 chunk")
     checkEqual(richText.lines[region.indices[1]], "Site", "hover 索引指到的 chunk 不是連結文字")
 

@@ -111,10 +111,13 @@ local function norm(text)
 end
 
 --[[
-  引擎 tokenizer 移植（ISRichTextPanel.lua:458-558 的文字/命令切分部分）。
+  引擎 tokenizer 移植（ISRichTextPanel.lua:458-562 的文字/命令切分部分，照 42.21 以前的寫法）。
   這是本檔最重要的測試工具：richText 字串長得「對」不代表引擎會照著畫。
   引擎規則：以空白切 token；只要一個 token 同時含 < 與 >，整個 token 被當成 command，
   <> 之外的字元（包含 < 前面的文字）全部丟棄；最後沒有空白收尾的殘段則整段當字面文字。
+  42.22 起原版多了 :462-465 的分支，先把 < 前面的文字切出來、不再丟。這裡刻意留著舊規則：
+  它比較嚴，versionMin 涵蓋的舊版和整支覆寫 paginate 的 MOD 還是這樣切；
+  現行原版的切法由 test_nbpanel.lua 直接載入原版檔來驗。
 ]]
 local function tokenizeLikeEngine(richText)
     local leftText = richText
@@ -161,7 +164,7 @@ local function tokenizeLikeEngine(richText)
     return commands, table.concat(visible, " ")
 end
 
--- 自我驗證：tokenizer 移植本身要能重現引擎的丟字行為，否則下面的斷言毫無意義
+-- 自我驗證：tokenizer 移植本身要能重現引擎（42.21 以前）的丟字行為，否則下面的斷言毫無意義
 local _, droppedDemo = tokenizeLikeEngine("<H1>標題<LINE>正文 尾字")
 check(
     not contains(droppedDemo, "標題"),
@@ -224,7 +227,7 @@ checkEqual(
 )
 
 -- 含圖片的 `#` 標題改靠左：<H1> 寫死置中（ISRichTextPanel.lua:30），而 render 的置中分支
--- 算行寬時只累加文字（:644-648），圖片是在另一個迴圈用未位移的 imageX 畫的（:595 對 :665）
+-- 算行寬時只累加文字（:648-652），圖片是在另一個迴圈用未位移的 imageX 畫的（:599 對 :669）
 -- -> 圖文分屬兩套座標系。字型與顏色必須與 <H1> 完全一致（:35-36 對 <SIZE:large> :131；
 -- :32-34 對 <RGB:1,1,1> :81-87），只有 orient 改變。落點本身驗在 test_nbpanel.lua。
 checkEqual(
@@ -305,7 +308,7 @@ checkEqual(
 )
 
 -- 上色區的邊界：引擎在每個 command token 處開新 chunk 且新 chunk 直接接前一個的右邊緣
--- （ISRichTextPanel.lua:468-474、:530），文字 token 一律 string.trim（:497-499），
+-- （ISRichTextPanel.lua:472-478、:534），文字 token 一律 string.trim（:501-503），
 -- 所以原文的空白只有換成 NBSP 才畫得出來（玩家回報「粗體前後的空格消失」）。
 -- NBSP 落在**普通文字那一側**（不在上色區內），且只在原文真有空白時才補。
 local bold = MDParser.safeParse("一般 **重點** 結尾")
@@ -875,13 +878,13 @@ checkEqual(
 --[[
   引擎顏色模型移植（ISRichTextPanel.lua）。這是 D2 唯一有意義的驗證方式：
   顏色不是掛在 token 上，而是掛在**每一邏輯行**上（self.rgb[self.currentLine]），
-  render 時整行套用、未被覆寫的行沿用前一行的值（:613-617），所以光比對 richText
+  render 時整行套用、未被覆寫的行沿用前一行的值（:617-621），所以光比對 richText
   字串看不出「圖片之後的文字整段變色」。
   移植的三段：
-    paginate 的邏輯行記帳（:469-486）：遇到 command token 時，先把當前行落定，
+    paginate 的邏輯行記帳（:473-490）：遇到 command token 時，先把當前行落定，
       lines = lines + 1，再 self.currentLine = lines —— 所以 command 寫的是**下一行**的顏色。
     processCommand 的染色分支（:29-121）。
-    render 的整行套色與顏色延續（:573-575、:613-617）。
+    render 的整行套色與顏色延續（:577-579、:617-621）。
   刻意不移植的：以像素寬度決定的自動換行（測試環境沒有字型量測）。換行只會多出幾個
   繼承同一顏色的行，不影響本節的斷言。
 ]]
@@ -1101,8 +1104,8 @@ checkEqual(guardedCommands[4], "POPRGB", "護欄的 POPRGB 必須自成一個 co
 check(contains(guardedVisible, "前文"), "護欄不得吃掉它前面的文字\n實際可見：" .. guardedVisible)
 -- 護欄必須**自帶**前後空白（合約的一部分，呼叫端不補）：預檢是把它直接貼在
 -- <NBIMG:n> / <IMAGE:...> 原本的位置上，緊貼前一段文字時若少了開頭空白，
--- tokenizer 會把「文字<PUSHRGB:...>」整段當成 command，前面的文字直接消失（:462-468）。
--- 收尾空白則不是必要的（引擎在 :462-465 會於 '>' 之後重新切開），但一併保留較不易誤用。
+-- tokenizer 會把「文字<PUSHRGB:...>」整段當成 command，前面的文字直接消失（42.21 以前；:472-490）。
+-- 收尾空白則不是必要的（引擎在 :466-469 會於 '>' 之後重新切開），但一併保留較不易誤用。
 local tightGuarded = " <TEXT> 前文"
     .. NBCore.imageTagGuarded("<IMAGE:", "media/textures/RED_BANNER.png", nil, nil)
     .. "後文 "
@@ -1140,9 +1143,9 @@ end
 
 -- ---------------------------------------------------------------------------
 -- 帶參數的原生 tag：參數形狀不合的一律不放行。
--- 引擎對 <RGB:1,0> 會把顏色分量設成 nil（:82-86）再送進 drawText（:665,672）；
--- <INDENT:abc> 會讓 self.indent 變成 nil（:311），render 端 `x = self.indent`（:515）
--- 之後的加法（:519）直接對 nil 運算。兩者都是「整份公告變成錯誤占位」。
+-- 引擎對 <RGB:1,0> 會把顏色分量設成 nil（:82-86）再送進 drawText（:669,676）；
+-- <INDENT:abc> 會讓 self.indent 變成 nil（:311），render 端 `x = self.indent`（:519）
+-- 之後的加法（:523）直接對 nil 運算。兩者都是「整份公告變成錯誤占位」。
 -- ---------------------------------------------------------------------------
 checkEqual(
     norm(MDParser.safeParse("<RGB:1,0> 文字").richText),
@@ -1400,7 +1403,7 @@ checkEqual(
 checkNoTextLost("甲 *斜體* 乙 _斜體二_ 丙", { "斜體", "斜體二" }, "斜體")
 
 -- 反斜線逸出。'\<' 必須還原成 &lt; 而不是 <，否則會在輸出裡塞回一個活的 <，
--- 與後面的 > 在同一 token 內配對成 command，前面的文字被引擎丟棄（:462,468）。
+-- 與後面的 > 在同一 token 內配對成 command（:462-472），42.21 以前連前面的文字一起丟。
 checkEqual(
     norm(MDParser.safeParse("\\*不是斜體\\* 與 \\# 不是標題 與 \\<TEXT\\>").richText),
     "<TEXT> <INDENT:0> *不是斜體* 與 # 不是標題 與 &lt;TEXT&gt;",
@@ -1561,7 +1564,7 @@ checkEqual(
 )
 
 -- tag 內含空白同樣會被 tokenizer 切開：`<IMAGE:a b.png>` 的前半有 < 沒 >，
--- 會走 :533-557 整段當字面文字印出。這種輸入一律不放行，退回顯示可見文字。
+-- 會走 :537-561 整段當字面文字印出。這種輸入一律不放行，退回顯示可見文字。
 local spacedImage = MDParser.safeParse("![圖](me dia/x.png)")
 checkEqual(#spacedImage.images, 0, "含空白的圖片路徑不得產生 IMAGE tag")
 checkEqual(
@@ -1577,7 +1580,7 @@ checkEqual(
 
 -- 引擎不變式（比逐條期望值更難繞過）：輸出裡每個 '<' 前面必須是空白或字串開頭、
 -- 對應的 '>' 後面必須是空白或字串結尾、且 <> 之間不得有空白。
--- 任何一條不成立，ISRichTextPanel 就會吃掉文字或把 tag 印出來（:462-486、:533-557）。
+-- 任何一條不成立，ISRichTextPanel 就會吃掉文字或把 tag 印出來（:462-490、:537-561）。
 local function checkTagSpacing(markdown, label)
     local parsed = MDParser.safeParse(markdown)
     check(parsed.ok, label .. "：parser 不應失敗")
@@ -6032,7 +6035,7 @@ end)()
         "消毒後同形的另一個域名不得共用快取檔名（單射；塌縮式消毒會在這裡紅）")
 
     -- (3b) 位址會直接進檔名，而檔名會進 RichText 的 <IMAGE:>。命名空間必須消毒成
-    -- [a-z0-9_]，否則逗號／角括號會讓 tokenizer 把整段吃掉（ISRichTextPanel.lua:459-486）。
+    -- [a-z0-9_]，否則逗號／角括號會讓 tokenizer 把整段吃掉（ISRichTextPanel.lua:459-490）。
     -- scanCacheName 的 ^([a-z0-9_]+)%.png$ 與 loadLruIndex 的樣式也都依賴這個字元集。
     serverAddress = "A,B<C>D"
     resetCache()

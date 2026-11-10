@@ -291,7 +291,8 @@ end
 
 local function richTextColorPush(color)
     -- 前後補空白：這個字串會取代 Parser.LINK_PREFIX，若不補會把 tag 黏回前面的文字，
-    -- 導致該段文字被 ISRichTextPanel tokenizer 當成 command 丟棄（:468-486）。
+    -- 導致該段文字被 ISRichTextPanel tokenizer 當成 command 丟棄（:472-490；42.22 起原版不再丟，
+    -- 規則照舊的理由見 MDParser 檔頭）。
     return " <PUSHRGB:" .. tostring(color.r) .. ","
         .. tostring(color.g) .. "," .. tostring(color.b) .. "> "
 end
@@ -359,8 +360,8 @@ function NBLinkRichTextPanel:paginate()
 
     -- 公告以 command 收尾時，最後一行不會進捲動範圍，這裡補回去。
     -- 引擎的 paginate 結束時只在「最後一個 chunk 有字」時才把末行的行高（含 lineImageHeight）
-    -- 累進 y（ISRichTextPanel.lua:550-556 的 `elseif self.lines[lines] and self.lines[lines] ~= ''`），
-    -- 接著 setScrollHeight(marginTop + y + marginBottom)（:566）。最後一個 token 是 command 時，
+    -- 累進 y（ISRichTextPanel.lua:554-560 的 `elseif self.lines[lines] and self.lines[lines] ~= ''`），
+    -- 接著 setScrollHeight(marginTop + y + marginBottom)（:569）。最後一個 token 是 command 時，
     -- 它開的新 chunk 是空的，末行整行被丟掉：
     --   `![圖](路徑)` 單獨成行收尾——圖比內容區高時完全捲不動，圖下面的公告等於看不到；
     --   粗體／斜體／行內程式碼／連結收尾（最後是 <POPRGB>）——末行文字不在範圍內，而 marginBottom
@@ -383,7 +384,7 @@ end
 function NBLinkRichTextPanel:extendScrollHeightToContent()
     local bottom = 0
     -- 最後一段文字的行高要用它當下的字型：換字型的 command 只把字型記在它開的那個 chunk
-    -- （processCommand :36、:45、:55、:143），render 往後沿用（:603、:623-625），所以往回找最近的一筆。
+    -- （processCommand :36、:45、:55、:143），render 往後沿用（:607、:627-629），所以往回找最近的一筆。
     local last = #self.lines
     while last > 0 and self.lines[last] == "" do
         last = last - 1
@@ -449,7 +450,7 @@ function NBLinkRichTextPanel:render()
         end
     end
 
-    -- 搜尋命中底色畫在字的下面：引擎接著才畫文字（ISRichTextPanel.lua:603-677）。
+    -- 搜尋命中底色畫在字的下面：引擎接著才畫文字（ISRichTextPanel.lua:607-681）。
     if self.owner then
         self.owner:drawSearchHits()
     end
@@ -490,8 +491,8 @@ function NBLinkRichTextPanel:render()
 end
 
 -- 新 chunk 要接在前一段文字最後一個字元的 xadvance 之後，排法才和同一段連續文字一樣。
--- 引擎在文字 token 之後把筆位設成 lineX + MeasureStringX(整段)（ISRichTextPanel.lua:501、:530），
--- 下一個 command 開的新 chunk 就從這裡起算（:495）。但 MeasureStringX 走 AngelCodeFont.getWidth，
+-- 引擎在文字 token 之後把筆位設成 lineX + MeasureStringX(整段)（ISRichTextPanel.lua:505、:534），
+-- 下一個 command 開的新 chunk 就從這裡起算（:499）。但 MeasureStringX 走 AngelCodeFont.getWidth，
 -- 最後一個字元只算字形寬 width、不算 xadvance（TextManager.java:322、AngelCodeFont.java:300-301），
 -- 所以每個樣式邊界都少一截：MDParser 補在邊界的 NBSP 只剩字形寬（一般字型 2px、Dyslexic 3px，
 -- xadvance 卻是 3–8／10–27），粗體／斜體／連結前面的空白只剩一般空白的一半左右，`**甲** **乙**` 幾乎黏在一起
@@ -519,7 +520,7 @@ function NBLinkRichTextPanel:processCommand(command, x, y, lineImageHeight, line
     end
 
     -- 連結標記 <NBLINK:n>／<NBLINKEND:n>（MDParser 的 link 分支產生）：引擎剛為這個
-    -- command 開了新 chunk、self.currentLine 就是它的索引（ISRichTextPanel.lua:469-486）。
+    -- command 開了新 chunk、self.currentLine 就是它的索引（ISRichTextPanel.lua:473-490）。
     -- 連結文字落在 (start, stop) 開區間內的非空 chunk——自動折行會拆成多個 chunk，
     -- 每一個都在區間內。原生實作對這兩個 tag 沒有任何分支，不必再往下呼叫。
     local openIndex = string.match(command, "^NBLINK:(%d+)$")
@@ -577,8 +578,8 @@ function NBLinkRichTextPanel:processCommand(command, x, y, lineImageHeight, line
         -- 新的一行目前只有這一張圖，但原生實作沒有在換行時重設 lineImageHeight——
         -- 它只在「比現值大」時抬高（:167-169），所以上一行那張 200px 圖的高度會被這一行的
         -- 50px 圖繼承下去。paginate 對下一個 token 取 lineHeight = max(字型行高, lineImageHeight)
-        -- （:482-484），接著的 <LINE> 就多推進 150px，下一行憑空多出一大段空白。
-        -- 這是原版既有行為（paginate 自己的文字換行路徑倒是有重設，:510），只是原版幾乎踩不到；
+        -- （:486-488），接著的 <LINE> 就多推進 150px，下一行憑空多出一大段空白。
+        -- 這是原版既有行為（paginate 自己的文字換行路徑倒是有重設，:514），只是原版幾乎踩不到；
         -- 「一列排兩張縮圖」正是尺寸語法帶來的新版型，所以在這裡一併修掉。
         if nextY ~= y then
             nextLineImageHeight = self.imageH[self.imageCount - 1] or nextLineImageHeight
@@ -964,7 +965,7 @@ function NBPanel:createChildren()
     self.richText.doRepaintStencil = true
     -- 左右邊界**必須對稱**，否則置中的行（`#` 標題、`<CENTRE>`）會偏。
     -- ISRichTextPanel 的置中算在 [marginLeft, width - marginRight] 之間
-    -- （ISRichTextPanel.lua:649：lineX = marginLeft + (width - marginLeft - marginRight - lineLength)/2），
+    -- （ISRichTextPanel.lua:653：lineX = marginLeft + (width - marginLeft - marginRight - lineLength)/2），
     -- 所以文字中心 = marginLeft + (width - marginLeft - marginRight)/2，與文字長度無關；
     -- 右邊多預留捲軸寬（13）而左邊沒有時，中心恆偏左 (marginRight - marginLeft)/2 = 6.5px。
     -- 代價是左側留白從 10 變 23（文字可用寬少 13px），換來所有置中元素彼此對齊。
@@ -1536,7 +1537,7 @@ function NBPanel:renderSelected(markRead)
 end
 
 -- 每個非空 chunk 的內容座標框（boxes[chunkIndex] = {x1, x2, y1, y2, font}）。
--- 座標照 render 的算法（ISRichTextPanel.lua:604-665）：font／orient 跨 chunk 沿用；
+-- 座標照 render 的算法（ISRichTextPanel.lua:608-669）：font／orient 跨 chunk 沿用；
 -- 置中的位移是整行（同一 lineY 的所有 chunk 寬度總和）在 render 當下才算出來的，
 -- 這裡照樣算一次；靠右同理。
 function NBPanel:collectChunkBoxes()
@@ -2148,7 +2149,7 @@ end
 -- 本篇的命中位置。把排好版的非空 chunk 串成畫面文字流再找，命中可以跨 chunk（粗體邊界、自動折行）：
 --   同一列（lineY 相同）的相鄰 chunk 中間只隔 command，畫面上直接相接 -> 不插字；
 --   換列且中間的空 chunk 已經在新的一列（<LINE> 這類 command 換的列）-> 插 "\n"，不跨邏輯行比對；
---   其他換列是自動折行，只會折在 token 之間的空白（ISRichTextPanel.lua:494-519）-> 插一個空白
+--   其他換列是自動折行，只會折在 token 之間的空白（ISRichTextPanel.lua:498-523）-> 插一個空白
 --   （邊界旁已經有 NBSP 換來的空白就不再插）。
 -- 流裡每個字都對得回 chunk 的同一個位置：NBSP 換空白、轉小寫都不改長度（小寫會改長度的罕見字，
 -- 例如土耳其文的 İ，那一段就不轉小寫）。
@@ -2292,7 +2293,7 @@ function NBPanel:scrollToSearchHit()
 end
 
 -- 命中底色，畫在 richText 上、字的下面（NBLinkRichTextPanel:render 在引擎畫字之前呼叫）。
--- 那時引擎的 stencil 還沒設（ISRichTextPanel.lua:590），所以每個方框自己夾在可視範圍內
+-- 那時引擎的 stencil 還沒設（ISRichTextPanel.lua:594），所以每個方框自己夾在可視範圍內
 -- （內容座標，可視範圍是 -yScroll 到 -yScroll + 高）。命中依閱讀順序排列，碰到第一個在可視範圍下方的就停。
 -- 目前這一筆另畫琥珀外框：只靠底色深淺分不出哪一筆是「目前」，狀態行的「第幾筆」也是非顏色線索。
 function NBPanel:drawSearchHits()

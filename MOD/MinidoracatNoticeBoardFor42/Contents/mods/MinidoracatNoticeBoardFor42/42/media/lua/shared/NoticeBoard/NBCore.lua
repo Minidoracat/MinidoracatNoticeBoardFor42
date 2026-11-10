@@ -526,7 +526,7 @@ end
 
 -- ISRichTextPanel.processCommand 對這些字樣做的是「裸子字串比對」而非完整比對，
 -- 而各分支之間**互不排他**（都是獨立的 if），所以只要字樣出現在 command 的任何位置
--- ——包含圖片路徑——就會連帶命中那條分支。逐一核對自 42.20.2 的
+-- ——包含圖片路徑——就會連帶命中那條分支。逐一核對自 42.20.2（42.22.2 這一段沒有變）的
 -- media/lua/client/ISUI/ISRichTextPanel.lua，每一個 string.find(command, "...") 的字面值：
 --   :68  PUSHRGB:      :76  POPRGB        :81  RGB:          :88  GHC
 --   :94  BHC           :101 RED           :108 ORANGE        :115 GREEN
@@ -537,7 +537,7 @@ end
 -- 不可能整串相等，故**不是**危險字樣，不列入。
 -- 另外三個不是指令字樣、但同樣會讓帶路徑的 tag 走樣的字元也一併列入：
 --   ","：IMAGE 分支看到逗號就 string.split 去拆寬高（:149-154），vs[3] 為 nil 直接拋錯。
---   "<" ">"：paginate 的 tokenizer 以此判定 command 邊界（:462、:468）。
+--   "<" ">"：paginate 的 tokenizer 以此判定 command 邊界（:462-469、:472）。
 --
 -- 依「顏色護欄救不救得回來」分成兩份，因為兩個使用端要的答案不同：
 --   COLOR_HAZARDS：只覆寫 self.rgb[currentLine] 與 rgbCurrent、**不動 rgbStack**
@@ -585,7 +585,7 @@ end
 
 -- 顏色護欄。路徑含危險字樣的圖片 tag 仍然照畫（引擎的 IMAGE 分支不受影響），
 -- 但同一個 command 會連帶命中染色分支，把 self.rgb[self.currentLine] 換掉；顏色是存在
--- **每一邏輯行**上、render 時整行套用（ISRichTextPanel.lua:613-617），且未被覆寫的行會
+-- **每一邏輯行**上、render 時整行套用（ISRichTextPanel.lua:617-621），且未被覆寫的行會
 -- 沿用前一行的值，所以圖片之後的文字會整段變色。
 -- 抵銷方式（ISRichTextPanel.lua:68-80）：
 --   PUSHRGB: 先 table.insert(self.rgbStack, self.rgbCurrent)（:69）把**圖片之前的顏色**存起來；
@@ -599,7 +599,7 @@ end
 -- 從不更新 rgbCurrent（:29-46），所以 MDParser.H1_PREFIX／H2_PREFIX 額外補了一個 <RGB:>
 -- 把 rgbCurrent 同步過去；少了那一步，標題行內的圖片 POP 回來的會是上一段本文的顏色，
 -- 標題後半段直接掉色（粗體／連結／行內程式碼在標題內也會踩到同一件事）。
--- tag 前後的空白是硬性要求（tokenizer :459-486）。
+-- tag 前後的空白是硬性要求（tokenizer :459-490）。
 NBCore.IMAGE_GUARD_PREFIX = " <PUSHRGB:0.7,0.7,0.7> "
 NBCore.IMAGE_GUARD_SUFFIX = " <POPRGB> "
 
