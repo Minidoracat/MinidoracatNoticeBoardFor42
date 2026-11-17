@@ -1721,18 +1721,20 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
         "wrapper 帶面板標題進框架 Toast")
     check(NBToast.show("") == nil, "空訊息拒絕（wrapper 前置檢查）")
     patches = {}
-    -- 進場第 110ms（ENTER 250ms）：框架 rev 21 起從定位點（x=1502，moodle 欄與 Dock 格左邊）右邊 40px 滑進來，
-    -- x = 1542 + (1502-1542)*0.44 = 1524.4，alpha 0.44
+    -- 進場第 110ms（ENTER 250ms）：框架 rev 21 起從定位點（x=1802-W，moodle 欄與 Dock 格左邊）右邊 40px 滑進來，
+    -- 走了 0.44、alpha 0.44。框架 rev 29 起 W 跟字高放大（字高 stub 18 → 354），舊框架固定 300
+    local W = FWToast.currentWidth and FWToast.currentWidth() or 300
+    local X = math.floor(1802 - W + 40 - 40 * 0.44)
     _G.getTimestampMs = function() return 110 end
     toast:prerender()
     _G.getTimestampMs = function() return 0 end
     checkEqual(#patches, 2, "Toast 一幀 = 底 + 框")
-    check(patches[1].path == "media/ui/MinidoracatUI/mui_round_fill.png" and patches[1].x == 1524
-        and patches[1].y == 60 and patches[1].w == 300 and patches[1].h == 56,
-        "Toast 動畫中的小數 x 必須 floor 後才交給 NinePatchTexture（1524.4 → 1524）")
+    check(patches[1].path == "media/ui/MinidoracatUI/mui_round_fill.png" and patches[1].x == X
+        and patches[1].y == 60 and patches[1].w == W and patches[1].h == 56,
+        "Toast 動畫中的小數 x 必須 floor 後才交給 NinePatchTexture（字高 18：1470.4 → 1470）")
     check(nearly(patches[1].a, 0.85 * 0.44) and nearly(patches[2].a, 0.9 * 0.44),
         "Toast 底／框的 alpha 要乘上動畫 alpha（wrapper 色票 TOAST_BG/TOAST_BORDER）")
-    check(patches[2].path == "media/ui/MinidoracatUI/mui_round_border.png" and patches[2].x == 1524
+    check(patches[2].path == "media/ui/MinidoracatUI/mui_round_border.png" and patches[2].x == X
         and nearly(patches[2].r, 1) and nearly(patches[2].g, 0.85),
         "Toast 框 mui_round_border 染 TOAST_BORDER（琥珀）")
     FWToast._resetForTests()
