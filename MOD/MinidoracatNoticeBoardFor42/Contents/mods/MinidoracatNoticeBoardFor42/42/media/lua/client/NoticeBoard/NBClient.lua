@@ -122,6 +122,9 @@ local function newState()
         -- 側欄偏好寫失敗時，維護輪補寫同一份 settings.ini；不需要另存一份值，
         -- sidebarPreference 本身就是本場生效且最後要落地的權威值。
         sidebarSettingsPending = false,
+        -- 玩家手動收合的分類（settings.ini 的 collapsed=；檔案寫法的 token 陣列，依收合先後）。
+        -- 與側欄偏好共用 sidebarSettingsPending：兩者都是「目錄長什麼樣」，失敗提示也是同一句。
+        collapsedCategories = {},
         -- 語音語系偏好：nil = 玩家沒選過（＝chime 提示音）。與 sidebar 同一份 settings.ini、
         -- 同一支 writer；它只決定播哪段音檔，不參與 register、不碰網路。
         voicePreference = nil,
@@ -343,7 +346,39 @@ local function normalizeVoicePreference(raw)
     return nil
 end
 
--- 整檔重寫，寫出的永遠是記憶體裡的**全部**欄位。刻意不收參數：lang／sidebar／voice
+-- 玩家手動收合的分類：settings.ini 的 collapsed=key|key。語系根層的分類鍵是空字串，檔案裡寫成 "."
+-- （分類鍵只有英數、底線、連字號，不會撞）。這份檔案所有伺服器共用，別台伺服器的鍵不能因為
+-- 這裡沒有就刪掉，所以只設上限：超過時最舊的先丟。玩家手改壞的 token 直接略過。
+local COLLAPSED_ROOT = "."
+local COLLAPSED_LIMIT = 64
+
+local function collapsedToken(key)
+    if key == "" then
+        return COLLAPSED_ROOT
+    end
+    if type(key) == "string" and string.match(key, "^[%w_%-]+$") then
+        return key
+    end
+    return nil
+end
+
+local function parseCollapsedCategories(raw)
+    local list = {}
+    if type(raw) ~= "string" then
+        return list
+    end
+    local seen = {}
+    for token in string.gmatch(raw, "[^|]+") do
+        if #list < COLLAPSED_LIMIT and not seen[token]
+            and (token == COLLAPSED_ROOT or collapsedToken(token)) then
+            seen[token] = true
+            list[#list + 1] = token
+        end
+    end
+    return list
+end
+
+-- 整檔重寫，寫出的永遠是記憶體裡的**全部**欄位。刻意不收參數：lang／sidebar／voice／collapsed
 -- 各有自己的寫入入口，若讓呼叫端逐一傳參，任何一支漏帶一欄就等於把玩家那一欄洗掉
 -- （getFileWriter(path, true, false) 的第三個參數是 append，false 等於截斷重寫）。
 local function writeSettings()
@@ -351,6 +386,7 @@ local function writeSettings()
     local preference = state.languagePreference or Core.AUTO_LANGUAGE
     local sidebar = state.sidebarPreference
     local voice = state.voicePreference
+    local collapsed = table.concat(state.collapsedCategories, "|")
     local writer = nil
     local ok, writeError = pcall(function()
         writer = getFileWriter(SETTINGS_FILE, true, false)
@@ -365,6 +401,9 @@ local function writeSettings()
         -- voice 同理：沒選過就不寫，預設（自動）不該長得像玩家挑過的設定。
         if voice ~= nil then
             writer:write("voice=" .. voice .. "\n")
+        end
+        if collapsed ~= "" then
+            writer:write("collapsed=" .. collapsed .. "\n")
         end
         writer:close()
         writer = nil
@@ -395,6 +434,10 @@ local function writeSettings()
     local storedVoiceRaw = rawget(values, "voice")
     if normalizeVoicePreference(storedVoiceRaw) ~= voice then
         return false, "verify mismatch: voice=" .. tostring(storedVoiceRaw)
+    end
+    local storedCollapsedRaw = rawget(values, "collapsed")
+    if table.concat(parseCollapsedCategories(storedCollapsedRaw), "|") ~= collapsed then
+        return false, "verify mismatch: collapsed=" .. tostring(storedCollapsedRaw)
     end
     return true, nil
 end
@@ -433,6 +476,8 @@ local function ensureSettingsLoaded(force)
     if not state.sidebarSettingsPending then
         state.sidebarPreference = normalizeSidebarPreference(rawget(values, "sidebar"))
     end
+    -- 分類收合一律照磁碟：讀檔失敗期間 setCategoriesCollapsed 不記，記憶體裡沒有比磁碟新的值
+    state.collapsedCategories = parseCollapsedCategories(rawget(values, "collapsed"))
     if not state.voiceSettingsPending then
         state.voicePreference = normalizeVoicePreference(rawget(values, "voice"))
     end
@@ -1063,16 +1108,11 @@ function NBClient.getSidebarCollapsedPreference()
     return NBClient.state.sidebarPreference
 end
 
--- 回傳是否確實寫進 settings.ini。失敗時本場仍套用記憶體值，並排入共用 settings 維護輪；
--- LANGUAGE_STATUS_EVENT 讓面板如實提示「尚未保存」與之後的恢復。
-function NBClient.setSidebarCollapsedPreference(collapsed)
-    if type(collapsed) ~= "boolean" then
-        return false
-    end
-    local settingsReady = ensureSettingsLoaded()
+-- 側欄偏好與分類收合共用的落地：回傳是否確實寫進 settings.ini。失敗時本場仍套用記憶體值，
+-- 並排入共用 settings 維護輪；LANGUAGE_STATUS_EVENT 讓面板如實提示「尚未保存」與之後的恢復。
+local function persistSidebarSettings(settingsReady)
     local state = NBClient.state
     local wasPending = state.sidebarSettingsPending
-    state.sidebarPreference = collapsed
     local written = false
     local writeError = "settings not loaded"
     if settingsReady then
@@ -1092,6 +1132,66 @@ function NBClient.setSidebarCollapsedPreference(collapsed)
         })
     end
     return false
+end
+
+function NBClient.setSidebarCollapsedPreference(collapsed)
+    if type(collapsed) ~= "boolean" then
+        return false
+    end
+    local settingsReady = ensureSettingsLoaded()
+    NBClient.state.sidebarPreference = collapsed
+    return persistSidebarSettings(settingsReady)
+end
+
+-- 分類是不是被玩家手動收合過（key 是分類鍵，語系根層是空字串）。
+function NBClient.isCategoryCollapsed(key)
+    ensureSettingsLoaded()
+    local token = collapsedToken(key)
+    local list = NBClient.state.collapsedCategories
+    local index
+    for index = 1, #list do
+        if list[index] == token then
+            return true
+        end
+    end
+    return false
+end
+
+-- 記下（或清掉）一批分類的手動收合，整批只寫一次檔。不合白名單的鍵不記：它本場照樣收合，
+-- 只是下次進場回到展開。設定檔還沒讀到時也不記：記憶體裡是空清單，寫回去會把磁碟上的
+-- 收合偏好（連同 sidebar=）洗掉。
+function NBClient.setCategoriesCollapsed(keys, collapsed)
+    if not ensureSettingsLoaded() then
+        return false
+    end
+    local list = NBClient.state.collapsedCategories
+    local changed = false
+    local keyIndex
+    for keyIndex = 1, #keys do
+        local token = collapsedToken(keys[keyIndex])
+        local at = nil
+        local index
+        for index = 1, #list do
+            if list[index] == token then
+                at = index
+                break
+            end
+        end
+        if token and collapsed and not at then
+            if #list >= COLLAPSED_LIMIT then
+                table.remove(list, 1)
+            end
+            list[#list + 1] = token
+            changed = true
+        elseif token and not collapsed and at then
+            table.remove(list, at)
+            changed = true
+        end
+    end
+    if not changed then
+        return true
+    end
+    return persistSidebarSettings(true)
 end
 
 -- 語音語系偏好。與公告語系是兩件事：這一欄只決定播哪一段語音，不進 register、
@@ -1203,6 +1303,10 @@ end
 
 function NBClient.getUnreadIds()
     return copyArray(NBClient.state.unreadIds)
+end
+
+function NBClient.getUnreadCount()
+    return #NBClient.state.unreadIds
 end
 
 function NBClient.getSnapshot()

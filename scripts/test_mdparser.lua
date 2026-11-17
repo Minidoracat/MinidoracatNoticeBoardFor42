@@ -3119,6 +3119,114 @@ reloadSettings()
 checkEqual(settingsBack.voice, "JP", "讀回後必須把玩家改的語音值補寫進去")
 checkEqual(settingsBack.lang, "JP", "補寫語音時必須 merge 磁碟上的既有公告語系")
 
+-- ---------------------------------------------------------------------------
+-- 分類收合偏好：settings.ini 的第四個欄位（collapsed=鍵|鍵），與側欄偏好共用同一條落地與
+-- 重試路徑。一樣走「清掉記憶體、從磁碟讀回」，驗的是下次進場拿得回同一組收合。
+-- 包在 do 區塊：主 chunk 的 local 已貼著 200 上限。
+-- ---------------------------------------------------------------------------
+do
+    fsWorking = true
+    diskFiles["NoticeBoard/settings.ini"] = "lang=JP\nsidebar=true\nvoice=EN\n"
+    reloadSettings()
+    checkEqual(NBClient.isCategoryCollapsed("10_rules"), false, "沒有紀錄的分類＝展開")
+    checkEqual(NBClient.setCategoriesCollapsed({ "10_rules", "" }, true), true,
+        "收合偏好確實落地才回報 true")
+    reloadSettings()
+    check(NBClient.isCategoryCollapsed("10_rules") and NBClient.isCategoryCollapsed(""),
+        "手動收合的分類（含語系根層的空字串鍵）下次進場讀得回來")
+    checkEqual(NBClient.isCategoryCollapsed("20_events"), false, "沒收合的分類不受影響")
+    check(settingsBack.lang == "JP" and settingsBack.sidebar == true and settingsBack.voice == "EN",
+        "寫收合偏好不得洗掉語系、側欄與語音偏好")
+    -- 反方向：改別的欄位不得洗掉收合紀錄
+    NBClient.setSidebarCollapsedPreference(false)
+    reloadSettings()
+    check(NBClient.isCategoryCollapsed("10_rules"), "改側欄偏好不得洗掉分類收合紀錄")
+    -- 手動展開把紀錄清掉；整批一次
+    checkEqual(NBClient.setCategoriesCollapsed({ "10_rules", "", "20_events" }, false), true,
+        "展開（含本來就沒收合的）回報成功")
+    reloadSettings()
+    check(not NBClient.isCategoryCollapsed("10_rules") and not NBClient.isCategoryCollapsed(""),
+        "手動展開後下次進場是展開的")
+
+    -- 寫入失敗：本場照樣收合、回報 false、提示玩家，維護輪補寫
+    clientState.lastSettingsRetryMs = 0
+    fsWorking = false
+    statusEvents = {}
+    checkEqual(NBClient.setCategoriesCollapsed({ "30_guides" }, true), false,
+        "收合偏好寫入失敗必須回報 false")
+    check(NBClient.isCategoryCollapsed("30_guides"), "寫入失敗時本場仍記得收合")
+    checkEqual(statusEvents[1].kind, "sidebar-save-failed", "寫入失敗必須讓玩家看到「尚未保存」")
+    fsWorking = true
+    statusEvents = {}
+    env.nowMs = env.nowMs + 31000
+    fireEvent("OnTick")
+    checkEqual(statusEvents[1].kind, "sidebar-save-recovered", "維護輪補寫成功必須發出恢復事件")
+    reloadSettings()
+    check(NBClient.isCategoryCollapsed("30_guides"), "維護輪補寫的收合紀錄真的落地")
+
+    -- 玩家手改壞的內容：不合白名單的 token 與重複的略過，其餘照用
+    diskFiles["NoticeBoard/settings.ini"] = "lang=EN\ncollapsed=10_rules|bad key|../etc|10_rules||.\n"
+    reloadSettings()
+    check(NBClient.isCategoryCollapsed("10_rules") and NBClient.isCategoryCollapsed(""),
+        "壞 token 旁邊的正常紀錄照樣生效")
+    check(not NBClient.isCategoryCollapsed("bad key") and not NBClient.isCategoryCollapsed("../etc"),
+        "不合白名單的分類鍵不當成收合紀錄")
+    checkEqual(#clientState.collapsedCategories, 2, "重複與壞掉的 token 都不留在記憶體裡")
+    checkEqual(NBClient.setCategoriesCollapsed({ "bad key" }, true), true,
+        "不合白名單的鍵不寫檔（本場照樣收合，只是不記到下次）")
+    reloadSettings()
+    check(not NBClient.isCategoryCollapsed("bad key"), "不合白名單的鍵沒有進 settings.ini")
+
+    -- 讀檔失敗期間（維護輪 30 秒後才讀回）：收合不記、側欄照記，兩欄不得互洗
+    do
+        local function failedFirstRead()
+            diskFiles["NoticeBoard/settings.ini"] = "lang=EN\nsidebar=true\nvoice=EN\ncollapsed=keep_me\n"
+            clientState.languagePreference = nil
+            clientState.sidebarPreference = nil
+            clientState.collapsedCategories = {}
+            clientState.settingsPending = nil
+            clientState.sidebarSettingsPending = false
+            clientState.settingsLoadPending = false
+            clientState.lastSettingsRetryMs = 0
+            clientState.registerLanguage = "EN"
+            readerFails["NoticeBoard/settings.ini"] = true
+        end
+        local function recoverRead()
+            readerFails["NoticeBoard/settings.ini"] = nil
+            env.nowMs = env.nowMs + 31000
+            fireEvent("OnTick")
+            reloadSettings()
+        end
+        failedFirstRead()
+        checkEqual(NBClient.setCategoriesCollapsed({ "new_one" }, true), false,
+            "settings 還沒讀回前不記分類收合")
+        recoverRead()
+        check(settingsBack.sidebar == true and NBClient.isCategoryCollapsed("keep_me"),
+            "讀檔失敗期間收合分類：恢復後磁碟上的側欄偏好與既有收合紀錄都還在")
+        failedFirstRead()
+        NBClient.setSidebarCollapsedPreference(false)
+        recoverRead()
+        check(settingsBack.sidebar == false and NBClient.isCategoryCollapsed("keep_me"),
+            "讀檔失敗期間按側欄開關：新的側欄值寫進去，既有收合紀錄不被洗掉")
+    end
+
+    -- 上限 64 筆：這份檔所有伺服器共用，超過時最舊的先丟
+    diskFiles["NoticeBoard/settings.ini"] = "lang=EN\n"
+    reloadSettings()
+    local many = {}
+    for index = 1, 65 do
+        many[index] = "k" .. index
+    end
+    NBClient.setCategoriesCollapsed(many, true)
+    reloadSettings()
+    checkEqual(#clientState.collapsedCategories, 64, "收合紀錄最多留 64 筆")
+    check(not NBClient.isCategoryCollapsed("k1") and NBClient.isCategoryCollapsed("k2")
+        and NBClient.isCategoryCollapsed("k65"), "超過上限時丟最舊的那一筆")
+
+    diskFiles["NoticeBoard/settings.ini"] = seedSettings
+    reloadSettings()
+end
+
 fsWorking = true
 clientState.lastSettingsRetryMs = 0
 

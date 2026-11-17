@@ -257,6 +257,7 @@ function Base:updateScrollbars() end
 -- 框架 widget（FloatButton/Toast）所需的最小補充面
 function Base:setCapture(v) self.captured = v end
 function Base:bringToTop() end
+function Base:setWantKeyEvents(want) self.wantKeyEvents = want end
 function Base:addToUIManager()
     if self._nativeAlwaysOnTop == nil then self._nativeAlwaysOnTop = false end
 end
@@ -298,6 +299,9 @@ local UNREAD_IDS = {}
 local READ_MARKS = {}
 -- 側欄收合偏好：harness 端當成一顆可讀寫的記憶體格子（真模組寫 settings.ini）。
 local SIDEBAR_PREFERENCE = { value = nil, writes = 0, allow = true }
+-- 分類收合偏好。remember=false（預設）＝讀不到任何紀錄：既有測試各自開新面板，都假設分類
+-- 一開始是展開的；驗「下次進場還是收合」的那一段才打開它。
+local COLLAPSED_PREFERENCE = { keys = {}, writes = {}, remember = false }
 -- 起點是「明選原提示音」的玩家；真正的預設（自動）屬於 NBClient，由 test_mdparser.lua 驗。
 local VOICE_PREFERENCE = { value = "chime" }
 -- 範例重建請求：harness 端記次數與**選到的語系**，並可切成「送不出去」，
@@ -326,6 +330,23 @@ _G.NBClient = { CONTENT_READY_EVENT = "e1", UNREAD_CHANGED_EVENT = "e2",
         return true
     end,
     getUnreadIds = function() return {} end,
+    getUnreadCount = function()
+        local count = 0
+        for _ in pairs(UNREAD_IDS) do count = count + 1 end
+        return count
+    end,
+    -- writes 記每次呼叫的 (keys, collapsed)。
+    isCategoryCollapsed = function(key)
+        return COLLAPSED_PREFERENCE.remember and COLLAPSED_PREFERENCE.keys[key] == true
+    end,
+    setCategoriesCollapsed = function(keys, collapsed)
+        COLLAPSED_PREFERENCE.writes[#COLLAPSED_PREFERENCE.writes + 1] =
+            { keys = table.concat(keys, "|"), collapsed = collapsed }
+        for index = 1, #keys do
+            COLLAPSED_PREFERENCE.keys[keys[index]] = collapsed or nil
+        end
+        return true
+    end,
     EXAMPLES_STATUS_EVENT = "e5",
     requestExamplePack = function(language)
         EXAMPLE_REQUESTS.count = EXAMPLE_REQUESTS.count + 1
@@ -372,6 +393,16 @@ function ISButton:new(x, y, width, height, title, target, onclick)
     instance.target = target
     instance.onclick = onclick
     return instance
+end
+function ISButton:setTooltip(tooltip) self.tooltip = tooltip end
+function ISButton:setTitle(title) self.title = title end
+function ISButton:setEnable(enabled) self.enable = enabled end
+function ISButton:setJoypadButton(texture) self.isJoypad, self.joypadTexture = true, texture end
+function ISButton:clearJoypadButton() self.isJoypad, self.joypadTexture = false, nil end
+-- 鍵盤 Enter／手把 A 走的入口（ISButton.lua:70-79）：停用的按鈕不動
+function ISButton:forceClick()
+    if self.enable == false then return end
+    self.onclick(self.target, self)
 end
 -- 原生輸入框（側欄搜尋列）。引擎端的 UITextBox2 不在 harness 裡：只留面板用得到的面，
 -- 文字、焦點、可見度記在實例上給測試讀寫。面板靠每幀比對 getInternalText 接手文字變化
@@ -1090,8 +1121,9 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
 
     -- 版面回歸紅線：工具列與內容區的 rect／margins 逐像素釘死。
     -- 期望值全是字面數字（toolbarY 19 + toolbarHeight 18+6=24 → 43；950-43-14 → 893；
-    -- 側欄 clamp(180, floor(1382*0.26)=359, 300) → 300；內文寬 1382-300 → 1082；捲軸寬 13；
-    -- 側欄頂端搜尋列 = 按鈕高 22 + 上下各 4 → 30，文件樹從 43+30=73 起、高 893-30=863）。
+    -- 側欄 min(floor(1382*0.30)=414, 400) → 400；內文寬 1382-400 → 982；捲軸寬 13；
+    -- 側欄頂端搜尋列 = 按鈕高 22 + 上下各 4 → 30，未讀行 = 字高 18 + 上下各 2 → 22，
+    -- 文件樹從 43+30+22=95 起、高 893-52=841；內文底部讓出導覽列 24 → 869）。
     checkEqual(panel.height, 950, "面板預設高（1080×0.88）")
     checkEqual(panel.toolbarY, 19, "工具列 y = titleBarHeight")
     checkEqual(panel.toolbarHeight, 24, "工具列高 = 字高 + 6")
@@ -1112,33 +1144,57 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     check(sizedWidth == 420 and sizedHeight == 260,
         "極小畫面：仍由 420×260 最小值保底")
     SCREEN_WIDTH, SCREEN_HEIGHT = savedScreenWidth, savedScreenHeight
-    checkEqual(panel:sidebarWidth(), 300, "側欄寬吃上限 300（floor(1382*0.26)=359 被夾）")
+    checkEqual(panel:sidebarWidth(), 400, "側欄寬吃上限 400（floor(1382*0.30)=414 被夾）")
     checkEqual(panel.docTree.x, 0, "文件樹貼齊內容區左緣")
-    checkEqual(panel.docTree.y, 73, "文件樹 y = contentY + 搜尋列高 30")
-    checkEqual(panel.docTree.width, 300, "文件樹寬 = 側欄寬")
-    checkEqual(panel.docTree.height, 863, "文件樹高 = 內容區高 - 搜尋列高")
+    checkEqual(panel.docTree.y, 95, "文件樹 y = contentY + 搜尋列高 30 + 未讀行 22")
+    checkEqual(panel.docTree.width, 400, "文件樹寬 = 側欄寬")
+    checkEqual(panel.docTree.height, 841, "文件樹高 = 內容區高 - 搜尋列高 - 未讀行")
     -- 搜尋框：左側是文字標籤 "Search"（此段圖示資產還沒註冊，6 字 x 8px = 48），
-    -- x = 4 + 48 + 4 = 56；寬 = 側欄 300 - 56 - 右邊留白 4 = 240；高同工具列按鈕 22
+    -- x = 4 + 48 + 4 = 56；寬 = 側欄 400 - 56 - 右邊留白 4 = 340；高同工具列按鈕 22
     checkEqual(panel.searchEntry.x, 56, "搜尋框接在左側標籤之後")
     checkEqual(panel.searchEntry.y, 47, "搜尋框 y = contentY + 4")
-    checkEqual(panel.searchEntry.width, 240, "搜尋框吃滿側欄剩下的寬")
+    checkEqual(panel.searchEntry.width, 340, "搜尋框吃滿側欄剩下的寬")
     checkEqual(panel.searchEntry.height, 22, "搜尋框與工具列按鈕同高")
     checkEqual(panel.docTree.itemheight, 24, "文件樹列高 = 字高 18 + padY 3 x 2")
     checkEqual(panel.sidebarButton.x, 6, "側欄開關獨立貼齊工具列左側")
-    checkEqual(panel.richText.x, 300, "richText 從側欄右緣起算")
+    checkEqual(panel.richText.x, 400, "richText 從側欄右緣起算")
     checkEqual(panel.richText.y, 43, "richText y 不得改變")
-    checkEqual(panel.richText.width, 1082, "richText 寬 = 面板寬 - 側欄寬")
-    checkEqual(panel.richText.height, 893, "richText 高不得改變（height - contentY - resizeWidgetHeight）")
-    checkEqual(panel.richText.marginLeft, 23, "richText marginLeft（10 + 捲軸 13，與右邊對稱）")
+    checkEqual(panel.richText.width, 982, "richText 寬 = 面板寬 - 側欄寬")
+    checkEqual(panel.richText.height, 869, "richText 高 = 內容區高 893 - 導覽列 24")
+    checkEqual(panel.richText.marginLeft, 23, "richText marginLeft（10 + 捲軸 13）")
     checkEqual(panel.richText.marginTop, 10, "richText marginTop 不得改變")
-    checkEqual(panel.richText.marginRight, 23, "richText marginRight 不得改變（10 + 捲軸 13）")
-    -- 置中不變式：ISRichTextPanel 的置中算在 [marginLeft, width-marginRight] 之間
-    -- （:653），左右不對稱時 `#` 標題與 <CENTRE> 會偏離視窗中心 (right-left)/2 像素，
-    -- 與標題列的 drawTextCentre(title, width/2) 對不齊。這條比對兩個數字，
-    -- 比事後從截圖看「有點歪」可靠得多。
-    checkEqual(panel.richText.marginLeft, panel.richText.marginRight,
-        "richText 左右邊界必須對稱，否則置中的標題會偏")
+    -- 文字欄寬度上限：標準 Lua 的 string.char 不收 0x4E00，量不到全形字，走字高的退路
+    -- 18 x 28 = 504（拉丁語系的字型也走這條）、靠左：超出的寬度全進右邊界。引擎的折行、置中與
+    -- 圖片夾限都算在 [marginLeft, width-marginRight] 之間（ISRichTextPanel.lua:653）。
+    checkEqual(panel.richText.marginRight, 455, "寬面板：marginRight = 982 - 23 - 504")
+    checkEqual(panel.richText.width - panel.richText.marginLeft - panel.richText.marginRight, 504,
+        "寬面板：文字欄寬就是上限 504")
     checkEqual(panel.richText.marginBottom, 0, "richText marginBottom 不得改變")
+    -- 文字欄沒碰到上限時左右必須對稱，否則置中的標題偏離內文區中心 (right-left)/2 像素。
+    do
+        local narrow = NBPanel:new()
+        narrow:createChildren()
+        narrow:setWidth(700)
+        narrow:updateLayout()
+        checkEqual(narrow:sidebarWidth(), 210, "700 寬：側欄 floor(700*0.30)")
+        checkEqual(narrow.richText.marginRight, 23, "窄面板：內文 490 不到上限，右邊界回到 23")
+        checkEqual(narrow.richText.marginLeft, narrow.richText.marginRight,
+            "窄面板：左右邊界對稱，置中的標題不偏")
+    end
+    -- 量得到全形字時（Kahlua；這裡把 0x4E00 換成假字型量得到的字），上限是 41 個字的寬度，不看字高。
+    do
+        local realChar = string.char
+        string.char = function(code, ...)
+            if code == 0x4E00 then
+                return "W"
+            end
+            return realChar(code, ...)
+        end
+        local measured = NBPanel:new()
+        measured:createChildren()
+        string.char = realChar
+        checkEqual(measured.readColumnWidth, 41 * 8, "文字欄上限 = 內文字型量到的 41 個全形字")
+    end
 
     -- 繪製用具：攔這一顆 panel 的 drawRect／drawRectBorder／drawTextureScaled，
     -- 以及 stub NinePatchTexture 的 render 落點。
@@ -1229,8 +1285,11 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     check(findRect(rects, 0, 19, 1382, 24) ~= nil, "工具列底 (0, toolbarY, w, toolbarHeight)")
     check(findRect(rects, 0, 42, 1382, 1) ~= nil,
         "工具列下緣分隔線 (0, toolbarY+toolbarHeight-1, w, 1) 橫貫整個面板寬")
-    check(findRect(rects, 299, 43, 1, 893) ~= nil,
+    check(findRect(rects, 399, 43, 1, 893) ~= nil,
         "側欄與內文之間的 1px 分隔線 (sidebarWidth-1, contentY, 1, contentHeight)")
+    -- 閱讀區底部的導覽列：內文區的寬、貼在 resize 列上方（y = 43 + 893 - 24 = 912），上緣 1px 線
+    check(findRect(rects, 400, 912, 982, 24) ~= nil, "導覽列底 (sidebarWidth, 912, 內文寬, 24)")
+    check(findRect(rects, 400, 912, 982, 1) ~= nil, "導覽列上緣 1px 分隔線")
     -- 舊的橫向頁籤（每個頁籤一塊填色＋3 邊框＋底線＋未讀點）已整批移除
     checkEqual(findRect(rects, 0, 41, 100, 2), nil, "不得再有選中頁籤的 2px 底線")
     checkEqual(findRect(borders, 0, 19, 100, 24), nil, "不得再有頁籤外框")
@@ -1299,7 +1358,7 @@ checkEqual(pathForHome("C:/Users/SETX:1/Documents"), nil, "帶冒號的指令字
     check(findRect(rects, 0, 0, 1382, 950) == nil and findRect(rects, 0, 0, 1382, 19) == nil
         and findRect(borders, 0, 0, 1382, 950) == nil,
         "E1 走了 9-slice 就不得再畫直角底／標題／外框（會疊成雙倍 alpha）")
-    check(findRect(rects, 0, 42, 1382, 1) ~= nil and findRect(rects, 299, 43, 1, 893) ~= nil
+    check(findRect(rects, 0, 42, 1382, 1) ~= nil and findRect(rects, 399, 43, 1, 893) ~= nil
         and findRect(rects, 0, 936, 1382, 1) ~= nil,
         "E1 工具列分隔線／側欄分隔線／resize 分隔線仍是 drawRect")
     checkEqual(#scaled, 1, "E1 drawTextureScaled 只剩 resize 把手（未讀點移到 NBDocTree）")
@@ -2358,6 +2417,51 @@ end)()
             .. "category:20_events,file:party,category:99_undeclared,file:stray",
         "preferredId 落在收合分類時，父分類必須被展開")
 
+    -- 手動收合記到下次進場：上面三次點分類列（收、開、收）各寫一次；setSnapshot 為了露出
+    -- preferredId 的自動展開不是玩家的意思，不改那份紀錄。
+    local writes = COLLAPSED_PREFERENCE.writes
+    checkEqual(writes[#writes].keys, "10_rules", "點分類列寫的是那個分類的鍵")
+    checkEqual(writes[#writes].collapsed, true, "最後一次點擊是收合")
+    checkEqual(writes[#writes - 1].collapsed, false, "手動展開要把紀錄清掉")
+    checkEqual(COLLAPSED_PREFERENCE.keys["10_rules"], true,
+        "revealFile 的自動展開不得清掉手動收合的紀錄")
+    COLLAPSED_PREFERENCE.remember = true
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(kinds(panel),
+        "category:,file:welcome,category:10_rules,category:20_events,file:party,"
+            .. "category:99_undeclared,file:stray",
+        "新面板第一次見到分類時照上次的手動收合，其餘照舊展開")
+    -- 全部收合／全部展開整批只寫一次
+    local before = #writes
+    panel:onCollapseAllCategories()
+    checkEqual(#writes, before + 1, "全部收合只寫一次檔")
+    checkEqual(writes[#writes].keys, "|10_rules|20_events|99_undeclared",
+        "全部收合記下目前存在的每個分類（語系根層的鍵是空字串）")
+    panel:onExpandAllCategories()
+    checkEqual(writes[#writes].collapsed, false, "全部展開把紀錄清掉")
+    checkEqual(next(COLLAPSED_PREFERENCE.keys), nil, "全部展開後沒有任何分類留著收合紀錄")
+    -- 第一個分類被玩家收合：開面板的預設選取不得把它攤開，改選第一個展開中分類的第一份
+    COLLAPSED_PREFERENCE.keys[""] = true
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(panel.selectedFileId, "rule1", "預設選取跳過玩家收合的分類")
+    checkEqual(kinds(panel),
+        "category:,category:10_rules,file:rule1,file:rule2,category:20_events,file:party,"
+            .. "category:99_undeclared,file:stray",
+        "第一個分類照上次的收合，不因為開面板被攤開")
+    -- 全部收合：目錄維持玩家留下的樣子，內文照樣有第一份可看
+    COLLAPSED_PREFERENCE.keys["10_rules"], COLLAPSED_PREFERENCE.keys["20_events"] = true, true
+    COLLAPSED_PREFERENCE.keys["99_undeclared"] = true
+    panel = newSidebarPanel()
+    panel:setSnapshot(snapshot, nil)
+    checkEqual(kinds(panel), "category:,category:10_rules,category:20_events,category:99_undeclared",
+        "全部收合時開面板不攤開任何分類")
+    checkEqual(panel.selectedFileId, "welcome", "全部收合時內文顯示整份清單的第一份")
+    COLLAPSED_PREFERENCE.keys[""], COLLAPSED_PREFERENCE.keys["10_rules"] = nil, nil
+    COLLAPSED_PREFERENCE.keys["20_events"], COLLAPSED_PREFERENCE.keys["99_undeclared"] = nil, nil
+    COLLAPSED_PREFERENCE.remember = false
+
     -- 未讀聚合：分類的紅點是子項的 OR，收合起來也還在
     UNREAD_IDS = {}
     UNREAD_IDS.rule2 = true
@@ -2379,18 +2483,17 @@ end)()
     checkEqual(panel.docTree.items[3].item.unread, false, "最後一個未讀清掉後分類紅點也跟著滅")
     UNREAD_IDS = {}
 
-    -- 側欄幾何：clamp(180, floor(width*0.26), 300)
+    -- 側欄幾何：min(floor(width*0.30), 400)；<640 強制收合，所以最窄是 192
     panel = newSidebarPanel()
     panel.width = 500
     checkEqual(panel:sidebarWidth(), 0, "寬度 <640 強制收合，側欄寬 0")
     check(panel:isSidebarForcedCollapsed(), "500px 屬於強制收合區間")
     panel.width = 640
-    checkEqual(panel:sidebarWidth(), 180,
-        "640px 剛好不強制收合；floor(640*0.26)=166 被下限 180 夾住")
+    checkEqual(panel:sidebarWidth(), 192, "640px 剛好不強制收合：floor(640*0.30)=192")
     panel.width = 900
-    checkEqual(panel:sidebarWidth(), 234, "900px：floor(900*0.26)=234 落在夾限之間")
+    checkEqual(panel:sidebarWidth(), 270, "900px：floor(900*0.30)=270 還沒到上限")
     panel.width = 2000
-    checkEqual(panel:sidebarWidth(), 300, "2000px：floor(2000*0.26)=520 被上限 300 夾住")
+    checkEqual(panel:sidebarWidth(), 400, "2000px：floor(2000*0.30)=600 被上限 400 夾住")
 
     -- 強制收合時 richText 吃滿全寬，工具列按鈕照樣在
     panel.width = 500
@@ -2433,20 +2536,20 @@ end)()
         "強制收合期間切換照樣記下偏好（玩家的意思是「我要目錄」）")
     checkEqual(panel:sidebarWidth(), 0, "但視窗還是太窄，實際仍收合")
     panel.width = 1382
-    checkEqual(panel:sidebarWidth(), 300, "拉寬之後偏好生效，側欄自己回來")
+    checkEqual(panel:sidebarWidth(), 400, "拉寬之後偏好生效，側欄自己回來")
 
     -- 沒有偏好時一律展開：目錄是這個面板的主要導覽，不再依公告數／有無分類猜。
     -- 舊版的門檻（>4 份或有 server 分類）刻意連同常數一起刪掉，這幾條就是它的墓碑。
     SIDEBAR_PREFERENCE.value = nil
     panel = newSidebarPanel()
     panel:setSnapshot(legacy, nil)
-    checkEqual(panel:sidebarWidth(), 300, "無偏好 + 無分類 + 只有 2 份公告 -> 仍然預設展開")
+    checkEqual(panel:sidebarWidth(), 400, "無偏好 + 無分類 + 只有 2 份公告 -> 仍然預設展開")
     panel = newSidebarPanel()
     panel:setSnapshot(snapshot, nil)
-    checkEqual(panel:sidebarWidth(), 300, "無偏好但伺服器有分類 -> 預設展開")
+    checkEqual(panel:sidebarWidth(), 400, "無偏好但伺服器有分類 -> 預設展開")
     panel = newSidebarPanel()
     panel:setSnapshot({ sid = "s", files = { file("only", "Only") } }, nil)
-    checkEqual(panel:sidebarWidth(), 300, "無偏好、只有 1 份公告 -> 一樣展開（不再有數量門檻）")
+    checkEqual(panel:sidebarWidth(), 400, "無偏好、只有 1 份公告 -> 一樣展開（不再有數量門檻）")
     SIDEBAR_PREFERENCE.value = true
     panel = newSidebarPanel()
     panel:setSnapshot(snapshot, nil)
@@ -2454,7 +2557,7 @@ end)()
     SIDEBAR_PREFERENCE.value = false
     panel = newSidebarPanel()
     panel:setSnapshot(legacy, nil)
-    checkEqual(panel:sidebarWidth(), 300, "偏好展開時照偏好走")
+    checkEqual(panel:sidebarWidth(), 400, "偏好展開時照偏好走")
     SIDEBAR_PREFERENCE.value = nil
 
     -- 列的繪製：選中公告的 2px 琥珀線在左緣、未讀紅點在右緣、分類有展開記號。
@@ -2507,7 +2610,7 @@ end)()
     checkEqual(rowTexts[1].x, 6, "分類記號畫在最左的記號欄")
     checkEqual(rowTexts[2].x, 18, "分類文字接在記號右側")
     checkEqual(#rowScaled, 2, "未讀點 = 光暈 + 主點兩次 drawTextureScaled")
-    check(rowScaled[2].x == 300 - 14 and rowScaled[2].y == 8
+    check(rowScaled[2].x == 400 - 14 and rowScaled[2].y == 8
         and rowScaled[2].w == 8 and rowScaled[2].h == 8,
         "未讀紅點畫在列的右緣（width-14）並垂直置中")
 
@@ -2621,9 +2724,14 @@ end)()
     checkEqual(panel.selectedFileId, "welcome", "打字只篩選目錄、不換公告")
     checkEqual(#READ_MARKS, 0, "打字不得把任何公告標成已讀")
     checkEqual(panel.docTree.items[1].item.unread, true, "分類紅點照算列出來的公告（rule2 未讀）")
+    local preferenceWrites = #COLLAPSED_PREFERENCE.writes
     panel:onTreeRowClicked(panel.docTree.items[1].item)
     checkEqual(kinds(panel), "category:10_rules", "搜尋中照樣能收合分類")
     checkEqual(panel.expandedCategories["10_rules"], false, "搜尋中的收合也不寫進玩家的展開狀態")
+    panel:onCollapseAllCategories()
+    panel:onExpandAllCategories()
+    checkEqual(#COLLAPSED_PREFERENCE.writes, preferenceWrites,
+        "搜尋中點分類列、全部收合、全部展開都不寫下次進場的收合偏好")
     typeQuery(panel, "safe zone is")
     checkEqual(kinds(panel), "category:10_rules,file:rule1",
         "換關鍵字後新的命中一律攤開，不藏在上一輪收起來的分類裡")
@@ -3027,10 +3135,12 @@ end)()
         folder = "mui_icon_folder.png",
         document = "mui_icon_document.png",
         chevronRight = "mui_icon_chevron_right.png",
+        chevronLeft = "mui_icon_chevron_left.png",
         chevronDown = "mui_icon_chevron_down.png",
         language = "mui_icon_language.png",
         reload = "mui_icon_reload.png",
         resetSize = "mui_icon_reset_size.png",
+        bell = "mui_icon_bell.png",
     }
     local function iconPath(key)
         return ICON_DIR .. ICON_FILES[key]
@@ -3101,6 +3211,9 @@ end)()
         "I1 資產缺：全部展開沒有 iconTexture（純文字按鈕照樣可按）")
     checkEqual(panel.collapseAllButton.iconTexture, nil,
         "I1 資產缺：全部收合沒有 iconTexture")
+    checkEqual(panel.voiceButton.iconTexture, nil, "I1 資產缺：語音按鈕沒有 iconTexture")
+    check(panel.navPrevButton.title == "<" and panel.navNextButton.title == ">",
+        "I1 資產缺：上一則／下一則退成 ASCII 的 < >（不能變成沒有字也沒有圖的空按鈕）")
     local plainSidebarWidth = panel.sidebarButton.width
     local plainLangWidth = panel.langButton.width
     local plainExpandWidth = panel.expandAllButton.width
@@ -3150,6 +3263,17 @@ end)()
         "I2 語系按鈕掛 language 圖示")
     checkEqual(panel.resetButton.iconTexture.path, iconPath("resetSize"),
         "I2 重設大小按鈕掛 resetSize 圖示")
+    checkEqual(panel.voiceButton.iconTexture.path, iconPath("bell"),
+        "I2 語音按鈕掛 bell（不再和語系按鈕共用 language，兩顆分得出來）")
+    check(panel.navPrevButton.iconTexture.path == iconPath("chevronLeft")
+        and panel.navNextButton.iconTexture.path == iconPath("chevronRight"),
+        "I2 上一則／下一則掛左右箭頭")
+    check(panel.navPrevButton.title == "" and panel.navPrevButton.width == 24,
+        "I2 上一則是純圖示按鈕：寬 = 圖示 14 + 左右各 5（原生把圖示畫在 x=5）")
+    checkEqual(panel.navPrevButton.tooltip, "[IGUI_MinidoracatNB_PrevNotice]",
+        "I2 純圖示按鈕的名稱放在 tooltip（鍵盤焦點的說明也讀它）")
+    checkEqual(panel.navUnreadButton.iconTexture.path, iconPath("bell"),
+        "I2 下一則未讀掛 bell")
     checkEqual(panel.sidebarButton.width - plainSidebarWidth, 19,
         "I2 有圖示的按鈕寬 = 純文字寬 + 圖示 14 + 原生間距 5")
     checkEqual(panel.langButton.width - plainLangWidth, 19,
@@ -3258,7 +3382,7 @@ end)()
     UNREAD_IDS.rule1 = true
     panel, tree, drawRow = newPanel()
     texts, images = drawRow(4) -- file:rule1（未讀、未選中）
-    checkEqual(images[#images].x, 300 - 14, "捲軸不可見時未讀點仍在 width-14")
+    checkEqual(images[#images].x, 400 - 14, "捲軸不可見時未讀點仍在 width-14")
     local availableNoScroll = tree.items[4].item.fitWidth
     tree.height = 48
     tree.vscroll = {
@@ -3278,7 +3402,7 @@ end)()
     check(stencilRect ~= nil and stencilRect.w == tree.width - 13,
         "原生 listbox prerender 在 vscroll 可見時把 stencil 右緣收到 width-13")
     texts, images = drawRow(4)
-    checkEqual(images[#images].x, 300 - 17 - 14,
+    checkEqual(images[#images].x, 400 - 17 - 14,
         "捲軸可見時未讀點左移 17px（避開 stencil 右緣，不被裁掉）")
     checkEqual(tree.items[4].item.fitWidth, availableNoScroll - 17,
         "捲軸可見時文字可用寬同步少 17px（紅點與文字之間的 6px 間距不變）")
@@ -3747,6 +3871,499 @@ end)()
     checkEqual(NBOptions.showButton(), true, "套用後入口讀值＝剛套用的值")
     _G.NBOptions, _G.PZAPI = savedOptions, savedAPI
     _G.getFileReader, _G.getFileWriter, luautils.split = savedReader, savedWriter, savedSplit
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 公告很多時的瀏覽：目錄列把標題開頭的日期拆到右側、分類列寫未讀數、側欄有一行未讀總數、
+-- 閱讀區底部有上一則／下一則／下一則未讀，連結常駐底線。
+-- 這兩段共用同一份快照（7 則、3 個分類）與「帶參數的 getText」：全域 stub 不看參數，
+-- 這裡要看得出填進字串的數字。
+-- ---------------------------------------------------------------------------
+local function browseFile(id, title, category)
+    return { id = id, title = title, category = category, h = id, content = "# " .. title }
+end
+local BROWSE_SNAPSHOT = { sid = "s",
+    categories = {
+        { key = "10_news", label = "News" },
+        { key = "20_old", label = "Archive" },
+    },
+    files = {
+        browseFile("welcome", "Welcome", ""),
+        browseFile("n1", "2026/11/17 Server maintenance", "10_news"),
+        browseFile("n2", "2026-1-5 New year event", "10_news"),
+        browseFile("n3", "2026.12.31 Wipe notice", "10_news"),
+        browseFile("n4", "2026/13/01 Not a date", "10_news"),
+        browseFile("n5", "2026/11/17", "10_news"),
+        browseFile("o1", "1.2.3 patch notice", "20_old"),
+    } }
+local function newBrowsePanel()
+    local panel = NBPanel:new()
+    panel:createChildren()
+    panel.resizeWidget = { getIsVisible = function() return true end }
+    panel:setSnapshot(BROWSE_SNAPSHOT, nil)
+    return panel
+end
+-- 文件樹上某一列的 entry 與索引（kind 是 "category"／"file"，ident 是分類鍵或裸檔名）
+local function browseRow(panel, kind, ident)
+    local items = panel.docTree.items
+    for index = 1, #items do
+        local entry = items[index].item
+        if entry.kind == kind and (entry.id or entry.key) == ident then
+            return entry, index
+        end
+    end
+    return nil
+end
+-- 沒帶參數的鍵照全域 stub 走（工具列用短標籤，否則長鍵名會把面板的最小寬度撐大）
+local plainGetText = _G.getText
+local function getTextWithArgs(key, ...)
+    if select("#", ...) > 0 then
+        return "[" .. tostring(key) .. ":" .. table.concat({ ... }, ",") .. "]"
+    end
+    return plainGetText(key)
+end
+
+-- 框架的 Focus 在這一段沒載入（harness 只 dofile V1.lua）：同時驗「沒有鍵盤導覽時滑鼠照樣能用」。
+;(function()
+    local savedGetText = _G.getText
+    _G.getText = getTextWithArgs
+    local function click(button)
+        button.onclick(button.target, button)
+    end
+
+    check(NBPanel.keyboardTargets == nil and NBPanel.onKeyPress == nil and NBPanel.onJoypadDown == nil,
+        "框架沒有 Focus 時面板不掛任何鍵盤／手把覆寫")
+
+    UNREAD_IDS = { n2 = true, n3 = true, o1 = true }
+    local panel = newBrowsePanel()
+    local tree = panel.docTree
+
+    -- 標題開頭的日期：年在前，/ - . 三種分隔符都拆，月日補零成 MM/DD
+    local entry, index = browseRow(panel, "file", "n1")
+    checkEqual(entry.label, "Server maintenance", "目錄列先寫標題，日期不佔開頭")
+    checkEqual(entry.trail, "11/17", "日期縮成 MM/DD 放到列的右側")
+    checkEqual(browseRow(panel, "file", "n2").label, "New year event", "- 分隔的日期同樣拆開")
+    checkEqual(browseRow(panel, "file", "n2").trail, "01/05", "個位數的月、日補零")
+    checkEqual(browseRow(panel, "file", "n3").trail, "12/31", ". 分隔的日期同樣拆開")
+    entry = browseRow(panel, "file", "n4")
+    check(entry.label == "2026/13/01 Not a date" and entry.trail == nil, "月份 13 不是日期：原樣顯示")
+    entry = browseRow(panel, "file", "n5")
+    check(entry.label == "2026/11/17" and entry.trail == nil,
+        "只有日期沒有標題：原樣顯示，不留一列空白")
+    entry = browseRow(panel, "file", "o1")
+    check(entry.label == "1.2.3 patch notice" and entry.trail == nil, "版本號開頭不當成日期")
+    checkEqual(panel.fileEntries.n1.title, "2026/11/17 Server maintenance",
+        "搜尋索引與 Toast 用的標題仍是全名")
+
+    -- 列的畫法（側欄 400、無圖示版面：公告列文字 x=26、右側留白 20）。
+    -- "11/17" = 5 字 x 8px = 40，結尾對齊 400-20=380 → x=340；標題可用寬 = 400-26-20-(40+6) = 308
+    local texts = {}
+    tree.drawText = function(_, text, x) texts[#texts + 1] = { text = text, x = x } end
+    tree.items[index].index = index
+    tree:doDrawItem(0, tree.items[index], false)
+    checkEqual(texts[1].text, "Server maintenance", "列上畫的是拆掉日期的標題")
+    checkEqual(texts[2].text, "11/17", "右側畫出日期")
+    checkEqual(texts[2].x, 340, "日期的結尾對齊列的右側留白")
+    checkEqual(tree.items[index].item.fitWidth, 308, "標題的可用寬扣掉日期與 6px 間距")
+    checkEqual(tree.items[index].tooltip, "2026/11/17 Server maintenance",
+        "日期被縮短的列，提示框給完整標題（含年份）")
+    tree.width = 100
+    texts = {}
+    tree:doDrawItem(0, tree.items[index], false)
+    checkEqual(#texts, 1, "側欄太窄（小字會佔掉一半以上）時標題優先，不畫日期")
+    checkEqual(tree.items[index].item.fitWidth, 54, "不畫日期時標題拿回整段寬度（100-26-20）")
+    tree.width = 400
+
+    -- 分類列的未讀數（含收合起來看不見的）與側欄的未讀行
+    checkEqual(browseRow(panel, "category", "10_news").trail, "2", "分類列寫出它底下有幾則未讀")
+    checkEqual(browseRow(panel, "category", "20_old").trail, "1", "每個分類各算各的")
+    checkEqual(browseRow(panel, "category", "").trail, nil, "沒有未讀的分類不寫數字")
+    local summary = {}
+    panel.drawText = function(_, text, x, y) summary[#summary + 1] = { text = text, x = x, y = y } end
+    panel:drawUnreadSummary()
+    checkEqual(summary[1].text, "[IGUI_MinidoracatNB_UnreadCount:3]", "側欄的未讀行寫出全部未讀數")
+    check(summary[1].x == 4 and summary[1].y == 75,
+        "未讀行在搜尋列與文件樹之間（y = 樹頂 95 - 行高 22 + 2）")
+
+    -- 導覽列：位置字、按鈕狀態與幾何。無圖示版面：< 與 > 各寬 8+16=24；
+    -- 位置字欄寬照「7,7」那句量（36 字 = 288）；未讀鈕 33 字 x 8 + 16 = 280。
+    checkEqual(panel.selectedFileId, "welcome", "起點是第一則")
+    checkEqual(panel.navPositionText, "[IGUI_MinidoracatNB_NavPosition:1,7]", "位置字：第 1／7 則")
+    checkEqual(panel.navPrevButton.enable, false, "第一則：上一則停用")
+    check(panel.navNextButton.enable ~= false, "第一則：下一則可用")
+    checkEqual(panel.navUnreadButton.title, "[IGUI_MinidoracatNB_NextUnread:3]",
+        "下一則未讀鈕寫出還剩幾則")
+    check(panel.navPrevButton.x == 406 and panel.navPrevButton.y == 913,
+        "上一則貼齊內文區左緣（側欄 400 + 6），在導覽列裡垂直置中（912 + 1）")
+    checkEqual(panel.navNextButton.x, 730, "下一則在位置字欄的右邊（406+24+6+288+6）")
+    checkEqual(panel.navUnreadButton.x + panel.navUnreadButton.width, 1376,
+        "下一則未讀靠右，離面板右緣 6px")
+    local centred = {}
+    panel.drawTextCentre = function(_, text, x) centred[#centred + 1] = { text = text, x = x } end
+    panel:drawNavBar()
+    check(#centred == 1 and centred[1].text == panel.navPositionText and centred[1].x == 580,
+        "位置字置中畫在上一則與下一則之間（436 + 288/2）")
+
+    -- 出錯的占位多畫一行「接下來怎麼辦」；同步中與沒有公告維持一行
+    local function placeholderLines(state)
+        local lines = {}
+        panel.contentState = state
+        panel.drawTextCentre = function(_, _, _, y) lines[#lines + 1] = y end
+        panel:drawContentPlaceholder()
+        return lines
+    end
+    local timeoutLines = placeholderLines("timeout")
+    check(#timeoutLines == 2 and timeoutLines[2] == timeoutLines[1] + 22,
+        "同步逾時的占位有第二行（字高 18 + 間距 4）")
+    local errorLines = placeholderLines("error")
+    check(#errorLines == 2 and errorLines[2] == errorLines[1] + 22, "無法顯示的占位有第二行")
+    checkEqual(#placeholderLines("syncing"), 1, "同步中只有一行")
+    checkEqual(#placeholderLines("empty"), 1, "沒有公告只有一行")
+    panel.contentState = "ready"
+
+    -- 下一則／上一則：照目錄順序跨分類，換過去就標已讀
+    click(panel.navNextButton)
+    checkEqual(panel.selectedFileId, "n1", "下一則跨過分類邊界（根層 → News）")
+    click(panel.navNextButton)
+    checkEqual(panel.selectedFileId, "n2", "再下一則")
+    checkEqual(UNREAD_IDS.n2, nil, "用導覽列換到的公告標成已讀")
+    checkEqual(panel.navUnreadButton.title, "[IGUI_MinidoracatNB_NextUnread:2]",
+        "看過一則，未讀鈕的數字跟著少")
+    checkEqual(browseRow(panel, "category", "10_news").trail, "1", "分類列的未讀數就地更新")
+    checkEqual(tree.cursor, select(2, browseRow(panel, "file", "n2")), "鍵盤游標跟著選取走")
+    click(panel.navPrevButton)
+    checkEqual(panel.selectedFileId, "n1", "上一則")
+
+    -- 目標在收合的分類裡：自動展開，但不改玩家的收合紀錄
+    panel:selectFile("welcome", false)
+    panel:onTreeRowClicked(browseRow(panel, "category", "10_news"))
+    checkEqual(browseRow(panel, "file", "n1"), nil, "前提：News 已收合")
+    local writesBefore = #COLLAPSED_PREFERENCE.writes
+    click(panel.navNextButton)
+    checkEqual(panel.selectedFileId, "n1", "下一則落在收合的分類裡")
+    check(browseRow(panel, "file", "n1") ~= nil, "那個分類被展開，選到的公告在目錄上看得到")
+    checkEqual(#COLLAPSED_PREFERENCE.writes, writesBefore, "自動展開不寫收合偏好")
+
+    -- 頭尾不繞
+    panel:selectFile("o1", false)
+    checkEqual(panel.navPositionText, "[IGUI_MinidoracatNB_NavPosition:7,7]", "最後一則的位置字")
+    checkEqual(panel.navNextButton.enable, false, "最後一則：下一則停用（不繞回開頭）")
+    checkEqual(panel:stepFile(1), false, "最後一則再往下：不動")
+    checkEqual(panel.selectedFileId, "o1", "選取留在最後一則")
+
+    -- 下一則未讀：從目前這一則往後找，到尾端繞回開頭；看完就停用
+    UNREAD_IDS = { n3 = true, o1 = true }
+    panel:selectFile("n5", false)
+    click(panel.navUnreadButton)
+    checkEqual(panel.selectedFileId, "o1", "往後找到的第一則未讀")
+    checkEqual(UNREAD_IDS.o1, nil, "跳過去就標已讀")
+    click(panel.navUnreadButton)
+    checkEqual(panel.selectedFileId, "n3", "後面沒有未讀了：繞回開頭繼續找")
+    checkEqual(panel.navUnreadButton.enable, false, "全部看完：下一則未讀停用")
+    checkEqual(panel:nextUnread(), false, "沒有未讀時不動")
+    checkEqual(panel.selectedFileId, "n3", "選取不變")
+    summary = {}
+    panel:drawUnreadSummary()
+    checkEqual(summary[1].text, "[IGUI_MinidoracatNB_UnreadNone]", "沒有未讀時未讀行改寫「沒有未讀」")
+
+    -- 搜尋中：上一則／下一則只走命中的公告（n3、o1 的標題有 notice）
+    panel:selectFile("welcome", false)
+    panel:setSearchQuery("notice")
+    checkEqual(panel.selectedFileId, "welcome", "打字只篩選目錄，不換公告")
+    checkEqual(panel.navPositionText, "", "目前這一則不在搜尋結果裡：不寫位置")
+    check(panel.navPrevButton.enable == false and panel.navNextButton.enable ~= false,
+        "不在搜尋結果裡時只能往下走到第一筆命中")
+    checkEqual(panel.docTree.y, 117, "搜尋中文件樹再讓出一行給搜尋狀態（95 + 22）")
+    click(panel.navNextButton)
+    checkEqual(panel.selectedFileId, "n3", "搜尋中的下一則＝第一筆命中")
+    checkEqual(panel.navPositionText, "[IGUI_MinidoracatNB_NavPosition:1,2]", "位置字的分母換成命中數")
+    click(panel.navNextButton)
+    checkEqual(panel.selectedFileId, "o1", "搜尋中的下一則跳過沒命中的公告")
+    checkEqual(panel.navNextButton.enable, false, "最後一筆命中：下一則停用")
+    panel:setSearchQuery("")
+    checkEqual(panel.navPositionText, "[IGUI_MinidoracatNB_NavPosition:7,7]",
+        "清掉搜尋：回到全部公告裡的位置")
+    checkEqual(panel.docTree.y, 95, "清掉搜尋：文件樹回到原位")
+
+    -- 內文捲動（PgUp／PgDn 與手把右搖桿共用）：夾在內容範圍內
+    local scrollY = 0
+    panel.richText.getYScroll = function() return scrollY end
+    panel.richText.setYScroll = function(_, value) scrollY = value end
+    panel.richText.getScrollHeight = function() return 5000 end
+    panel:scrollBody(100)
+    checkEqual(scrollY, -100, "往下捲 100px")
+    panel:scrollBody(-500)
+    checkEqual(scrollY, 0, "往上不超過開頭")
+    panel:scrollBody(99999)
+    checkEqual(scrollY, -4131, "往下不超過內容底（內容高 5000 - 可視高 869）")
+
+    -- 窄視窗：位置字放不下就不畫，下一則緊接上一則，不和右側的未讀鈕重疊
+    panel:setWidth(700)
+    panel:updateLayout()
+    checkEqual(panel.navNextButton.x, 246, "700 寬：下一則緊接上一則（側欄 210+6+24+6）")
+    check(panel.navNextButton.x + panel.navNextButton.width <= panel.navUnreadButton.x,
+        "700 寬：下一則不和未讀鈕重疊")
+    centred = {}
+    panel:drawNavBar()
+    checkEqual(#centred, 0, "位置字放不下時不畫")
+    -- 側欄收起來：導覽列從內文左緣起算，照常可用
+    panel:setWidth(1382)
+    panel:onSidebarToggle()
+    panel:updateLayout()
+    checkEqual(panel.navPrevButton.x, 6, "側欄收起來時上一則貼齊面板左緣")
+    click(panel.navPrevButton)
+    checkEqual(panel.selectedFileId, "n5", "側欄收起來時照樣能換公告")
+
+    -- 連結常駐 1px 底線：只畫可視範圍內的那幾段；滑鼠指著的換亮色
+    local owner = NBPanel:new()
+    local richText = newRichText()
+    owner.richText, richText.owner = richText, owner
+    local near = { url = "a", indices = {}, segments = { { x1 = 10, x2 = 50, y1 = 100, y2 = 118 } } }
+    local far = { url = "b", indices = {}, segments = { { x1 = 10, x2 = 50, y1 = 900, y2 = 918 } } }
+    owner.linkHitRegions = { near, far }
+    local hovered = nil
+    owner.getHoveredLink = function() return hovered end
+    local viewY = 0
+    richText.getYScroll = function() return viewY end
+    local lines
+    richText.drawRect = function(_, x, y, w, h, a, r, g, b)
+        if h == 1 and x == 10 then
+            lines[#lines + 1] = { y = y, w = w, r = r, g = g, b = b }
+        end
+    end
+    local LINK, LINK_HOVER = NBSkin.COLORS.LINK, NBSkin.COLORS.LINK_HOVER
+    lines = {}
+    richText:render()
+    check(#lines == 1 and lines[1].y == 117 and lines[1].w == 40,
+        "可視範圍（0-400）內的連結在字的底緣畫 1px 底線，寬＝連結文字寬")
+    check(lines[1].r == LINK.r and lines[1].g == LINK.g and lines[1].b == LINK.b, "底線是連結色")
+    viewY = -800
+    lines = {}
+    richText:render()
+    check(#lines == 1 and lines[1].y == 917,
+        "捲到 800：只畫看得到的那個連結，捲出去的不畫到工具列或導覽列上")
+    hovered = far
+    lines = {}
+    richText:render()
+    check(lines[1].r == LINK_HOVER.r and lines[1].g == LINK_HOVER.g and lines[1].b == LINK_HOVER.b,
+        "滑鼠指著的連結底線換亮色")
+
+    UNREAD_IDS = {}
+    SIDEBAR_PREFERENCE.value = nil
+    COLLAPSED_PREFERENCE.keys, COLLAPSED_PREFERENCE.writes = {}, {}
+    _G.getText = savedGetText
+end)()
+
+-- ---------------------------------------------------------------------------
+-- 鍵盤與手把：載入框架真的 Focus.lua（不是 stub）再重載面板，驗接上之後玩家按得到的結果。
+-- 鍵碼是 LWJGL 的實際值（Keyboard.KEY_*）；手把狀態只模擬 JoyPadSetup.lua:537-569 那三個函式。
+-- ---------------------------------------------------------------------------
+;(function()
+    local UI = MinidoracatUI.v1
+    local savedGetText, savedKeyboard = _G.getText, rawget(_G, "Keyboard")
+    _G.getText = getTextWithArgs
+    local shiftHeld = false
+    local K = { KEY_ESCAPE = 1, KEY_TAB = 15, KEY_RETURN = 28, KEY_LCONTROL = 29, KEY_LSHIFT = 42,
+        KEY_C = 46, KEY_RSHIFT = 54, KEY_SPACE = 57, KEY_NUMPADENTER = 156, KEY_RCONTROL = 157,
+        KEY_HOME = 199, KEY_UP = 200, KEY_PRIOR = 201, KEY_LEFT = 203, KEY_RIGHT = 205,
+        KEY_END = 207, KEY_DOWN = 208, KEY_NEXT = 209,
+        isKeyDown = function(key) return shiftHeld and (key == 42 or key == 54) end }
+    _G.Keyboard = K
+    local joypad, joypadBound, stickY = { id = 0 }, false, 0
+    _G.getJoypadData = function(player) return player == 0 and joypadBound and joypad or nil end
+    _G.getJoypadFocus = function(player)
+        local data = getJoypadData(player)
+        return data and data.focus or nil
+    end
+    _G.setJoypadFocus = function(player, control)
+        local data = getJoypadData(player)
+        if data then
+            data.prevprevfocus, data.prevfocus, data.focus = data.prevfocus, data.focus, control
+        end
+    end
+    _G.getJoypadAimingAxisY = function() return stickY end
+    _G.UIManager = { getMillisSinceLastRender = function() return 33.3 end }
+    Joypad.AButton, Joypad.BButton, Joypad.YButton, Joypad.LBumper, Joypad.RBumper = 0, 1, 3, 4, 5
+    Joypad.Texture.LBumper, Joypad.Texture.RBumper, Joypad.Texture.YButton = "LB", "RB", "Y"
+
+    dofile((string.gsub(MUI_V1, "V1%.lua$", "Focus.lua")))
+    local Focus = UI.Focus
+    check(Focus ~= nil and UI.CAPABILITIES.focus == true, "框架的 Focus 已載入")
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBPanel.lua") -- Focus 綁定重算
+
+    UNREAD_IDS = { n3 = true }
+    READ_MARKS = {}
+    local panel = newBrowsePanel()
+    local tree = panel.docTree
+    -- Focus 只認引擎裡真的存在的元件（javaObject）；harness 的元件沒有那一層
+    panel.javaObject, tree.javaObject = {}, {}
+    panel.navPrevButton.javaObject, panel.navNextButton.javaObject = {}, {}
+    panel.navUnreadButton.javaObject = {}
+    local scrollY = 0
+    panel.richText.getYScroll = function() return scrollY end
+    panel.richText.setYScroll = function(_, value) scrollY = value end
+    panel.richText.getScrollHeight = function() return 5000 end
+    -- 一次完整的按鍵：回這個鍵有沒有被面板吃掉（吃掉的鍵不會再傳給遊戲）
+    local function press(key)
+        panel:onKeyPress(key)
+        local consumed = panel:isKeyConsumed(key)
+        panel:onKeyRelease(key)
+        panel:isKeyConsumed(key)
+        return consumed
+    end
+    local function cursorFrames(row)
+        local frames = 0
+        tree.drawRectBorder = function() frames = frames + 1 end
+        tree.items[row].index = row
+        tree:doDrawItem(0, tree.items[row], false)
+        tree.drawRectBorder = nil
+        return frames
+    end
+
+    check(panel.wantKeyEvents == true, "面板向引擎登記要收按鍵（只有頂層元件收得到）")
+    local targets = panel:keyboardTargets()
+    check(targets == panel:keyboardTargets(), "keyboardTargets 每次回同一張表（Focus.render 每幀呼叫，不配置）")
+    check(#targets == 2 and targets[1].control == tree and targets[2].controls[3] == panel.navUnreadButton,
+        "鍵盤目標：文件樹、導覽列的三顆按鈕")
+    for index = 1, #targets do
+        check(targets[index].control ~= panel.searchEntry, "搜尋框不是鍵盤目標（Enter 要留在輸入框裡逐筆往下）")
+    end
+
+    -- 沒按 Tab 之前：按鍵照常給遊戲，面板什麼都不動
+    local startCursor = tree.cursor
+    checkEqual(startCursor, select(2, browseRow(panel, "file", "welcome")), "游標起點＝選取的公告")
+    check(not press(K.KEY_DOWN) and not press(K.KEY_RETURN) and not press(K.KEY_ESCAPE),
+        "沒有焦點框時方向鍵、Enter、Esc 都不吃")
+    check(tree.cursor == startCursor and panel.selectedFileId == "welcome", "沒有焦點框時游標與選取都不動")
+    checkEqual(cursorFrames(startCursor), 0, "沒有焦點框時游標列不畫框")
+
+    -- Tab：焦點進文件樹，游標列畫 2px 框（兩圈 drawRectBorder）
+    check(press(K.KEY_TAB), "Tab 被面板吃掉")
+    check(Focus.isKeyboardFocused(tree), "Tab 之後焦點在文件樹")
+    checkEqual(cursorFrames(tree.cursor), 2, "游標列畫 2px 框")
+    checkEqual(cursorFrames(tree.cursor + 1), 0, "其他列不畫框")
+
+    -- 上下鍵只移動游標：不開公告、不標已讀
+    READ_MARKS = {}
+    check(press(K.KEY_DOWN), "方向鍵被面板吃掉（角色不會跟著走）")
+    checkEqual(tree.cursor, startCursor + 1, "下鍵把游標移到下一列")
+    checkEqual(tree.items[tree.cursor].item.key, "10_news", "下一列是 News 分類")
+    check(panel.selectedFileId == "welcome" and #READ_MARKS == 0, "移動游標不換公告、不標已讀")
+    -- Enter 在分類列＝展開收合，游標留在那一列
+    press(K.KEY_RETURN)
+    checkEqual(browseRow(panel, "file", "n1"), nil, "Enter 收合游標所在的分類")
+    checkEqual(tree.items[tree.cursor].item.key, "10_news", "收合後游標仍在那個分類列")
+    press(K.KEY_RETURN)
+    check(browseRow(panel, "file", "n1") ~= nil, "再按 Enter 展開")
+    -- Enter 在公告列＝開啟
+    press(K.KEY_DOWN)
+    press(K.KEY_RETURN)
+    checkEqual(panel.selectedFileId, "n1", "Enter 開啟游標所在的公告")
+    -- PgDn／PgUp 捲內文，游標不動
+    local cursorBefore = tree.cursor
+    check(press(K.KEY_NEXT), "PgDn 被面板吃掉")
+    checkEqual(scrollY, -845, "PgDn 把內文往下捲一頁（可視高 869 - 一列 24）")
+    press(K.KEY_PRIOR)
+    checkEqual(scrollY, 0, "PgUp 捲回來")
+    checkEqual(tree.cursor, cursorBefore, "捲內文時游標留在目錄原位")
+
+    -- 再按 Tab：焦點到導覽列；左右鍵在三顆按鈕之間移動，Enter 等於按下去
+    press(K.KEY_TAB)
+    checkEqual(Focus.focused(), panel.navPrevButton, "第二次 Tab 到導覽列的第一顆按鈕")
+    checkEqual(cursorFrames(tree.cursor), 0, "焦點離開文件樹後游標列不再畫框")
+    press(K.KEY_RIGHT)
+    checkEqual(Focus.focused(), panel.navNextButton, "右鍵移到下一則")
+    press(K.KEY_RETURN)
+    checkEqual(panel.selectedFileId, "n2", "Enter 按下「下一則」")
+    press(K.KEY_NEXT)
+    checkEqual(scrollY, -845, "焦點在導覽列時 PgDn 同樣捲內文")
+    shiftHeld = true
+    press(K.KEY_TAB)
+    shiftHeld = false
+    check(Focus.isKeyboardFocused(tree), "Shift+Tab 回到文件樹")
+
+    -- Esc：只收掉焦點框，不關視窗；之後按鍵回到遊戲
+    local hidden = false
+    panel.setVisible = function(_, visible) if not visible then hidden = true end end
+    check(press(K.KEY_ESCAPE), "焦點框亮著時 Esc 被面板吃掉")
+    check(Focus.focused() == nil and not hidden, "Esc 收掉焦點框，視窗還開著")
+    check(not press(K.KEY_ESCAPE) and not press(K.KEY_DOWN), "焦點框收掉後按鍵回到遊戲")
+    panel.setVisible = nil
+
+    -- 手把：面板看得到、手把沒有人接時自己接手；導覽列按鈕換成 LB／RB／Y 的圖示
+    panel:updateJoypad()
+    check(joypad.focus == nil and not panel.navPrevButton.isJoypad, "鍵盤滑鼠玩家（沒有手把資料）不受影響")
+    joypadBound = true
+    panel:updateJoypad()
+    checkEqual(joypad.focus, panel, "手把沒有人接時面板接手")
+    check(panel.navPrevButton.joypadTexture == "LB" and panel.navNextButton.joypadTexture == "RB"
+        and panel.navUnreadButton.joypadTexture == "Y", "導覽列按鈕標上 LB／RB／Y")
+    check(Focus.isKeyboardFocused(tree), "接手後焦點框落在文件樹")
+    local row = tree.cursor
+    panel:onJoypadDirDown(joypad)
+    checkEqual(tree.cursor, row + 1, "方向鍵下移動游標")
+    panel:onJoypadDown(Joypad.AButton, joypad)
+    checkEqual(panel.selectedFileId, "n3", "A 開啟游標所在的公告")
+    panel:selectFile("n1", false)
+    panel:onJoypadDown(Joypad.RBumper, joypad)
+    checkEqual(panel.selectedFileId, "n2", "RB＝下一則")
+    panel:onJoypadDown(Joypad.LBumper, joypad)
+    checkEqual(panel.selectedFileId, "n1", "LB＝上一則")
+    UNREAD_IDS = { o1 = true }
+    panel:onJoypadDown(Joypad.YButton, joypad)
+    checkEqual(panel.selectedFileId, "o1", "Y＝下一則未讀")
+    scrollY, stickY = 0, 1
+    panel:updateJoypad()
+    checkEqual(scrollY, -20, "右搖桿往下推：內文每 33.3ms 捲 20px")
+    stickY = 0
+    -- 另一個介面拿走手把時不搶；面板收合或關閉時把手把還回去
+    local other = {}
+    joypad.focus = other
+    panel:updateJoypad()
+    checkEqual(joypad.focus, other, "手把在別的介面上時不搶")
+    check(not panel.navPrevButton.isJoypad, "手把不在面板上時導覽列按鈕拿掉手把圖示")
+    joypad.focus = nil
+    panel:updateJoypad()
+    checkEqual(joypad.focus, panel, "別的介面放掉之後再接手")
+    panel.isCollapsed = true
+    panel:update()
+    check(joypad.focus == nil and Focus.focused() == nil, "面板收合：手把還給角色、焦點框收掉")
+    panel.isCollapsed = false
+    panel:update()
+    checkEqual(joypad.focus, panel, "展開後再接手")
+    panel:onJoypadDown(Joypad.BButton, joypad)
+    checkEqual(joypad.focus, nil, "B 關閉面板，手把還給角色")
+
+    -- 收合中被打開（玩家拔過圖釘：下次進場 RestoreLayout 直接把面板設成收合）：不接手把。
+    -- update 的收合分支只在剛變成看不見時放一次，隱藏期間那一次已經用掉——接了就沒有人放，
+    -- B 又被框架擋掉（收合的 root 不處理按鍵），角色動不了。
+    panel.getIsVisible = function() return false end
+    panel:update()
+    panel.getIsVisible = nil
+    panel.isCollapsed = true
+    panel:setVisible(true)
+    panel:update()
+    checkEqual(joypad.focus, nil, "收合中的面板被打開時不接手把")
+    -- 別的視窗關掉時把焦點還給收合中的面板：Y 不得在看不見的面板上標已讀，B 要能脫困
+    joypad.focus = panel
+    UNREAD_IDS = { n2 = true }
+    panel:onJoypadDown(Joypad.YButton, joypad)
+    check(panel.selectedFileId == "o1" and UNREAD_IDS.n2 == true, "收合中 Y 不換公告、不標已讀")
+    panel:onJoypadDown(Joypad.BButton, joypad)
+    checkEqual(joypad.focus, nil, "收合中 B 把手把還給角色")
+    panel.isCollapsed = false
+
+    -- 還原：拿掉 Focus 與手把模擬，面板回到沒有鍵盤導覽的綁定
+    Focus.clear()
+    UI.Focus = nil
+    UI.CAPABILITIES.focus, UI.CAPABILITIES.focusCaption, UI.CAPABILITIES.focusLabel = false, false, false
+    _G.Keyboard, _G.getText = savedKeyboard, savedGetText
+    _G.getJoypadData, _G.getJoypadFocus, _G.setJoypadFocus = nil, nil, nil
+    _G.getJoypadAimingAxisY, _G.UIManager = nil, nil
+    Joypad.AButton, Joypad.BButton, Joypad.YButton, Joypad.LBumper, Joypad.RBumper = nil, nil, nil, nil, nil
+    Joypad.Texture.LBumper, Joypad.Texture.RBumper, Joypad.Texture.YButton = nil, nil, nil
+    dofile(MEDIA_LUA .. "client/NoticeBoard/NBPanel.lua")
+    UNREAD_IDS, READ_MARKS = {}, {}
 end)()
 
 print("Step 2 tests passed: " .. assertionCount .. " assertions")
