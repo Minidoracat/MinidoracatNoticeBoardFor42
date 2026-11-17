@@ -81,5 +81,6 @@
   "IGUI_MinidoracatNB_SearchHitPosition": "このお知らせ内 %2 件中 %1 件目",
   "IGUI_MinidoracatNB_SearchNoHitHere": "このお知らせに一致する箇所はありません",
   "IGUI_MinidoracatNB_SearchNoResults": "「%1」に一致するお知らせはありません。Esc か検索欄右側のクリアボタンで検索をクリアできます。",
+  "IGUI_MinidoracatNB_WhatsNew": "一覧の上に未読の件数を表示。お知らせの下に「前・次・次の未読」ボタンを追加し、キーボードとコントローラーでも操作できます。",
   "IGUI_MinidoracatNB_OptShowButtonTip": "画面上のサーバー掲示板ボタンです。クリックで掲示板を開閉します。ファミリーツールバーがあるときはツールバーの中に、ないときはドラッグできるフローティングボタンとして表示されます。非表示にしても、ショートカットキーで掲示板を開閉できます（「オプション ￫ キーバインド ￫ Minidoracat 掲示板」で設定）。新しいお知らせはサーバー設定に従って引き続き自動で表示されます。"
 }

@@ -81,5 +81,6 @@
   "IGUI_MinidoracatNB_SearchHitPosition": "Bu duyuruda %2 eşleşmeden %1.",
   "IGUI_MinidoracatNB_SearchNoHitHere": "Bu duyuruda eşleşme yok",
   "IGUI_MinidoracatNB_SearchNoResults": "Şununla eşleşen duyuru yok: %1. Aramayı temizlemek için Esc tuşuna veya arama alanındaki temizle düğmesine basın.",
+  "IGUI_MinidoracatNB_WhatsNew": "Okunmamış duyuru sayısı görünür; altta önceki, sonraki ve \"Sonraki okunmamış\" var. Klavye ve kumanda da çalışır.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Ekrandaki Sunucu Duyuru Panosu düğmesi; panoyu açmak veya kapatmak için tıklayın. Aile araç çubuğu varsa araç çubuğunda bir yuvadır, yoksa sürüklenebilir bir yüzen düğmedir. Gizliyken panoyu kısayol tuşuyla açın (Ayarlar > Tuş Ayarları > Minidoracat Notice Board altından atayın). Sunucu ayarlarına bağlı olarak yeni duyurular panoyu yine otomatik açar."
 }

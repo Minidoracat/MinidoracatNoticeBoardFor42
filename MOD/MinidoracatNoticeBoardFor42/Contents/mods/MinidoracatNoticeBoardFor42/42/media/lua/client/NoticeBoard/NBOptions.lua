@@ -85,6 +85,22 @@ if registered then
     end
 end
 
+-- 遊戲內更新概要（UI 框架 rev 24，docs/ARCHITECTURE.md §3.24）：玩家更新後第一次進遊戲，右上角跳一則本版重點。
+-- 四欄寫字面字串、一欄一行：發布列車的 release_train.py ready 用 regex 讀；since 只在有新概要的版本才改
+-- （家族 conventions.md「遊戲內更新概要」）。旗標不在就不登記，框架缺席或太舊照常運作。
+do
+    local UI = MinidoracatUI and MinidoracatUI.v1
+    if UI and UI.API_MAJOR == 1 and type(UI.API_REVISION) == "number" and UI.API_REVISION >= 24
+        and UI.CAPABILITIES and UI.CAPABILITIES.whatsNew == true and UI.WhatsNew then
+        UI.WhatsNew.register({
+            modId = "MinidoracatNoticeBoardFor42",
+            since = "0.11.0",
+            name = "UI_optionscreen_binding_MinidoracatNoticeBoard",
+            text = "IGUI_MinidoracatNB_WhatsNew",
+        })
+    end
+end
+
 -- ModOptions.ini 的值只由 PZAPI.ModOptions:load() 讀回，而全庫唯一的呼叫點是
 -- MainOptions:addModOptionsPanel()（MainOptions.lua:2796）——也就是「有人建立過選項畫面」。
 -- 正常流程確實會走到（MainScreen 初始化就 MainOptions:new，MainScreen.lua:177），但把

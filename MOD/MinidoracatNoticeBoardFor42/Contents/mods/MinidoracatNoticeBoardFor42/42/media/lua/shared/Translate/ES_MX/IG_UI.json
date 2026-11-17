@@ -81,5 +81,6 @@
   "IGUI_MinidoracatNB_SearchHitPosition": "%1 de %2 en este aviso",
   "IGUI_MinidoracatNB_SearchNoHitHere": "Sin coincidencias en este aviso",
   "IGUI_MinidoracatNB_SearchNoResults": "Ningún aviso coincide con: %1. Pulsa Esc o el botón de borrar del campo de búsqueda para borrar la búsqueda.",
+  "IGUI_MinidoracatNB_WhatsNew": "La lista muestra cuántos avisos quedan sin leer. Debajo: anterior, siguiente y «Siguiente sin leer». También con teclado y mando.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "El botón del tablero de avisos del servidor en pantalla; haz clic para abrir o cerrar el tablero. Con la barra de herramientas de la familia es una casilla de la barra; si no, es un botón flotante que se puede arrastrar. Si está oculto, abre el tablero con su atajo (configúralo en Opciones > Configuración de teclas > Minidoracat Notice Board). Los avisos nuevos siguen abriendo el tablero automáticamente, según la configuración del servidor."
 }

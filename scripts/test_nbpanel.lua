@@ -4366,4 +4366,129 @@ end)()
     UNREAD_IDS, READ_MARKS = {}, {}
 end)()
 
+-- ---------------------------------------------------------------------------
+-- 中日文斷行（NBLinkRichTextPanel:layoutText）。引擎只在半形空白斷行，中日文整句沒有空白：
+-- 文字欄有寬度上限後整句掉到下一列、超出文字欄，清單記號孤零零留在上一列（2026-11-18 實拍）。
+-- stub 的 MeasureStringX = bytes x 8，UTF-8 中文一字 24px；欄寬 200 - 20 - 10 = 170，一列 7 個中文字。
+-- ---------------------------------------------------------------------------
+;(function()
+    local function layout(text, useEngine)
+        local panel = newRichText()
+        panel.width = 200
+        panel.text = text
+        if useEngine then
+            ISRichTextPanel.paginate(panel)
+        else
+            panel:layoutText()
+        end
+        return panel
+    end
+    local maxWidth = 200 - 20 - 10
+
+    -- 沒有中日文字界的內容和原版 paginate 逐列相同：照抄的部分沒有走樣
+    TEXTURE_SIZES["media/textures/pack/nb_cjk_probe.png"] = { 40, 40 }
+    local samples = {
+        "Plain words that wrap across several lines in a narrow column of text here.",
+        " <INDENT:16> - list item that is long enough to wrap twice inside the column ok <INDENT:0> <LINE> next",
+        "averyveryveryveryveryveryveryveryverylongwordthatcannotfitanywhere tail",
+        " <RGB:1,0.5,0> colored words <POPRGB> after the color and more words to wrap around <LINE>  <LINE> end",
+        "word <IMAGE:media/textures/pack/nb_cjk_probe.png,40,40> after image words keep wrapping along",
+    }
+    for _, text in ipairs(samples) do
+        local ours, engine = layout(text), layout(text, true)
+        checkEqual(#ours.lines, #engine.lines, "chunk 數要和原版相同：" .. text)
+        local same = true
+        local index
+        for index = 1, #engine.lines do
+            if ours.lines[index] ~= engine.lines[index] or ours.lineX[index] ~= engine.lineX[index]
+                or ours.lineY[index] ~= engine.lineY[index] then
+                same = false
+            end
+        end
+        check(same, "每個 chunk 的文字與座標要和原版相同：" .. text)
+    end
+
+    local function nonEmpty(panel)
+        local out = {}
+        local index
+        for index = 1, #panel.lines do
+            if panel.lines[index] ~= "" then
+                out[#out + 1] = index
+            end
+        end
+        return out
+    end
+
+    -- 沒有空白的一整句：每列都不超出文字欄、字一個不少、標點不在行首、續行有標記
+    local sentence = "公告放在伺服器的資料夾裡面，所以改公告永遠不必重新發布。"
+    local panel = layout(sentence)
+    local chunks = nonEmpty(panel)
+    check(#chunks >= 4, "28 字的句子在 7 字寬的欄裡要折成多列（實際 " .. #chunks .. " 列）")
+    local joined, fits, punctuationLead, continued = {}, true, false, true
+    for _, index in ipairs(chunks) do
+        local text = panel.lines[index]
+        joined[#joined + 1] = text
+        if panel.lineX[index] + string.len(text) * 8 > maxWidth then
+            fits = false
+        end
+        if string.find(text, "^，") or string.find(text, "^。") then
+            punctuationLead = true
+        end
+        if index ~= chunks[1] and not panel.cjkContinued[index] then
+            continued = false
+        end
+    end
+    check(fits, "中文句子每一列都要在文字欄內")
+    checkEqual(table.concat(joined), sentence, "折行不得增減任何字")
+    check(not punctuationLead, "逗號、句號不得出現在行首")
+    check(continued, "中文字界切出的續行要記在 cjkContinued（搜尋流不插空白）")
+
+    -- 清單記號後面接一長句：記號不得單獨留在上一列
+    panel = layout(" <INDENT:16> - 表格。引擎完全沒有欄位排版原語。 <INDENT:0> ")
+    chunks = nonEmpty(panel)
+    check(string.find(panel.lines[chunks[1]], "^%- 表") ~= nil,
+        "清單記號要和第一段字同列（實際第一列 '" .. tostring(panel.lines[chunks[1]]) .. "'）")
+    checkEqual(panel.lineX[chunks[2]], 16, "清單續行縮排到 INDENT")
+
+    -- 拉丁字夾在中文裡：英文字本身不切開
+    panel = layout("請到工作坊訂閱MinidoracatLib再重開遊戲")
+    local whole = false
+    for _, index in ipairs(nonEmpty(panel)) do
+        if string.find(panel.lines[index], "MinidoracatLib", 1, true) then
+            whole = true
+        end
+    end
+    check(whole, "中文裡的英文字不得被切成兩半")
+
+    -- 中文後面接一個放不下的長英文字：英文字換到下一列就好，不得多空一列（2026-11-18 審查）
+    panel = layout("中" .. string.rep("a", 22))
+    local zhY, latinY
+    for _, index in ipairs(nonEmpty(panel)) do
+        if panel.lines[index] == "中" then
+            zhY = panel.lineY[index]
+        elseif string.find(panel.lines[index], "aaaa", 1, true) then
+            latinY = panel.lineY[index]
+        end
+    end
+    checkEqual(latinY and zhY and latinY - zhY,
+        getTextManager():getFontFromEnum(panel.font):getLineHeight(), "長英文字只往下一列")
+
+    -- 半形濁音記號不得和前一個假名分開（7 個ｶ剛好 168px，下一個ﾞ會超出）
+    panel = layout(string.rep("ｶ", 7) .. "ﾞｷ")
+    local markLead = false
+    for _, index in ipairs(nonEmpty(panel)) do
+        if string.find(panel.lines[index], "^ﾞ") then
+            markLead = true
+        end
+    end
+    check(not markLead, "濁音記號不得出現在行首")
+
+    -- 搜尋跨中文續行：流裡不插空白，命中照找得到
+    panel = layout(sentence)
+    local owner = setmetatable({ richText = panel, searchQuery = "伺服器的資料" }, { __index = NBPanel })
+    checkEqual(#owner:findSearchHits(), 1, "跨中文折行的字串要搜得到")
+    owner.searchQuery = "器 的"
+    checkEqual(#owner:findSearchHits(), 0, "中文續行之間不得多出空白")
+end)()
+
 print("Step 2 tests passed: " .. assertionCount .. " assertions")

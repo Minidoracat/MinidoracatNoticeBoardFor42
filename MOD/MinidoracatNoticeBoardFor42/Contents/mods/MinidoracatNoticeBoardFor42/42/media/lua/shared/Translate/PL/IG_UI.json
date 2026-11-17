@@ -81,5 +81,6 @@
   "IGUI_MinidoracatNB_SearchHitPosition": "%1 z %2 w tym ogłoszeniu",
   "IGUI_MinidoracatNB_SearchNoHitHere": "Brak wyników w tym ogłoszeniu",
   "IGUI_MinidoracatNB_SearchNoResults": "Brak ogłoszeń pasujących do: %1. Naciśnij Esc lub przycisk czyszczenia w polu wyszukiwania, aby wyczyścić wyszukiwanie.",
+  "IGUI_MinidoracatNB_WhatsNew": "Lista pokazuje, ile ogłoszeń jest nieprzeczytanych. Pod spodem: poprzednie, następne i „Następne nieprzeczytane”. Działa też klawiatura i pad.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Przycisk tablicy ogłoszeń serwera na ekranie; kliknij go, aby otworzyć lub zamknąć tablicę. Z rodzinnym paskiem narzędzi jest to miejsce na pasku, w przeciwnym razie przeciągany pływający przycisk. Gdy jest ukryty, otwieraj tablicę skrótem (ustaw go w Opcje > Przypisanie klawiszy > Minidoracat Notice Board). Nowe ogłoszenia nadal otwierają tablicę automatycznie, zależnie od ustawień serwera."
 }

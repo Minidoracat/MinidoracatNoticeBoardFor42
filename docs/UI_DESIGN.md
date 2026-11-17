@@ -77,7 +77,7 @@ r,g,b,a 皆為 0–1 浮點，對應 PZ 所有 draw 系 API 的參數格式。�
 - **搜尋列**：側欄頂端一列，輸入框與工具列按鈕同高（`toolbarHeight - 2`），四周留 4px；左側是框架 `search` 圖示（缺圖示退成文字標籤「搜尋」）。輸入框是原生 `ISTextEntryBox`：清除鈕、提示字「搜尋所有公告」、滑鼠停留時的鍵盤說明都是原版功能，外觀與工具列的原生按鈕同一套，框架缺席也能用。搜尋中輸入框下方多一行狀態字，文件樹跟著往下移。側欄收起（玩家收或視窗太窄強制收合）時搜尋列一起藏起來，並放開鍵盤。搜尋行為見 1.5。
 - **文件樹**：原生 `ISScrollingListBox` 子類 `NBDocTree`，自繪分類與公告列，不畫原生每列外框。展開／收合時重建可見 items，讓 rowAt、捲動高度與 ensureVisible 全部沿用原生實作。
 - **未讀行**：搜尋列與文件樹之間一行字，「未讀 N 則」（有未讀時用選中列的字色）或「沒有未讀公告」。只有字、沒有「全部已讀」按鈕：使用者裁定不做，怕玩家跳過重要公告（2026-11-17）。
-- **內容區**：`ISRichTextPanel`＋`addScrollBars()`，`autosetheight=false`、`clip=true`、`doRepaintStencil=true`。左 margin 是 `10 + scrollbarWidth`；右 margin 至少一樣，內文區比文字欄上限（1.4）寬時多出來的全部給右 margin，所以文字欄靠左、`<H1>`／`<CENTRE>` 對齊文字欄的中心。用 `setMargins`，不用 `maxLineWidth`：引擎的折行、置中與圖片夾限都算在兩個 margin 之間。連結平常就畫 1px 底線（連結色與內文色的對比不到 3:1，只靠顏色認不出哪裡可以點）。側欄寬度改變時 `updateLayout()` 手動調整子元件，不同時使用 anchors。
+- **內容區**：`ISRichTextPanel`＋`addScrollBars()`，`autosetheight=false`、`clip=true`、`doRepaintStencil=true`。左 margin 是 `10 + scrollbarWidth`；右 margin 至少一樣，內文區比文字欄上限（1.4）寬時多出來的全部給右 margin，所以文字欄靠左、`<H1>`／`<CENTRE>` 對齊文字欄的中心。用 `setMargins`，不用 `maxLineWidth`：引擎的折行、置中與圖片夾限都算在兩個 margin 之間。排版用照抄引擎 `paginate` 的 `layoutText`：引擎只在半形空白換行，中日文整句沒有空白，所以多切中日文字界（逗號、句號不放行首，開頭括號不放行尾；韓文詞間有空白，照舊在空白換行）。連結平常就畫 1px 底線（連結色與內文色的對比不到 3:1，只靠顏色認不出哪裡可以點）。側欄寬度改變時 `updateLayout()` 手動調整子元件，不同時使用 anchors。
 - **導覽列**：內文正下方一列，高度同工具列，側欄收起來時佔滿整個寬度。內容與行為見 1.6。
 
 ### 1.2 文件樹視覺與互動

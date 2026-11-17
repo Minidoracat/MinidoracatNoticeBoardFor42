@@ -81,5 +81,6 @@
   "IGUI_MinidoracatNB_SearchHitPosition": "%1 of %2 in this notice",
   "IGUI_MinidoracatNB_SearchNoHitHere": "No matches in this notice",
   "IGUI_MinidoracatNB_SearchNoResults": "No notices match: %1. Press Esc or the clear button in the search box to clear the search.",
+  "IGUI_MinidoracatNB_WhatsNew": "Shows how many notices are unread, plus new Previous, Next and \"Next unread\" buttons. Keyboard and controller work too.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "The Server Notice Board button on screen; click it to open or close the notice board. With the family toolbar it is a slot in the toolbar, otherwise it is a draggable floating button. When hidden, open the board with its shortcut (set it under Options › Key Bindings › Minidoracat Notice Board). New notices still open the board automatically, depending on the server settings."
 }

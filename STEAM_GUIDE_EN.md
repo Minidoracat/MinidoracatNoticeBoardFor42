@@ -40,7 +40,7 @@ In [b]Lua/NoticeBoard/[/b] inside the Zomboid folder, not in the mod, so editing
 [*] [b]Format[/b]: .md or .txt, named "number_name", e.g. 10_welcome.md.
 [*] [b]Characters[/b]: only ASCII letters, digits, _ and -; put other text inside the file.
 [*] [b]Order[/b]: sorted by number prefix; leave gaps (10_, 20_, 30_) for later inserts.
-[*] [b]Sidebar name[/b]: the first "# heading", or the file name if none. Hover a cut-off name to see it in full.
+[*] [b]Sidebar name[/b]: the first "# heading", or the file name if none. If the heading starts with a date, the date moves to the right (see "Lots of notices"). Hover a cut-off name to see it in full.
 [*] [b]The file name is the notice ID[/b]: use the same name (with extension) in every language. Renaming makes it a new notice and notifies players again.
 [*] [b]Limits[/b]: 200 KB per file; 200 notices and 512 KB per language. Past that, the highest prefixes are dropped.
 [/list]
@@ -115,6 +115,21 @@ The search box at the top of the sidebar searches every notice in the current no
 [*] [b]Next / previous[/b]: press Enter again for the next match; after the last match in a notice it moves on to the next notice. Shift+Enter goes back.
 [*] [b]End the search[/b]: press Esc or the clear button in the search box; the list goes back to how you had it expanded.
 [*] [b]What counts[/b]: only text you can see; link addresses, image paths and Markdown symbols are ignored.
+[/list]
+=== 🧰 Lots of notices
+[list]
+[*] [b]Unread count[/b]: the top of the list shows "Unread: N", and each category shows how many of its notices are unread next to the red dot, even when collapsed.
+[*] [b]Previous / next[/b]: the arrows below the notice move through the list in order; the text between them shows "N of M".
+[*] [b]Next unread[/b]: jumps to the next notice you haven't read and opens its category if needed. There is no "mark all as read"; players read them one by one.
+[*] [b]Collapsed categories are remembered[/b]: a category a player collapses stays collapsed next time they play.
+[*] [b]Keyboard[/b]: Tab moves into the list; arrow keys move, Enter opens, PgUp / PgDn scroll the notice. Tab again moves to the buttons below, Esc hides the focus frame. The search box and the top toolbar need the mouse.
+[*] [b]Controller[/b]: D-pad and A pick a notice, LB / RB previous / next, Y next unread, right stick scrolls, B closes.
+[/list]
+[h3]Organizing many notices (server owners)[/h3]
+[list]
+[*] [b]Start headings with a date[/b]: e.g. "# 2026/11/08 Weekend supply run" shows as "Weekend supply run" with 11/08 on the right. Write year, month, day, then one normal space and the title; / or - or . all work as separators. Headings without a date show as written.
+[*] [b]Newest on top[/b]: the list is sorted by the number at the start of the file name, not by date. Give new notices smaller numbers, e.g. 900_ first, then 890_, 880_.
+[*] [b]Move old notices to an archive category[/b]: add a last category in categories.txt and move expired notices there. Keep the file names so read notices stay read.
 [/list]
 === 🧰 Board button & shortcut
 [list]

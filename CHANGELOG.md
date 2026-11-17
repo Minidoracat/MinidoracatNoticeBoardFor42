@@ -4,7 +4,7 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
-## [Unreleased]
+## [42.22.2-0.11.0] - 2026-11-18
 
 ### 新增
 
@@ -17,12 +17,12 @@
 
 - **目錄的日期移到右邊**：公告標題用日期開頭（例如「2026/11/08 週末活動」）時，目錄改成先顯示標題、日期縮成「11/08」靠右，不再整排都是同一個年份。服主不用改公告檔。
 - **目錄加寬**：目錄最寬從 300 加到 400，標題比較不會被截斷。
-- **內文每行最多約 40 個全形字**：寬螢幕上一行不再拉得很長，換行時比較好找到下一行的開頭。
+- **內文每行最多約 40 個全形字，中文與日文會在字與字之間換行**：寬螢幕上一行不再拉得很長，換行時比較好找到下一行的開頭。以前中文、日文一整句沒有空白就不會斷開，整句掉到下一行，清單的「-」常常自己留在上一行；現在一行排滿就換行，逗號、句號不會跑到行首。
 - **連結加上底線**：公告裡可以點的連結平常就有底線，不用把滑鼠移上去才知道能點。
 - **出錯訊息會告訴你接下來怎麼做**：公告同步逾時、公告無法顯示、切換語系失敗、重新載入失敗、重建範例失敗、複製連結失敗這六則訊息都補上下一步。
 - **語音按鈕換成鈴鐺圖示**：原本和旁邊的「語言」按鈕用同一個地球圖示，容易按錯。
 
-> 技術要點：鍵盤與手把走 Minidoracat UI Library 的 `UI.Focus`（API rev≥16），鈴鐺圖示要 rev≥21；框架較舊時只有滑鼠操作、語音按鈕只有文字，其餘功能不變。分類收合偏好寫在 `Zomboid/Lua/NoticeBoard/settings.ini` 的 `collapsed=`。內文行寬上限用內文字型量 41 個全形字，拉丁語系的字型量不到全形字時退回字高的 28 倍。新增 8 個翻譯 key（`IGUI_MinidoracatNB_UnreadCount`、`UnreadNone`、`PrevNotice`、`NextNotice`、`NextUnread`、`NavPosition`、`ParseErrorHint`、`SyncTimeoutHint`），並改寫 4 個既有字串（`LanguageFailed`、`ReloadFailed`、`ExamplesSendFailed`、`LinkCopyFailed`），16 個語系都有；覆寫本 MOD 翻譯的語言包要跟著補。沒有「全部標成已讀」的功能，這是刻意的：避免玩家跳過重要公告。`versionMin` 不變。
+> 技術要點：鍵盤與手把走 Minidoracat UI Library 的 `UI.Focus`（API rev≥16），鈴鐺圖示要 rev≥21；框架較舊時只有滑鼠操作、語音按鈕只有文字，其餘功能不變。分類收合偏好寫在 `Zomboid/Lua/NoticeBoard/settings.ini` 的 `collapsed=`。內文行寬上限用內文字型量 41 個全形字，拉丁語系的字型量不到全形字時退回字高的 28 倍。遊戲的文字排版只在半形空白換行，本 MOD 改用自己的排版（照抄遊戲 42.22.2 的排版，只在放不下時多切中日文字界；沒有中日文的內容排出來和遊戲相同），韓文詞間有空白，照舊在空白換行。新增 8 個翻譯 key（`IGUI_MinidoracatNB_UnreadCount`、`UnreadNone`、`PrevNotice`、`NextNotice`、`NextUnread`、`NavPosition`、`ParseErrorHint`、`SyncTimeoutHint`），並改寫 4 個既有字串（`LanguageFailed`、`ReloadFailed`、`ExamplesSendFailed`、`LinkCopyFailed`），16 個語系都有；覆寫本 MOD 翻譯的語言包要跟著補。沒有「全部標成已讀」的功能，這是刻意的：避免玩家跳過重要公告。`versionMin` 不變。
 
 ## [42.22.2-0.10.4] - 2026-11-10
 

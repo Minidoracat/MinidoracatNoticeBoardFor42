@@ -81,5 +81,6 @@
   "IGUI_MinidoracatNB_SearchHitPosition": "%1 sur %2 dans cette annonce",
   "IGUI_MinidoracatNB_SearchNoHitHere": "Aucun résultat dans cette annonce",
   "IGUI_MinidoracatNB_SearchNoResults": "Aucune annonce ne correspond à : %1. Appuyez sur Échap ou sur le bouton d'effacement du champ de recherche pour effacer la recherche.",
+  "IGUI_MinidoracatNB_WhatsNew": "La liste indique le nombre d'annonces non lues. En bas : précédente, suivante et « Non lue suivante ». Clavier et manette marchent aussi.",
   "IGUI_MinidoracatNB_OptShowButtonTip": "Le bouton du tableau d'affichage du serveur à l'écran ; cliquez dessus pour ouvrir ou fermer le tableau. Avec la barre d'outils de la famille, c'est un emplacement de la barre ; sinon, c'est un bouton flottant déplaçable. Lorsqu'il est masqué, ouvrez le tableau avec son raccourci (à définir dans Options > Configuration des touches > Minidoracat Notice Board). Les nouvelles annonces ouvrent toujours le tableau automatiquement, selon les paramètres du serveur."
 }

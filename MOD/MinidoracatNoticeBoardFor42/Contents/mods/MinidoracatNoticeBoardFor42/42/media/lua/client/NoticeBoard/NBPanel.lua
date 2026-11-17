@@ -353,6 +353,87 @@ local function isOfficialUrl(url)
     return false
 end
 
+-- 中日文斷行用的字元分類（code point）。韓文不在內：韓文詞與詞之間有空白，引擎原本就斷得開。
+local function isCjkCodePoint(codePoint)
+    return (codePoint >= 0x2E80 and codePoint <= 0x31FF)
+        or (codePoint >= 0x3400 and codePoint <= 0x4DBF)
+        or (codePoint >= 0x4E00 and codePoint <= 0x9FFF)
+        or (codePoint >= 0xF900 and codePoint <= 0xFAFF)
+        or (codePoint >= 0xFF00 and codePoint <= 0xFFEF)
+end
+
+local function codePointSet(list)
+    local set = {}
+    local index
+    for index = 1, #list do
+        set[list[index]] = true
+    end
+    return set
+end
+
+-- 行首不放：收尾標點、日文小假名、長音、疊字與濁音記號（含半形）。NBSP（0xA0）兩側都不斷：它是粗體／連結邊界的間距。
+local NO_BREAK_BEFORE = codePointSet({
+    0x21, 0x25, 0x29, 0x2C, 0x2E, 0x3A, 0x3B, 0x3F, 0x5D, 0x7D, 0xA0,
+    0x2014, 0x2019, 0x201D, 0x2026, 0x3001, 0x3002, 0x3005, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0x3015,
+    0x3017, 0x301E, 0x3041, 0x3043, 0x3045, 0x3047, 0x3049, 0x3063, 0x3083, 0x3085, 0x3087, 0x308E,
+    0x3095, 0x3096, 0x3099, 0x309A, 0x309B, 0x309C, 0x309D, 0x309E, 0x30A1, 0x30A3, 0x30A5, 0x30A7,
+    0x30A9, 0x30C3, 0x30E3, 0x30E5, 0x30E7, 0x30EE, 0x30F5, 0x30F6, 0x30FB, 0x30FC, 0x30FD, 0x30FE,
+    0xFF01, 0xFF09, 0xFF0C, 0xFF0E, 0xFF1A, 0xFF1B, 0xFF1F, 0xFF3D, 0xFF5D, 0xFF5E, 0xFF61, 0xFF63,
+    0xFF64, 0xFF67, 0xFF68, 0xFF69, 0xFF6A, 0xFF6B, 0xFF6C, 0xFF6D, 0xFF6E, 0xFF6F, 0xFF70, 0xFF9E, 0xFF9F,
+})
+-- 行尾不放：開頭標點。
+local NO_BREAK_AFTER = codePointSet({
+    0x28, 0x5B, 0x7B, 0xA0, 0x2018, 0x201C, 0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0x3014, 0x3016,
+    0x301D, 0xFF08, 0xFF3B, 0xFF5B, 0xFF62,
+})
+local UTF8_LEAD_MASK = { [2] = 32, [3] = 16, [4] = 8 }
+
+-- text 第 index 個單位起的一個字：回 (佔幾個單位, code point)。Kahlua 字串以 UTF-16 code unit 索引
+-- （中日文都在 BMP，一個單位一個字）；標準 Lua 測試是 UTF-8 bytes，要自己解碼。
+local function charAt(text, index, usesUtf8Bytes)
+    local unit = string.byte(text, index)
+    if not usesUtf8Bytes or unit < 192 then
+        return 1, unit
+    end
+    local size = unit >= 240 and 4 or (unit >= 224 and 3 or 2)
+    local codePoint = unit % UTF8_LEAD_MASK[size]
+    local offset
+    for offset = 1, size - 1 do
+        codePoint = codePoint * 64 + (string.byte(text, index + offset) or 128) % 64
+    end
+    return size, codePoint
+end
+
+-- 一個沒有空白的 token（word）接在 lead 後面放不下時，找放得進 maxWidth 的最長前綴。
+-- 只切在中日文字界（兩側至少一邊是中日文、不違反行首行尾標點）。
+-- 回 head, rest, breakable：放不下任何前綴時 head 為 nil；breakable 表示 word 裡有可切的字界。
+local function splitCjkWord(font, lead, word, startX, maxWidth)
+    local usesUtf8Bytes = Core.utf16Length(word) ~= string.len(word)
+    local textManager = getTextManager()
+    local length = string.len(word)
+    local index = 1
+    local previous = nil
+    local best = nil
+    local breakable = false
+    while index <= length do
+        local size, codePoint = charAt(word, index, usesUtf8Bytes)
+        if previous and (isCjkCodePoint(previous) or isCjkCodePoint(codePoint))
+            and not NO_BREAK_BEFORE[codePoint] and not NO_BREAK_AFTER[previous] then
+            breakable = true
+            if startX + textManager:MeasureStringX(font, lead .. string.sub(word, 1, index - 1)) > maxWidth then
+                break
+            end
+            best = index - 1
+        end
+        previous = codePoint
+        index = index + size
+    end
+    if not best then
+        return nil, nil, breakable
+    end
+    return string.sub(word, 1, best), string.sub(word, best + 1), true
+end
+
 local NBLinkRichTextPanel = ISRichTextPanel:derive("NBLinkRichTextPanel")
 
 function NBLinkRichTextPanel:paginate()
@@ -360,7 +441,7 @@ function NBLinkRichTextPanel:paginate()
     self.linkChunkStart = {}
     self.linkChunkStop = {}
     local ok, pageError = pcall(function()
-        ISRichTextPanel.paginate(self)
+        self:layoutText()
     end)
     if not ok then
         self.textDirty = false
@@ -393,6 +474,215 @@ function NBLinkRichTextPanel:paginate()
         self.owner:rebuildSearchHits()
     end
     return true, nil
+end
+
+-- 中日文斷行。引擎的 paginate 只在半形空白斷行（ISRichTextPanel.lua:459），中日文整句沒有空白：
+-- 文字欄有寬度上限（READ_COLUMN_CHARS）之後，一句放不下就整句掉到下一列並超出文字欄，前一列
+-- （清單記號、前半句）留下一大段空白（2026-11-18 guide-shots CH 實拍）。
+-- 這裡照抄 42.22.2 的 ISRichTextPanel:paginate（:408-570），只改文字 token 放不下的處理：
+-- token 裡有中日文字界時，放得下的最長前綴留在這一列，剩下的換列再切，續行記在 cjkContinued。
+-- 沒有中日文字界的 token（拉丁字、網址）照原版換列，排版與引擎相同（test_nbpanel.lua 逐列比對）。
+function NBLinkRichTextPanel:layoutText()
+    local lines = 1
+    self.textDirty = false
+    self.imageCount = 1
+    self.font = self.defaultFont
+    self.fonts = {}
+    self.images = {}
+    self.imageX = {}
+    self.imageY = {}
+    self.rgb = {}
+    self.rgbCurrent = { r = 1, g = 1, b = 1 }
+    self.rgbStack = {}
+    self.orient = {}
+    self.indent = 0
+
+    self.imageW = {}
+    self.imageH = {}
+
+    self.lineY = {}
+    self.lineX = {}
+    self.lines = {}
+    self.cjkContinued = {}
+
+    self.keybinds = {}
+
+    self.videoCount = 1
+    self.videos = {}
+    self.videoX = {}
+    self.videoY = {}
+    self.videoW = {}
+    self.videoH = {}
+
+    local bDone = false
+    local leftText = self:replaceKeyNames(self.text) .. ' '
+    local cur = 0
+    local y = 0
+    local x = 0
+    local lineImageHeight = 0
+    leftText = leftText:gsub("\n", " <LINE> ")
+    if self.maxLines > 0 then
+        local kept = leftText:split("<LINE>")
+        local i
+        for i = 1, (#kept - self.maxLines) do
+            table.remove(kept, 1)
+        end
+        leftText = ' '
+        for _, v in ipairs(kept) do
+            leftText = leftText .. v .. " <LINE> "
+        end
+    end
+    local maxLineWidth = self.maxLineWidth or (self.width - self.marginRight - self.marginLeft)
+
+    -- 換到下一列並放上 text（原版 :507-523）
+    local function newLine(text)
+        if self.lines[lines] and self.lines[lines] ~= '' then
+            lines = lines + 1
+        end
+        local lineHeight = getTextManager():getFontFromEnum(self.font):getLineHeight()
+        if lineHeight < lineImageHeight then
+            lineHeight = lineImageHeight
+        end
+        lineImageHeight = 0
+        y = y + lineHeight
+        x = 0
+        self.lines[lines] = text
+        if text ~= "" then
+            x = self.indent
+        end
+        self.lineX[lines] = x
+        self.lineY[lines] = y
+        x = x + getTextManager():MeasureStringX(self.font, text)
+    end
+
+    -- 接在目前這一列（原版 :524-535）
+    local function appendToLine(text, pixLen)
+        if not self.lines[lines] then
+            self.lines[lines] = ''
+            self.lineX[lines] = x
+            self.lineY[lines] = y
+        end
+        self.lines[lines] = text
+        if self.lineX[lines] == 0 and self.lines[lines] ~= "" then
+            self.lineX[lines] = self.indent
+        end
+        x = self.lineX[lines] + pixLen
+    end
+
+    while not bDone do
+        cur = string.find(leftText, " ", cur + 1)
+        if cur ~= nil then
+            local token = string.sub(leftText, 0, cur)
+            local tagStart = string.find(token, "<")
+            if tagStart and tagStart > 1 and string.find(token, ">", tagStart)
+                and string.trim(string.sub(token, 1, tagStart - 1)) ~= '' then
+                cur = tagStart
+                token = string.sub(leftText, 0, tagStart - 1)
+            elseif tagStart and string.find(token, ">") then
+                cur = string.find(token, ">") + 1
+                token = string.sub(leftText, 0, cur - 1)
+            end
+            leftText = string.sub(leftText, cur)
+            cur = 1
+            if string.find(token, "<") and string.find(token, ">") then
+                if not self.lines[lines] then
+                    self.lines[lines] = ''
+                    self.lineX[lines] = x
+                    self.lineY[lines] = y
+                end
+                lines = lines + 1
+                local st = string.find(token, "<")
+                local en = string.find(token, ">")
+                local escSeq = string.sub(token, st + 1, en - 1)
+                local lineHeight = getTextManager():getFontFromEnum(self.font):getLineHeight()
+                if lineHeight < 10 then
+                    lineHeight = 10
+                end
+                if lineHeight < lineImageHeight then
+                    lineHeight = lineImageHeight
+                end
+                self.currentLine = lines
+                x, y, lineImageHeight = self:processCommand(escSeq, x, y, lineImageHeight, lineHeight)
+            else
+                if token:contains("&lt;") then
+                    token = token:gsub("&lt;", "<")
+                end
+                if token:contains("&gt;") then
+                    token = token:gsub("&gt;", ">")
+                end
+                local word = string.trim(token)
+                local movedDown = false
+                while true do
+                    local chunkText = self.lines[lines] or ''
+                    local chunkX = self.lineX[lines] or x
+                    local lead = chunkText
+                    if chunkText ~= '' and word ~= '' then
+                        lead = chunkText .. ' '
+                    end
+                    -- shortcut: 每次續行都重量剩下的整段，一段幾萬字沒有空白才會慢；有人回報開公告卡頓再改成邊切邊量
+                    local pixLen = getTextManager():MeasureStringX(self.font, lead .. word)
+                    if chunkX + pixLen <= maxLineWidth then
+                        appendToLine(lead .. word, pixLen)
+                        break
+                    end
+                    local head, rest, breakable = splitCjkWord(self.font, lead, word, chunkX, maxLineWidth)
+                    if head then
+                        appendToLine(lead .. head, getTextManager():MeasureStringX(self.font, lead .. head))
+                        newLine("")
+                        self.lineX[lines] = self.indent
+                        x = self.indent
+                        self.cjkContinued[lines] = true
+                        word = rest
+                        movedDown = true
+                    elseif breakable and not movedDown then
+                        -- 這一列剩的寬度連第一段都放不下：換到新的一列再切
+                        newLine("")
+                        self.lineX[lines] = self.indent
+                        x = self.indent
+                        movedDown = true
+                    elseif movedDown then
+                        -- 新的一列連第一個字都放不下（文字欄比一個字窄）：整段放上去，不再多空一列
+                        appendToLine(word, getTextManager():MeasureStringX(self.font, word))
+                        break
+                    else
+                        newLine(word)
+                        break
+                    end
+                end
+            end
+        else
+            if string.trim(leftText) ~= '' then
+                local str = leftText
+                if str:contains("&lt;") then
+                    str = str:gsub("&lt;", "<")
+                end
+                if str:contains("&gt;") then
+                    str = str:gsub("&gt;", ">")
+                end
+                self.lines[lines] = string.trim(str)
+                if x == 0 and self.lines[lines] ~= "" then
+                    x = self.indent
+                end
+                self.lineX[lines] = x
+                self.lineY[lines] = y
+                local lineHeight = getTextManager():getFontFromEnum(self.font):getLineHeight()
+                y = y + lineHeight
+            elseif self.lines[lines] and self.lines[lines] ~= '' then
+                local lineHeight = getTextManager():getFontFromEnum(self.font):getLineHeight()
+                if lineHeight < lineImageHeight then
+                    lineHeight = lineImageHeight
+                end
+                y = y + lineHeight
+            end
+            bDone = true
+        end
+    end
+
+    if self.autosetheight then
+        self:setHeight(self.marginTop + y + self.marginBottom)
+    end
+
+    self:setScrollHeight(self.marginTop + y + self.marginBottom)
 end
 
 -- 內容底部 = max(最後一段文字的底, 每張圖的底) + 上下 margin。imageY 可能是負的
@@ -2354,8 +2644,8 @@ end
 -- 本篇的命中位置。把排好版的非空 chunk 串成畫面文字流再找，命中可以跨 chunk（粗體邊界、自動折行）：
 --   同一列（lineY 相同）的相鄰 chunk 中間只隔 command，畫面上直接相接 -> 不插字；
 --   換列且中間的空 chunk 已經在新的一列（<LINE> 這類 command 換的列）-> 插 "\n"，不跨邏輯行比對；
---   其他換列是自動折行，只會折在 token 之間的空白（ISRichTextPanel.lua:498-523）-> 插一個空白
---   （邊界旁已經有 NBSP 換來的空白就不再插）。
+--   其他換列是自動折行：折在 token 之間的空白 -> 插一個空白（邊界旁已經有 NBSP 換來的空白就不再插）；
+--   中日文字界切出的續行（richText.cjkContinued，見 layoutText）原文沒有空白 -> 不插字。
 -- 流裡每個字都對得回 chunk 的同一個位置：NBSP 換空白、轉小寫都不改長度（小寫會改長度的罕見字，
 -- 例如土耳其文的 İ，那一段就不轉小寫）。
 -- ponytail: 服主手寫 <LINE> 後面直接接文字時中間沒有空 chunk，會被當成自動折行；要精確就在 processCommand 記下換行。
@@ -2387,7 +2677,8 @@ function NBPanel:findSearchHits()
                 if brokenLine then
                     separator = "\n"
                 elseif y > (lineY[previous] or 0) and string.sub(parts[#parts], -1) ~= " "
-                    and string.sub(piece, 1, 1) ~= " " then
+                    and string.sub(piece, 1, 1) ~= " "
+                    and not (richText.cjkContinued and richText.cjkContinued[index]) then
                     separator = " "
                 end
             end
