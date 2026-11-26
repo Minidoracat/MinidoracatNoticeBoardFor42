@@ -88,7 +88,9 @@ NBCore.VOICE_PACK_EXAMPLE_ID = "NoticeBoardVoicePackExample"
 -- 與 pairs() 走訪結果（KahluaTableImpl 底層是 LinkedHashMap＝插入順序，若插入源有序則
 -- 輸出有序）——正是危險輸入。全庫一律用本函式：迭代式 bottom-up merge sort，
 -- 無遞迴、穩定、O(n log n)。comp 省略時預設升冪。
-function NBCore.sortSafe(list, comp)
+function NBCore.sortSafe(list, ...)
+    -- comp 選用、用 ... 接：Kahlua 少傳的固定參數不保證是 nil（家族 pitfalls「選用參數用 ... 接」）
+    local comp = ...
     comp = comp or function(a, b) return a < b end
     local n = #list
     if n < 2 then
@@ -330,7 +332,8 @@ local function chunkUtf8String(text, maxUnits)
     return chunks
 end
 
-function NBCore.chunkText(text, maxUnits)
+function NBCore.chunkText(text, ...)
+    local maxUnits = ...
     expectString(text, "text")
     maxUnits = maxUnits or NBCore.CHUNK_UTF16_LIMIT
     validateChunkLimit(maxUnits)
@@ -568,7 +571,8 @@ NBCore.COMMAND_HAZARDS = {
 
 -- 回傳第一個命中的危險字樣（供 log 指出是哪一個），乾淨字串回 nil。
 -- hazards 省略時查 COMMAND_HAZARDS（護欄救不了的那一份）。
-function NBCore.findCommandHazard(text, hazards)
+function NBCore.findCommandHazard(text, ...)
+    local hazards = ...
     if type(text) ~= "string" then
         return nil
     end
@@ -621,7 +625,8 @@ end
 -- settings.ini 的 lang=）長度不受限，每 10 秒灌一次超長值就能把 writeLog 撐到 10MB；
 -- ZLogger 到 10MB 是整檔截斷而非輪替（ZLogger.java:95-101），會沖掉服主的排查紀錄。
 -- 既有呼叫點不傳這個參數 -> 行為完全不變。
-function NBCore.sanitizeName(name, maxUnits)
+function NBCore.sanitizeName(name, ...)
+    local maxUnits = ...
     local sanitized = tostring(name or "")
     -- 控制字元（含 \r\n\t）整個移除，防跨行 log 注入。
     sanitized = string.gsub(sanitized, "%c", "")

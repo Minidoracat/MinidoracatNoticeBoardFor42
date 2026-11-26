@@ -92,7 +92,8 @@ function NBSkin.fits(width, height, topOnly)
 end
 
 -- 圓角填色。topOnly=true 只圓上兩角（現行用於標題列）。alphaScale 是動畫用的 alpha 乘數。
-function NBSkin.fill(element, x, y, width, height, color, topOnly, alphaScale)
+function NBSkin.fill(element, x, y, width, height, color, ...)
+    local topOnly, alphaScale = ...
     if FW then
         return FW.fill(element, x, y, width, height, color, topOnly, alphaScale)
     end
@@ -101,7 +102,8 @@ function NBSkin.fill(element, x, y, width, height, color, topOnly, alphaScale)
 end
 
 -- 1px 圓角邊框。topOnly=true 是上圓、底邊開放的歷史 3 邊框模式；現行文件樹不使用。
-function NBSkin.border(element, x, y, width, height, color, topOnly, alphaScale)
+function NBSkin.border(element, x, y, width, height, color, ...)
+    local topOnly, alphaScale = ...
     if FW then
         return FW.border(element, x, y, width, height, color, topOnly, alphaScale)
     end

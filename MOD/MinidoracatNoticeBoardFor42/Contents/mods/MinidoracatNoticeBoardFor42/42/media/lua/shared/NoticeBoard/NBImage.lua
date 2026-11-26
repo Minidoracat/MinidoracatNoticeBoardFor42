@@ -353,7 +353,8 @@ function NBImage.hashInit()
     return 5381
 end
 
-function NBImage.hashUpdate(hash, text, fromIndex, toIndex)
+function NBImage.hashUpdate(hash, text, ...)
+    local fromIndex, toIndex = ...
     if type(hash) ~= "number" then
         error("hash must be a number")
     end

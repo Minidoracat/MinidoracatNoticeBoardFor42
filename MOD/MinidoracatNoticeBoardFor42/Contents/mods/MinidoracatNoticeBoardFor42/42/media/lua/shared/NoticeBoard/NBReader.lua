@@ -534,7 +534,8 @@ end
 -- bootstrap 的唯一判斷依據，所以**必須**把已宣告的分類目錄一起算進來：只把公告放在
 -- 分類目錄裡的伺服器若被判成「空的」，啟動時就會被塞進兩份 10_welcome.txt。
 -- categories 省略時自己讀一次宣告檔（呼叫端只有啟動路徑，一輪一次不必共用）。
-function NBReader.hasAnyNoticeFiles(categories)
+function NBReader.hasAnyNoticeFiles(...)
+    local categories = ...
     if categories == nil then
         categories = NBReader.scanCategories()
     end
