@@ -1,0 +1,15 @@
+# 既有的「固定參數少傳」呼叫（scripts/verify_mod.py 第 1c 項）。只會變少：改掉一處就重跑
+# python scripts/verify_mod.py --rebase-args。不要為了讓新的呼叫通過而重跑：少的補 nil 傳齊，
+# 或把選用參數改成 ... 接。只有確定呼叫的是 Java 方法，或最後一個引數的呼叫確定每條路都回夠多個值
+# （key 裡是 ~，後面是那個呼叫的函式名）才加進來。
+8	client/NoticeBoard/NBClient.lua|ensureSettingsLoaded|0<1
+7	client/NoticeBoard/NBClient.lua|safeLogValue|1<2
+1	client/NoticeBoard/NBOptions.lua|ensureLoaded|0<1
+1	client/NoticeBoard/NBPanel.lua|playNoticeSound|0<1
+1	client/NoticeBoard/NBPanel.lua|toolbarButtonWidth|1<2
+3	server/NoticeBoard/NBServer.lua|enqueueJob|3<4
+28	server/NoticeBoard/NBServer.lua|safeLogValue|1<2
+2	shared/NoticeBoard/NBReader.lua|addIssue|2<4
+2	shared/NoticeBoard/NBReader.lua|addIssue|3<4
+1	shared/NoticeBoard/NBReader.lua|readAllLines|1~3|noticePath
+1	shared/NoticeBoard/NBReader.lua|scanCategories|0<1

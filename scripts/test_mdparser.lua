@@ -6724,7 +6724,7 @@ end)()
     local probe = io.open(muiV1, "rb")
     if not probe then
         -- 用 realPrint：此區間 print 已被 :2202 攔進 logLines，一般 print 到不了
-        -- stdout，閘門（verify_mod.py 掃各行 SKIP 前綴）會看不見而誤判 PASS
+        -- stdout，閘門（verify_local.py 掃各行 SKIP 前綴）會看不見而誤判 PASS
         realPrint("SKIP NBSkin section: framework V1.lua not found at " .. muiV1
             .. " (clone MinidoracatUIFor42 beside this repo, or set MUI_LUA)")
         return

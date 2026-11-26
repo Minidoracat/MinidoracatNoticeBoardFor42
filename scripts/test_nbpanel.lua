@@ -10,7 +10,7 @@
 --
 -- 用法（在 repo 根目錄）：lua scripts/test_nbpanel.lua
 -- 找不到遊戲本體時直接跳過（退出碼 0）：這支測試依賴 PZ 安裝，不是每台機器都有。
--- 退出碼 0 代表「沒跑」與「跑過且全過」看起來一樣，所以閘門那端（scripts/verify_mod.py）
+-- 退出碼 0 代表「沒跑」與「跑過且全過」看起來一樣，所以閘門那端（scripts/verify_local.py）
 -- 認輸出開頭的 SKIP 字樣，把它列成 SKIP 而不是 PASS。
 -- 遊戲裝在別處時用 PZ_LUA 指到 <遊戲>/media/lua。
 

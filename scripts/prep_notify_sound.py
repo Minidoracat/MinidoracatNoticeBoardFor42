@@ -11,7 +11,7 @@
   * 聲道。UI 提示音不需要立體聲，轉單聲道直接省一半體積。
 
 這支腳本**不生成**音效內容，只做上述處理；原創的內建音效由 gen_notify_sound.py 生成。
-兩者的輸出都必須通過 verify_notify_sound()（同一份規格），那也是 verify_mod.py 的閘門。
+兩者的輸出都必須通過 verify_notify_sound()（同一份規格），那也是 verify_local.py 的閘門。
 
 用法（在 repo 根）：
     python scripts/prep_notify_sound.py --src ~/Downloads/1583.wav
@@ -46,7 +46,7 @@ import struct
 import sys
 import wave
 
-# 資產規格（verify_notify_sound 與 verify_mod.py 的閘門共用這組上下界）。
+# 資產規格（verify_notify_sound 與 verify_local.py 的閘門共用這組上下界）。
 # 每一條都是「玩家會不會受不了」的硬界，與音效內容無關，所以自訂音檔一樣適用。
 MAX_SECONDS = 5.0          # 通知音上限；再長就是背景音樂了（服主自備素材常有殘響尾巴）
 MAX_PEAK = 0.60            # 峰值上限（自帶音效不受玩家音量控制，滿刻度會炸耳）

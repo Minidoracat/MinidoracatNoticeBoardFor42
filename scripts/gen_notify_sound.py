@@ -4,7 +4,7 @@
 這是**原創的備援音效**：不需要任何素材就能生出一顆可用的提示音，
 也是「不想用（或不能用）外部音檔」時的預設選擇。
 出貨音檔目前由服主自備並經 scripts/prep_notify_sound.py 處理，兩者輸出同一個路徑
-（DEFAULT_OUT），彼此覆蓋；verify_mod.py 第 14 項驗的是
+（DEFAULT_OUT），彼此覆蓋；verify_local.py 第 15 項驗的是
 prep_notify_sound.verify_notify_sound 的**資產規格**，不綁定內容，所以兩條路都過得了。
 
 特性：
@@ -132,7 +132,7 @@ def write_wav(path, frames):
 def verify_sound(path):
     """驗證磁碟上的音檔就是這份參數生成的結果。回傳問題清單（空 = 通過）。
 
-    **這不是 verify_mod.py 的閘門**（那一項驗的是資產規格，見
+    **這不是 verify_local.py 的閘門**（那一項驗的是資產規格，見
     prep_notify_sound.verify_notify_sound）。這個函式只回答一個很窄的問題：
     「磁碟上那顆音檔是不是這份參數生出來的原創版？」——改完常數後確認自己有重跑，
     或想知道現在裝的是原創版還是服主自備的音檔時用它。
