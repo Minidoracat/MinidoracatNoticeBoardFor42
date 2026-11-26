@@ -21,13 +21,25 @@
                            512×512 RGB PNG；preview ≤1,024,000 bytes（缺 Pillow 列 SKIP）
  17. Steam 介面預覽       — docs/screenshots/steam/ 的 JPG（作品頁預覽圖兼 Steam 指南的圖）必須正好是固定清單、
                           可完整解碼的 RGB JPEG，且每張 ≤280,000 bytes（家族 release.md 的上限）；尺寸不限（缺 Pillow 列 SKIP）
-hook 的 uv run 環境沒有 Pillow，16、17 在那裡是 SKIP；`uv run --with pillow scripts/verify_local.py` 才會跑。
+hook 的 uv run 環境沒有 Pillow：本檔載不到 Pillow 時會改用 `uv run --with pillow` 重跑自己，uv 建不起環境（離線又沒快取）
+時 16、17 才是 SKIP。
 """
 import json
 import os
 import shutil
 import subprocess
 import sys
+
+# 載不到 Pillow 就用 uv 帶 Pillow 重跑本檔（2026-11-26），不然 hook 裡 16、17 每次 SKIP。
+# 先試建環境：離線又沒快取時建不起來，就照舊往下跑、那兩項列 SKIP，不擋 commit。
+try:
+    import PIL  # noqa: F401
+except ImportError:
+    _uv = ["uv", "run", "--quiet", "--no-project", "--with", "pillow", "python"]
+    if shutil.which("uv") and not os.environ.get("VERIFY_LOCAL_PILLOW") and \
+            subprocess.run(_uv + ["-c", "import PIL"], capture_output=True).returncode == 0:
+        sys.exit(subprocess.run(_uv + [os.path.abspath(__file__)],
+                                env={**os.environ, "VERIFY_LOCAL_PILLOW": "1"}).returncode)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
