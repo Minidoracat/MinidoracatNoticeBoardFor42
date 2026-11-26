@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [42.22.2-0.11.1] - 2026-11-27
+
+### 修正
+
+- **預防一個潛在問題**：遊戲在少數情況下會把殘留的舊資料交給公告欄，可能讓公告排序、分塊傳送、圖片校驗或畫面繪製出錯。現在公告欄不再受影響。目前沒有玩家回報相關問題，更新後不用改任何設定。
+
+> 技術要點：Kahlua 的 `LuaCallFrame.init` 不清少傳的參數格，可能讀到堆疊殘值。`NBCore.sortSafe`／`chunkText`／`findCommandHazard`／`sanitizeName`、`NBSkin.fill`／`border`、`NBImage.hashUpdate`、`NBReader.hasAnyNoticeFiles` 的選用參數改由 `...` 接；`verify_mod.py` 同步家族模板（第 1c 項固定參數傳齊）。
+
 ## [42.22.2-0.11.0] - 2026-11-18
 
 ### 新增
